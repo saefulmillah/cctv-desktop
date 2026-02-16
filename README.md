@@ -27,11 +27,18 @@ npm run package
 npm run make
 ```
 
+Windows wizard installer (custom install path + API_BASE_URL page):
+
+```bash
+npm run make:wizard
+```
+
 ## Available Scripts
 
 - `npm start`: Start Electron app in development mode.
 - `npm run package`: Package the app without creating installers.
 - `npm run make`: Build platform installer/artifacts.
+- `npm run make:wizard`: Build Windows wizard installer using Inno Setup.
 - `npm run publish`: Publish artifacts (if configured).
 
 ## Features
@@ -46,15 +53,21 @@ npm run make
 ## Keyboard Shortcuts
 
 - `Shift+L`: Open branch picker.
+- `Shift+K`: Open API config modal.
 - `Shift+X`: Show close confirmation dialog.
 
 ## API Notes
 
-This app currently expects API base URL:
+Default API base URL is:
 
-- `http://localhost:3000`
+- `http://localhost:3002`
 
-Configured in `src/services/cameraService.js`.
+You can change it from:
+
+- in-app modal (`Shift+K`)
+- installer wizard page (if using `make:wizard`)
+
+The value is persisted in local config (`app-config.json`) under Electron `userData` path.
 
 ## Project Structure
 

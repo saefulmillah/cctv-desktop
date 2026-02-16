@@ -1,0 +1,64 @@
+# CCTV Desktop - Installation Guide
+
+## Build Output
+
+After running:
+
+```bash
+npm run make
+```
+
+installer files are generated at:
+
+`out/make/squirrel.windows/x64/`
+
+Main installer:
+
+`out/make/squirrel.windows/x64/cctv-desktop-1.1.0 Setup.exe`
+
+## Wizard Installer (Recommended)
+
+To create installer with wizard page (choose install folder + set `API_BASE_URL`):
+
+```bash
+npm run make:wizard
+```
+
+Output:
+
+`out/installer-wizard/cctv-desktop-1.1.0-wizard-setup.exe`
+
+Wizard flow:
+
+1. Welcome.
+2. Choose installation directory.
+3. Enter `API_BASE_URL`.
+4. Installation progress.
+5. Finish.
+
+## Install on Windows
+
+1. Open folder `out/make/squirrel.windows/x64/`.
+2. Double-click `cctv-desktop-1.1.0 Setup.exe`.
+3. Wait until installation completes.
+4. Run the app from Start Menu (`cctv-desktop`) or desktop shortcut (if created).
+
+## Update Build Version
+
+If you build a new version, the installer filename will follow:
+
+`cctv-desktop-<version> Setup.exe`
+
+Install the newer setup file to update the application.
+
+## Uninstall
+
+1. Open `Settings > Apps > Installed apps` on Windows.
+2. Search `cctv-desktop`.
+3. Click `Uninstall`.
+
+## Notes
+
+- API base URL configuration is persisted in app local config (`app-config.json`) under Electron `userData` directory.
+- If installer is blocked by Windows SmartScreen, click `More info` then `Run anyway` (only if build source is trusted).
+- `make:wizard` requires Inno Setup 6 (`ISCC.exe`) installed on Windows.
