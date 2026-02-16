@@ -3,6 +3,8 @@ const pickerEl = document.getElementById('branchPicker');
 const branchListEl = document.getElementById('branchList');
 const pickerStatusEl = document.getElementById('pickerStatus');
 const closePickerBtn = document.getElementById('closePickerBtn');
+const toolbarEl = document.getElementById('toolbar');
+const toolbarToggleBtn = document.getElementById('toolbarToggleBtn');
 const currentBranchEl = document.getElementById('currentBranch');
 const pagingControlEl = document.getElementById('pagingControl');
 const prevPageBtn = document.getElementById('prevPageBtn');
@@ -21,9 +23,20 @@ let activeBranch = null;
 let activePage = 1;
 let totalPages = 1;
 let lastApiConfigOpenAt = 0;
+let toolbarVisible = true;
 
 const setApiBaseUrlText = (value) => {
   apiBaseUrlEl.textContent = `API: ${value || '-'}`;
+};
+
+const setToolbarVisible = (visible) => {
+  toolbarVisible = visible;
+  toolbarEl.classList.toggle('collapsed', !visible);
+  toolbarToggleBtn.textContent = visible ? 'Hide Toolbar' : 'Show Toolbar';
+};
+
+const toggleToolbar = () => {
+  setToolbarVisible(!toolbarVisible);
 };
 
 const clearPlayers = () => {
@@ -346,6 +359,19 @@ document.addEventListener('keydown', (event) => {
     !event.metaKey &&
     String(event.key || '').toLowerCase() === 'k';
 
+  const pressedShiftH =
+    event.shiftKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.metaKey &&
+    String(event.key || '').toLowerCase() === 'h';
+
+  if (pressedShiftH) {
+    event.preventDefault();
+    toggleToolbar();
+    return;
+  }
+
   if (!pressedShiftK) {
     return;
   }
@@ -357,6 +383,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 closePickerBtn.addEventListener('click', hidePicker);
+toolbarToggleBtn.addEventListener('click', toggleToolbar);
 openApiConfigBtn.addEventListener('click', () => {
   openApiBaseUrlConfig().catch(() => {
     pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';

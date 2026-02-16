@@ -6,10 +6,10 @@
     <link rel="stylesheet" href="index.css" />
   </head>
   <body>
-    <section class="toolbar">
+    <section id="toolbar" class="toolbar">
       <span id="currentBranch" class="current-branch">Active branch: -</span>
       <span id="apiBaseUrl" class="api-base-url">API: -</span>
-      <span class="hint">Shortcut: Shift+L (Branch), Shift+K (Config API)</span>
+      <span class="hint">Shortcut: Shift+L (Branch), Shift+K (Config API), Shift+H (Toolbar)</span>
       <button id="openApiConfigBtn" class="toolbar-btn" type="button">Config API</button>
       <div id="pagingControl" class="paging-control hidden">
         <button id="prevPageBtn" type="button">Prev</button>
@@ -17,6 +17,7 @@
         <button id="nextPageBtn" type="button">Next</button>
       </div>
     </section>
+    <button id="toolbarToggleBtn" class="toolbar-toggle-btn" type="button">Hide Toolbar</button>
     <main class="grid">
       <div class="cell">1</div>
       <div class="cell">2</div>
