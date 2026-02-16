@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>CCTV Grid</title>
+    <link rel="stylesheet" href="index.css" />
+  </head>
+  <body>
+    <section class="toolbar">
+      <span id="currentBranch" class="current-branch">Active branch: -</span>
+      <span class="hint">Shortcut: Shift+L</span>
+      <div id="pagingControl" class="paging-control hidden">
+        <button id="prevPageBtn" type="button">Prev</button>
+        <span id="pageInfo">Page 1 / 1</span>
+        <button id="nextPageBtn" type="button">Next</button>
+      </div>
+    </section>
+    <main class="grid">
+      <div class="cell">1</div>
+      <div class="cell">2</div>
+      <div class="cell">3</div>
+      <div class="cell">4</div>
+      <div class="cell">5</div>
+      <div class="cell">6</div>
+      <div class="cell">7</div>
+      <div class="cell">8</div>
+      <div class="cell">9</div>
+      <div class="cell">10</div>
+      <div class="cell">11</div>
+      <div class="cell">12</div>
+      <div class="cell">13</div>
+      <div class="cell">14</div>
+      <div class="cell">15</div>
+      <div class="cell">16</div>
+      <div class="cell">17</div>
+      <div class="cell">18</div>
+      <div class="cell">19</div>
+      <div class="cell">20</div>
+    </main>
+    <section id="branchPicker" class="branch-picker" aria-hidden="true">
+      <div class="branch-picker-content">
+        <div class="branch-picker-header">
+          <h2>Select Branch</h2>
+          <button id="closePickerBtn" type="button">Close</button>
+        </div>
+        <p id="pickerStatus" class="picker-status">Press Shift+L to load branches.</p>
+        <div id="branchList" class="branch-list"></div>
+      </div>
+    </section>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
