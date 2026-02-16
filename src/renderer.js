@@ -8,12 +8,23 @@ const pagingControlEl = document.getElementById('pagingControl');
 const prevPageBtn = document.getElementById('prevPageBtn');
 const nextPageBtn = document.getElementById('nextPageBtn');
 const pageInfoEl = document.getElementById('pageInfo');
+const apiBaseUrlEl = document.getElementById('apiBaseUrl');
+const openApiConfigBtn = document.getElementById('openApiConfigBtn');
+const apiConfigModalEl = document.getElementById('apiConfigModal');
+const closeApiConfigBtn = document.getElementById('closeApiConfigBtn');
+const apiConfigFormEl = document.getElementById('apiConfigForm');
+const apiBaseUrlInputEl = document.getElementById('apiBaseUrlInput');
 
 const hlsPlayers = [];
 const retryTimers = [];
 let activeBranch = null;
 let activePage = 1;
 let totalPages = 1;
+let lastApiConfigOpenAt = 0;
+
+const setApiBaseUrlText = (value) => {
+  apiBaseUrlEl.textContent = `API: ${value || '-'}`;
+};
 
 const clearPlayers = () => {
   while (retryTimers.length > 0) {
@@ -219,6 +230,14 @@ const showPicker = () => {
   pickerEl.classList.add('visible');
 };
 
+const hideApiConfigModal = () => {
+  apiConfigModalEl.classList.remove('visible');
+};
+
+const showApiConfigModal = () => {
+  apiConfigModalEl.classList.add('visible');
+};
+
 const updatePagingUi = () => {
   pageInfoEl.textContent = `Page ${activePage} / ${totalPages}`;
   prevPageBtn.disabled = activePage <= 1;
@@ -301,7 +320,69 @@ const openBranchPicker = async () => {
   }
 };
 
+const openApiBaseUrlConfig = async () => {
+  const now = Date.now();
+  if (now - lastApiConfigOpenAt < 300) {
+    return;
+  }
+  lastApiConfigOpenAt = now;
+
+  const currentApiBaseUrl = await window.cameraService.getApiBaseUrl();
+  apiBaseUrlInputEl.value = currentApiBaseUrl || '';
+  showApiConfigModal();
+  apiBaseUrlInputEl.focus();
+  apiBaseUrlInputEl.select();
+};
+
+document.addEventListener('keydown', (event) => {
+  if (event.repeat) {
+    return;
+  }
+
+  const pressedShiftK =
+    event.shiftKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.metaKey &&
+    String(event.key || '').toLowerCase() === 'k';
+
+  if (!pressedShiftK) {
+    return;
+  }
+
+  event.preventDefault();
+  openApiBaseUrlConfig().catch(() => {
+    pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';
+  });
+});
+
 closePickerBtn.addEventListener('click', hidePicker);
+openApiConfigBtn.addEventListener('click', () => {
+  openApiBaseUrlConfig().catch(() => {
+    pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';
+  });
+});
+closeApiConfigBtn.addEventListener('click', hideApiConfigModal);
+apiConfigFormEl.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const nextApiBaseUrl = apiBaseUrlInputEl.value.trim();
+  if (!nextApiBaseUrl) {
+    pickerStatusEl.textContent = 'API_BASE_URL cannot be empty.';
+    return;
+  }
+
+  const response = await window.cameraService.setApiBaseUrl(nextApiBaseUrl);
+  if (response.status >= 400) {
+    pickerStatusEl.textContent = response.message || 'Failed to update API_BASE_URL.';
+    return;
+  }
+
+  const updatedApiBaseUrl =
+    response && response.data && response.data.apiBaseUrl ? response.data.apiBaseUrl : '';
+  setApiBaseUrlText(updatedApiBaseUrl);
+  pickerStatusEl.textContent = `API_BASE_URL updated to ${updatedApiBaseUrl}`;
+  hideApiConfigModal();
+});
 prevPageBtn.addEventListener('click', async () => {
   if (!activeBranch || activePage <= 1) {
     return;
@@ -330,4 +411,9 @@ nextPageBtn.addEventListener('click', async () => {
 
 updatePagingUi();
 setPagingVisible(false);
+window.cameraService
+  .getApiBaseUrl()
+  .then((apiBaseUrl) => setApiBaseUrlText(apiBaseUrl))
+  .catch(() => setApiBaseUrlText('-'));
 window.cameraService.onOpenBranchPicker(openBranchPicker);
+window.cameraService.onOpenApiBaseUrlConfig(openApiBaseUrlConfig);

@@ -1,7 +1,30 @@
-const API_BASE_URL = 'http://localhost:3000';
+const DEFAULT_API_BASE_URL = 'http://localhost:3002';
+let apiBaseUrl = process.env.API_BASE_URL || DEFAULT_API_BASE_URL;
+
+const normalizeApiBaseUrl = (value) => {
+  const rawValue = String(value || '').trim();
+  if (!rawValue) {
+    throw new Error('API base URL cannot be empty.');
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(rawValue);
+  } catch (_) {
+    throw new Error('API base URL must be a valid absolute URL.');
+  }
+
+  if (!parsed.protocol || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
+    throw new Error('API base URL must use http:// or https://.');
+  }
+
+  return parsed.toString().replace(/\/$/, '');
+};
+
+apiBaseUrl = normalizeApiBaseUrl(apiBaseUrl);
 
 const buildUrl = (pathname, query = {}) => {
-  const url = new URL(pathname, API_BASE_URL);
+  const url = new URL(pathname, apiBaseUrl);
   Object.entries(query).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '') {
       return;
@@ -33,7 +56,7 @@ const toError = async (response) => {
 };
 
 const requestJson = async (pathname, options = {}) => {
-  const response = await fetch(`${API_BASE_URL}${pathname}`, {
+  const response = await fetch(`${apiBaseUrl}${pathname}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -50,7 +73,13 @@ const requestJson = async (pathname, options = {}) => {
 
 const getHealth = () => requestJson('/health');
 
-const getApiDocsUrl = () => `${API_BASE_URL}/api-docs`;
+const getApiDocsUrl = () => `${apiBaseUrl}/api-docs`;
+const getApiBaseUrl = () => apiBaseUrl;
+
+const setApiBaseUrl = (nextApiBaseUrl) => {
+  apiBaseUrl = normalizeApiBaseUrl(nextApiBaseUrl);
+  return apiBaseUrl;
+};
 
 const getBranches = (query = {}) =>
   requestJson(toPathAndSearch(buildUrl('/api/cameras/branches', query)));
@@ -74,11 +103,13 @@ const createCamera = (payload) =>
 
 module.exports = {
   getApiDocsUrl,
+  getApiBaseUrl,
   getBranches,
   getBranchPages,
   getCameras,
   getCamerasByBranch,
   getGates,
   getHealth,
+  setApiBaseUrl,
   createCamera,
 };

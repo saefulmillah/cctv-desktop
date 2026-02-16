@@ -14,6 +14,8 @@ let mainWindow;
 let localServer;
 const PORT = 3005;
 const SRC_DIR = __dirname;
+const CONFIG_FILE_NAME = 'app-config.json';
+const { promises: fsPromises } = fs;
 
 const MIME_TYPES = {
   '.css': 'text/css',
@@ -27,6 +29,46 @@ const MIME_TYPES = {
 const getContentType = (filePath) => {
   const ext = path.extname(filePath).toLowerCase();
   return MIME_TYPES[ext] || 'application/octet-stream';
+};
+
+const getConfigFilePath = () => path.join(app.getPath('userData'), CONFIG_FILE_NAME);
+
+const readConfig = async () => {
+  const configPath = getConfigFilePath();
+  try {
+    const raw = await fsPromises.readFile(configPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return {};
+    }
+    throw error;
+  }
+};
+
+const writeConfig = async (config) => {
+  const configPath = getConfigFilePath();
+  const content = `${JSON.stringify(config, null, 2)}\n`;
+  await fsPromises.writeFile(configPath, content, 'utf8');
+};
+
+const loadPersistedApiBaseUrl = async () => {
+  const config = await readConfig();
+  const persistedApiBaseUrl = config.API_BASE_URL;
+  if (typeof persistedApiBaseUrl !== 'string' || !persistedApiBaseUrl.trim()) {
+    return;
+  }
+
+  cameraService.setApiBaseUrl(persistedApiBaseUrl);
+};
+
+const persistApiBaseUrl = async (apiBaseUrl) => {
+  const config = await readConfig();
+  await writeConfig({
+    ...config,
+    API_BASE_URL: apiBaseUrl,
+  });
 };
 
 const startLocalServer = () =>
@@ -113,6 +155,20 @@ const registerBranchListShortcut = () => {
   }
 };
 
+const registerApiBaseUrlShortcut = () => {
+  const registered = globalShortcut.register('Shift+K', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.webContents.send('shortcut:open-api-base-url-config');
+  });
+
+  if (!registered) {
+    console.error('Failed to register shortcut Shift+K');
+  }
+};
+
 const toIpcError = (error) => ({
   status: error.status || 500,
   message: error.message || 'Internal server error',
@@ -129,6 +185,27 @@ const registerServiceHandlers = () => {
   });
 
   ipcMain.handle('camera-service:get-api-docs-url', () => cameraService.getApiDocsUrl());
+  ipcMain.handle('camera-service:get-api-base-url', () => cameraService.getApiBaseUrl());
+  ipcMain.handle('camera-service:set-api-base-url', async (_event, nextApiBaseUrl) => {
+    const previousApiBaseUrl = cameraService.getApiBaseUrl();
+    try {
+      const updatedApiBaseUrl = cameraService.setApiBaseUrl(nextApiBaseUrl);
+      await persistApiBaseUrl(updatedApiBaseUrl);
+      return {
+        status: 200,
+        data: {
+          apiBaseUrl: updatedApiBaseUrl,
+        },
+      };
+    } catch (error) {
+      try {
+        cameraService.setApiBaseUrl(previousApiBaseUrl);
+      } catch (_) {
+        // Ignore rollback error and return the original failure.
+      }
+      return toIpcError(error);
+    }
+  });
 
   ipcMain.handle('camera-service:get-branches', async (_event, query) => {
     try {
@@ -185,10 +262,12 @@ const registerServiceHandlers = () => {
 app.whenReady().then(async () => {
   try {
     await startLocalServer();
+    await loadPersistedApiBaseUrl();
     registerServiceHandlers();
     createWindow();
     registerCloseShortcut();
     registerBranchListShortcut();
+    registerApiBaseUrlShortcut();
   } catch (error) {
     console.error(`Failed to start local server on port ${PORT}:`, error);
     app.quit();

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('cameraService', {
   createCamera: (payload) => ipcRenderer.invoke('camera-service:create-camera', payload),
+  getApiBaseUrl: () => ipcRenderer.invoke('camera-service:get-api-base-url'),
   getApiDocsUrl: () => ipcRenderer.invoke('camera-service:get-api-docs-url'),
   getBranchPages: (branchId) =>
     ipcRenderer.invoke('camera-service:get-branch-pages', branchId),
@@ -17,4 +18,12 @@ contextBridge.exposeInMainWorld('cameraService', {
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   },
+  onOpenApiBaseUrlConfig: (callback) => {
+    const channel = 'shortcut:open-api-base-url-config';
+    const listener = () => callback();
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  setApiBaseUrl: (nextApiBaseUrl) =>
+    ipcRenderer.invoke('camera-service:set-api-base-url', nextApiBaseUrl),
 });

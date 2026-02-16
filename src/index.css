@@ -32,6 +32,26 @@ body {
   z-index: 6;
 }
 
+.api-base-url {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbar-btn {
+  border: 1px solid #405062;
+  background: #1e2732;
+  color: #d5dde6;
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.toolbar-btn:hover {
+  background: #273243;
+}
+
 .grid {
   width: 100vw;
   height: 100vh;
@@ -180,6 +200,43 @@ body {
   border-radius: 6px;
   padding: 6px 10px;
   cursor: pointer;
+}
+
+.api-config-form {
+  display: grid;
+  gap: 12px;
+}
+
+.api-config-input {
+  width: 100%;
+  border: 1px solid #405062;
+  background: #111821;
+  color: #d5dde6;
+  border-radius: 6px;
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
+.api-config-input:focus {
+  outline: 1px solid #5f7da0;
+}
+
+.api-config-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.api-config-actions button {
+  border: 1px solid #405062;
+  background: #1e2732;
+  color: #d5dde6;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.api-config-actions button:hover {
+  background: #273243;
 }
 
 .picker-status {

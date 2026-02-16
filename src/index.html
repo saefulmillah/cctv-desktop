@@ -8,7 +8,9 @@
   <body>
     <section class="toolbar">
       <span id="currentBranch" class="current-branch">Active branch: -</span>
-      <span class="hint">Shortcut: Shift+L</span>
+      <span id="apiBaseUrl" class="api-base-url">API: -</span>
+      <span class="hint">Shortcut: Shift+L (Branch), Shift+K (Config API)</span>
+      <button id="openApiConfigBtn" class="toolbar-btn" type="button">Config API</button>
       <div id="pagingControl" class="paging-control hidden">
         <button id="prevPageBtn" type="button">Prev</button>
         <span id="pageInfo">Page 1 / 1</span>
@@ -45,6 +47,27 @@
         </div>
         <p id="pickerStatus" class="picker-status">Press Shift+L to load branches.</p>
         <div id="branchList" class="branch-list"></div>
+      </div>
+    </section>
+    <section id="apiConfigModal" class="branch-picker" aria-hidden="true">
+      <div class="branch-picker-content">
+        <div class="branch-picker-header">
+          <h2>Configure API Base URL</h2>
+          <button id="closeApiConfigBtn" type="button">Close</button>
+        </div>
+        <p class="picker-status">Enter API_BASE_URL (example: http://localhost:3002).</p>
+        <form id="apiConfigForm" class="api-config-form">
+          <input
+            id="apiBaseUrlInput"
+            class="api-config-input"
+            type="url"
+            placeholder="http://localhost:3002"
+            required
+          />
+          <div class="api-config-actions">
+            <button id="saveApiConfigBtn" type="submit">Save</button>
+          </div>
+        </form>
       </div>
     </section>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
