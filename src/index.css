@@ -46,6 +46,10 @@ body {
   text-overflow: ellipsis;
 }
 
+.installed-version {
+  white-space: nowrap;
+}
+
 .update-status {
   max-width: 260px;
   white-space: nowrap;

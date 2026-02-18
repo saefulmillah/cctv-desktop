@@ -46,3 +46,7 @@ contextBridge.exposeInMainWorld('appUpdater', {
   },
   setConfig: (payload) => ipcRenderer.invoke('app-update:set-config', payload),
 });
+
+contextBridge.exposeInMainWorld('appInfo', {
+  getVersion: () => ipcRenderer.invoke('app:get-version'),
+});

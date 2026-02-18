@@ -565,6 +565,8 @@ const toIpcError = (error) => ({
 });
 
 const registerServiceHandlers = () => {
+  ipcMain.handle('app:get-version', () => app.getVersion());
+
   ipcMain.handle('camera-service:get-health', async () => {
     try {
       return await cameraService.getHealth();

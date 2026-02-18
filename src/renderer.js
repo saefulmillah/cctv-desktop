@@ -6,6 +6,7 @@ const closePickerBtn = document.getElementById('closePickerBtn');
 const toolbarEl = document.getElementById('toolbar');
 const toolbarToggleBtn = document.getElementById('toolbarToggleBtn');
 const currentBranchEl = document.getElementById('currentBranch');
+const installedVersionEl = document.getElementById('installedVersion');
 const pagingControlEl = document.getElementById('pagingControl');
 const prevPageBtn = document.getElementById('prevPageBtn');
 const nextPageBtn = document.getElementById('nextPageBtn');
@@ -39,6 +40,10 @@ let isCheckingUpdate = false;
 
 const setApiBaseUrlText = (value) => {
   apiBaseUrlEl.textContent = `API: ${value || '-'}`;
+};
+
+const setInstalledVersionText = (value) => {
+  installedVersionEl.textContent = `Version: ${value || '-'}`;
 };
 
 const setUpdateStatusText = (message) => {
@@ -561,6 +566,10 @@ checkUpdateBtn.addEventListener('click', async () => {
 updatePagingUi();
 setPagingVisible(false);
 setUpdateStatusText('idle');
+window.appInfo
+  .getVersion()
+  .then((version) => setInstalledVersionText(version))
+  .catch(() => setInstalledVersionText('-'));
 window.cameraService
   .getApiBaseUrl()
   .then((apiBaseUrl) => setApiBaseUrlText(apiBaseUrl))
