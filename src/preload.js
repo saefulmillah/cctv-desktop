@@ -24,6 +24,25 @@ contextBridge.exposeInMainWorld('cameraService', {
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   },
+  onOpenUpdateFeedConfig: (callback) => {
+    const channel = 'shortcut:open-update-feed-config';
+    const listener = () => callback();
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
   setApiBaseUrl: (nextApiBaseUrl) =>
     ipcRenderer.invoke('camera-service:set-api-base-url', nextApiBaseUrl),
+});
+
+contextBridge.exposeInMainWorld('appUpdater', {
+  checkForUpdates: () => ipcRenderer.invoke('app-update:check'),
+  getConfig: () => ipcRenderer.invoke('app-update:get-config'),
+  getStatus: () => ipcRenderer.invoke('app-update:get-status'),
+  onStatus: (callback) => {
+    const channel = 'app-update:status';
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  setConfig: (payload) => ipcRenderer.invoke('app-update:set-config', payload),
 });

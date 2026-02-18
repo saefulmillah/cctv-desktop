@@ -49,11 +49,42 @@ npm run make:wizard
 - Stream status indicator (online/offline).
 - Retry logic for unstable HLS streams.
 - Fullscreen toggle per camera cell.
+- App update check with user confirmation before install.
+
+## Auto Update Setup (Windows)
+
+This app supports manual update checks from the in-app toolbar (`Check Update` button) and
+feed configuration from UI (`Config Update` / `Shift+U`).
+
+Requirements:
+
+- Packaged app (not `npm start` development mode).
+- Windows installer build using Squirrel (`npm run make`).
+- Update feed URL configured in app settings (`app-config.json`).
+
+GitHub Releases endpoint format used by this app:
+
+- `https://update.electronjs.org/<owner>/<repo>/win32-x64/<current-version>`
+
+You can configure feed in two ways from UI:
+
+- Manual URL: fill `AUTO_UPDATE_FEED_URL`.
+- GitHub generator: fill `GitHub owner` + `GitHub repo`, enable `Use GitHub Releases endpoint generator`.
+
+Note: `update.electronjs.org` works for public GitHub repositories.
+
+Update flow:
+
+- User clicks `Check Update`.
+- App checks/downloads available update.
+- After download complete, app shows confirmation dialog.
+- If user confirms, app closes and installs update.
 
 ## Keyboard Shortcuts
 
 - `Shift+L`: Open branch picker.
 - `Shift+K`: Open API config modal.
+- `Shift+U`: Open update feed config modal.
 - `Shift+X`: Show close confirmation dialog.
 
 ## API Notes

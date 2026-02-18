@@ -9,8 +9,14 @@
     <section id="toolbar" class="toolbar">
       <span id="currentBranch" class="current-branch">Active branch: -</span>
       <span id="apiBaseUrl" class="api-base-url">API: -</span>
-      <span class="hint">Shortcut: Shift+L (Branch), Shift+K (Config API), Shift+H (Toolbar)</span>
+      <span id="updateStatus" class="update-status">Update: idle</span>
+      <span class="hint"
+        >Shortcut: Shift+L (Branch), Shift+K (Config API), Shift+U (Config Update), Shift+H
+        (Toolbar)</span
+      >
       <button id="openApiConfigBtn" class="toolbar-btn" type="button">Config API</button>
+      <button id="openUpdateConfigBtn" class="toolbar-btn" type="button">Config Update</button>
+      <button id="checkUpdateBtn" class="toolbar-btn" type="button">Check Update</button>
       <div id="pagingControl" class="paging-control hidden">
         <button id="prevPageBtn" type="button">Prev</button>
         <span id="pageInfo">Page 1 / 1</span>
@@ -67,6 +73,47 @@
           />
           <div class="api-config-actions">
             <button id="saveApiConfigBtn" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+    </section>
+    <section id="updateConfigModal" class="branch-picker" aria-hidden="true">
+      <div class="branch-picker-content">
+        <div class="branch-picker-header">
+          <h2>Configure Auto Update Feed</h2>
+          <button id="closeUpdateConfigBtn" type="button">Close</button>
+        </div>
+        <p class="picker-status">
+          Fill `AUTO_UPDATE_FEED_URL` manually, or fill GitHub owner/repo to generate URL
+          automatically.
+        </p>
+        <form id="updateConfigForm" class="api-config-form">
+          <input
+            id="updateFeedUrlInput"
+            class="api-config-input"
+            type="url"
+            placeholder="https://update.electronjs.org/owner/repo/win32-x64/1.1.1"
+          />
+          <div class="update-config-grid">
+            <input
+              id="updateGithubOwnerInput"
+              class="api-config-input"
+              type="text"
+              placeholder="GitHub owner (example: my-org)"
+            />
+            <input
+              id="updateGithubRepoInput"
+              class="api-config-input"
+              type="text"
+              placeholder="GitHub repo (example: cctv-desktop)"
+            />
+          </div>
+          <label class="update-config-checkbox-label">
+            <input id="useGithubReleaseCheckbox" type="checkbox" />
+            Use GitHub Releases endpoint generator
+          </label>
+          <div class="api-config-actions">
+            <button id="saveUpdateConfigBtn" type="submit">Save</button>
           </div>
         </form>
       </div>

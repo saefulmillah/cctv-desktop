@@ -46,6 +46,13 @@ body {
   text-overflow: ellipsis;
 }
 
+.update-status {
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .toolbar-btn {
   border: 1px solid #405062;
   background: #1e2732;
@@ -265,6 +272,20 @@ body {
   background: #273243;
 }
 
+.update-config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.update-config-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #98a8b8;
+}
+
 .picker-status {
   margin: 12px 0;
   font-size: 12px;
@@ -320,4 +341,10 @@ body {
 
 .hidden {
   display: none;
+}
+
+@media (max-width: 700px) {
+  .update-config-grid {
+    grid-template-columns: 1fr;
+  }
 }

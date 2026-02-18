@@ -12,10 +12,20 @@ const nextPageBtn = document.getElementById('nextPageBtn');
 const pageInfoEl = document.getElementById('pageInfo');
 const apiBaseUrlEl = document.getElementById('apiBaseUrl');
 const openApiConfigBtn = document.getElementById('openApiConfigBtn');
+const openUpdateConfigBtn = document.getElementById('openUpdateConfigBtn');
+const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+const updateStatusEl = document.getElementById('updateStatus');
 const apiConfigModalEl = document.getElementById('apiConfigModal');
 const closeApiConfigBtn = document.getElementById('closeApiConfigBtn');
 const apiConfigFormEl = document.getElementById('apiConfigForm');
 const apiBaseUrlInputEl = document.getElementById('apiBaseUrlInput');
+const updateConfigModalEl = document.getElementById('updateConfigModal');
+const closeUpdateConfigBtn = document.getElementById('closeUpdateConfigBtn');
+const updateConfigFormEl = document.getElementById('updateConfigForm');
+const updateFeedUrlInputEl = document.getElementById('updateFeedUrlInput');
+const updateGithubOwnerInputEl = document.getElementById('updateGithubOwnerInput');
+const updateGithubRepoInputEl = document.getElementById('updateGithubRepoInput');
+const useGithubReleaseCheckboxEl = document.getElementById('useGithubReleaseCheckbox');
 
 const hlsPlayers = [];
 const retryTimers = [];
@@ -23,10 +33,30 @@ let activeBranch = null;
 let activePage = 1;
 let totalPages = 1;
 let lastApiConfigOpenAt = 0;
+let lastUpdateConfigOpenAt = 0;
 let toolbarVisible = true;
+let isCheckingUpdate = false;
 
 const setApiBaseUrlText = (value) => {
   apiBaseUrlEl.textContent = `API: ${value || '-'}`;
+};
+
+const setUpdateStatusText = (message) => {
+  updateStatusEl.textContent = `Update: ${message || '-'}`;
+};
+
+const setUpdateButtonState = (checking) => {
+  isCheckingUpdate = checking;
+  checkUpdateBtn.disabled = checking;
+  checkUpdateBtn.textContent = checking ? 'Checking...' : 'Check Update';
+};
+
+const normalizeUpdateMessage = (payload) => {
+  if (!payload || typeof payload !== 'object') {
+    return '-';
+  }
+
+  return payload.message || payload.state || '-';
 };
 
 const setToolbarVisible = (visible) => {
@@ -251,6 +281,14 @@ const showApiConfigModal = () => {
   apiConfigModalEl.classList.add('visible');
 };
 
+const hideUpdateConfigModal = () => {
+  updateConfigModalEl.classList.remove('visible');
+};
+
+const showUpdateConfigModal = () => {
+  updateConfigModalEl.classList.add('visible');
+};
+
 const updatePagingUi = () => {
   pageInfoEl.textContent = `Page ${activePage} / ${totalPages}`;
   prevPageBtn.disabled = activePage <= 1;
@@ -347,6 +385,28 @@ const openApiBaseUrlConfig = async () => {
   apiBaseUrlInputEl.select();
 };
 
+const openUpdateFeedConfig = async () => {
+  const now = Date.now();
+  if (now - lastUpdateConfigOpenAt < 300) {
+    return;
+  }
+  lastUpdateConfigOpenAt = now;
+
+  const response = await window.appUpdater.getConfig();
+  if (response.status >= 400) {
+    throw new Error(response.message || 'Failed to load update configuration.');
+  }
+
+  const data = response.data || {};
+  updateFeedUrlInputEl.value = data.feedUrl || data.suggestedFeedUrl || '';
+  updateGithubOwnerInputEl.value = data.githubOwner || data.suggestedGitHubOwner || '';
+  updateGithubRepoInputEl.value = data.githubRepo || data.suggestedGitHubRepo || '';
+  useGithubReleaseCheckboxEl.checked = Boolean(data.githubOwner && data.githubRepo);
+  showUpdateConfigModal();
+  updateFeedUrlInputEl.focus();
+  updateFeedUrlInputEl.select();
+};
+
 document.addEventListener('keydown', (event) => {
   if (event.repeat) {
     return;
@@ -365,10 +425,24 @@ document.addEventListener('keydown', (event) => {
     !event.altKey &&
     !event.metaKey &&
     String(event.key || '').toLowerCase() === 'h';
+  const pressedShiftU =
+    event.shiftKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.metaKey &&
+    String(event.key || '').toLowerCase() === 'u';
 
   if (pressedShiftH) {
     event.preventDefault();
     toggleToolbar();
+    return;
+  }
+
+  if (pressedShiftU) {
+    event.preventDefault();
+    openUpdateFeedConfig().catch(() => {
+      pickerStatusEl.textContent = 'Failed to open auto update feed configuration.';
+    });
     return;
   }
 
@@ -389,7 +463,13 @@ openApiConfigBtn.addEventListener('click', () => {
     pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';
   });
 });
+openUpdateConfigBtn.addEventListener('click', () => {
+  openUpdateFeedConfig().catch(() => {
+    pickerStatusEl.textContent = 'Failed to open auto update feed configuration.';
+  });
+});
 closeApiConfigBtn.addEventListener('click', hideApiConfigModal);
+closeUpdateConfigBtn.addEventListener('click', hideUpdateConfigModal);
 apiConfigFormEl.addEventListener('submit', async (event) => {
   event.preventDefault();
   const nextApiBaseUrl = apiBaseUrlInputEl.value.trim();
@@ -409,6 +489,29 @@ apiConfigFormEl.addEventListener('submit', async (event) => {
   setApiBaseUrlText(updatedApiBaseUrl);
   pickerStatusEl.textContent = `API_BASE_URL updated to ${updatedApiBaseUrl}`;
   hideApiConfigModal();
+});
+updateConfigFormEl.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const feedUrl = updateFeedUrlInputEl.value.trim();
+  const githubOwner = updateGithubOwnerInputEl.value.trim();
+  const githubRepo = updateGithubRepoInputEl.value.trim();
+  const useGitHubRelease = useGithubReleaseCheckboxEl.checked;
+
+  const response = await window.appUpdater.setConfig({
+    feedUrl,
+    githubOwner,
+    githubRepo,
+    useGitHubRelease,
+  });
+  if (response.status >= 400) {
+    pickerStatusEl.textContent = response.message || 'Failed to update auto update feed.';
+    return;
+  }
+
+  const data = response.data || {};
+  setUpdateStatusText(`Feed configured (${data.source || 'config'}).`);
+  pickerStatusEl.textContent = `AUTO_UPDATE_FEED_URL set to ${data.feedUrl || '-'}`;
+  hideUpdateConfigModal();
 });
 prevPageBtn.addEventListener('click', async () => {
   if (!activeBranch || activePage <= 1) {
@@ -436,11 +539,54 @@ nextPageBtn.addEventListener('click', async () => {
   }
 });
 
+checkUpdateBtn.addEventListener('click', async () => {
+  if (isCheckingUpdate) {
+    return;
+  }
+
+  setUpdateButtonState(true);
+  setUpdateStatusText('Checking for update...');
+
+  try {
+    const response = await window.appUpdater.checkForUpdates();
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Failed to check update.');
+    }
+  } catch (error) {
+    setUpdateStatusText(error.message || 'Failed to check update.');
+    setUpdateButtonState(false);
+  }
+});
+
 updatePagingUi();
 setPagingVisible(false);
+setUpdateStatusText('idle');
 window.cameraService
   .getApiBaseUrl()
   .then((apiBaseUrl) => setApiBaseUrlText(apiBaseUrl))
   .catch(() => setApiBaseUrlText('-'));
+window.appUpdater
+  .getStatus()
+  .then((response) => {
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Failed to load updater status.');
+    }
+    setUpdateStatusText(normalizeUpdateMessage(response.data));
+  })
+  .catch((error) => {
+    setUpdateStatusText(error.message || 'Updater status unavailable.');
+  });
+window.appUpdater.onStatus((payload) => {
+  const state = payload && payload.state ? String(payload.state) : '';
+  setUpdateStatusText(normalizeUpdateMessage(payload));
+
+  if (state === 'checking' || state === 'downloading') {
+    setUpdateButtonState(true);
+    return;
+  }
+
+  setUpdateButtonState(false);
+});
 window.cameraService.onOpenBranchPicker(openBranchPicker);
 window.cameraService.onOpenApiBaseUrlConfig(openApiBaseUrlConfig);
+window.cameraService.onOpenUpdateFeedConfig(openUpdateFeedConfig);
