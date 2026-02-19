@@ -42,11 +42,22 @@
   "build": {
     "appId": "com.saefulmillah.cctvdesktop",
     "productName": "cctv-desktop",
+    "asar": true,
+    "compression": "maximum",
     "directories": {
       "output": "out/builder"
     },
+    "files": [
+      "!out/**",
+      "!installer/**",
+      "!scripts/**",
+      "!forge.config.js",
+      "!README.md",
+      "!INSTALLATION.md"
+    ],
     "win": {
       "signAndEditExecutable": false,
+      "artifactName": "${productName} Setup ${version}.${ext}",
       "target": [
         {
           "target": "nsis",
