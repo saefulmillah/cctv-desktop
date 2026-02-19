@@ -85,6 +85,19 @@ body {
   text-overflow: ellipsis;
 }
 
+.update-status-btn {
+  border: 1px solid #364556;
+  background: #15202b;
+  color: #d5dde6;
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.update-status-btn:hover {
+  background: #1a2a39;
+}
+
 .update-progress {
   display: inline-flex;
   align-items: center;
@@ -347,6 +360,7 @@ body {
 .api-config-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 .api-config-actions button {
@@ -374,6 +388,18 @@ body {
   gap: 8px;
   font-size: 12px;
   color: #98a8b8;
+}
+
+.update-info-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #2f3b49;
+  border-radius: 8px;
+  background: #111821;
+  font-size: 12px;
+  color: #c7d3df;
 }
 
 .picker-status {

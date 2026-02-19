@@ -10,13 +10,12 @@
       <div class="toolbar-primary">
         <span id="currentBranch" class="current-branch">Active branch: -</span>
         <span id="installedVersion" class="installed-version">Version: -</span>
-        <button id="checkUpdateBtn" class="toolbar-btn toolbar-btn-compact" type="button">
-          Check Update
-        </button>
       </div>
       <div id="toolbarDetails" class="toolbar-details hidden">
         <span id="apiBaseUrl" class="api-base-url">API: -</span>
-        <span id="updateStatus" class="update-status">Update: idle</span>
+        <button id="updateStatusBtn" class="update-status-btn" type="button">
+          <span id="updateStatus" class="update-status">Update: idle</span>
+        </button>
         <div id="updateProgressWrap" class="update-progress hidden">
           <div class="update-progress-track">
             <div id="updateProgressBar" class="update-progress-bar"></div>
@@ -109,6 +108,12 @@
         <p class="picker-status">
           Auto update is managed by electron-updater and build.publish (package.json).
         </p>
+        <div class="update-info-card">
+          <div><strong>State:</strong> <span id="updateInfoState">-</span></div>
+          <div><strong>Progress:</strong> <span id="updateInfoProgress">0.0%</span></div>
+          <div><strong>Source:</strong> <span id="updateInfoSource">-</span></div>
+          <div><strong>Message:</strong> <span id="updateInfoMessage">-</span></div>
+        </div>
         <form id="updateConfigForm" class="api-config-form">
           <input
             id="updateFeedUrlInput"
@@ -135,6 +140,7 @@
             Use GitHub Releases endpoint generator
           </label>
           <div class="api-config-actions">
+            <button id="checkUpdateBtn" type="button">Check Update</button>
             <button id="saveUpdateConfigBtn" type="submit">Save</button>
           </div>
         </form>

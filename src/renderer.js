@@ -14,6 +14,7 @@ const toolbarDetailsEl = document.getElementById('toolbarDetails');
 const updateProgressWrapEl = document.getElementById('updateProgressWrap');
 const updateProgressBarEl = document.getElementById('updateProgressBar');
 const updateProgressTextEl = document.getElementById('updateProgressText');
+const updateStatusBtn = document.getElementById('updateStatusBtn');
 const currentBranchEl = document.getElementById('currentBranch');
 const installedVersionEl = document.getElementById('installedVersion');
 const pagingControlEl = document.getElementById('pagingControl');
@@ -36,6 +37,10 @@ const updateFeedUrlInputEl = document.getElementById('updateFeedUrlInput');
 const updateGithubOwnerInputEl = document.getElementById('updateGithubOwnerInput');
 const updateGithubRepoInputEl = document.getElementById('updateGithubRepoInput');
 const useGithubReleaseCheckboxEl = document.getElementById('useGithubReleaseCheckbox');
+const updateInfoStateEl = document.getElementById('updateInfoState');
+const updateInfoProgressEl = document.getElementById('updateInfoProgress');
+const updateInfoSourceEl = document.getElementById('updateInfoSource');
+const updateInfoMessageEl = document.getElementById('updateInfoMessage');
 const helpModalEl = document.getElementById('helpModal');
 const closeHelpBtn = document.getElementById('closeHelpBtn');
 
@@ -52,6 +57,7 @@ let isRefreshingStreams = false;
 let toolbarPinnedByMouse = false;
 let toolbarHideTimer = null;
 let toolbarDetailsVisible = false;
+let latestUpdatePayload = null;
 
 const setApiBaseUrlText = (value) => {
   apiBaseUrlEl.textContent = `API: ${value || '-'}`;
@@ -79,6 +85,33 @@ const setUpdateProgress = (percent) => {
   const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
   updateProgressBarEl.style.width = `${safePercent}%`;
   updateProgressTextEl.textContent = `${safePercent.toFixed(1)}%`;
+};
+
+const syncUpdateInfoCard = (payload, configData) => {
+  const nextPayload = payload && typeof payload === 'object' ? payload : latestUpdatePayload;
+  latestUpdatePayload = nextPayload || latestUpdatePayload;
+
+  const state = latestUpdatePayload && latestUpdatePayload.state ? latestUpdatePayload.state : '-';
+  const message =
+    latestUpdatePayload && latestUpdatePayload.message ? latestUpdatePayload.message : '-';
+  const percent =
+    latestUpdatePayload && Number.isFinite(Number(latestUpdatePayload.percent))
+      ? Number(latestUpdatePayload.percent)
+      : 0;
+
+  let source = '-';
+  if (configData && typeof configData === 'object') {
+    if (configData.githubOwner && configData.githubRepo) {
+      source = `${configData.githubOwner}/${configData.githubRepo}`;
+    } else if (configData.feedUrl) {
+      source = configData.feedUrl;
+    }
+  }
+
+  updateInfoStateEl.textContent = String(state);
+  updateInfoProgressEl.textContent = `${percent.toFixed(1)}%`;
+  updateInfoSourceEl.textContent = source;
+  updateInfoMessageEl.textContent = String(message);
 };
 
 const setUpdateButtonState = (checking) => {
@@ -508,6 +541,7 @@ const openUpdateFeedConfig = async () => {
   if (readOnlyMode) {
     pickerStatusEl.textContent = data.message || 'Auto update feed is managed by build configuration.';
   }
+  syncUpdateInfoCard(latestUpdatePayload, data);
   setToolbarDetailsVisible(true);
   showUpdateConfigModal();
   updateFeedUrlInputEl.focus();
@@ -590,6 +624,11 @@ menuToggleDetailsBtn.addEventListener('click', () => {
 });
 reloadStreamBtn.addEventListener('click', () => {
   refreshCurrentStreams();
+});
+updateStatusBtn.addEventListener('click', () => {
+  openUpdateFeedConfig().catch(() => {
+    pickerStatusEl.textContent = 'Failed to open update information.';
+  });
 });
 closeApiConfigBtn.addEventListener('click', hideApiConfigModal);
 closeUpdateConfigBtn.addEventListener('click', hideUpdateConfigModal);
@@ -749,6 +788,8 @@ window.appUpdater
     if (response.status >= 400) {
       throw new Error(response.message || 'Failed to load updater status.');
     }
+    latestUpdatePayload = response.data || null;
+    syncUpdateInfoCard(latestUpdatePayload);
     setUpdateStatusText(normalizeUpdateMessage(response.data));
   })
   .catch((error) => {
@@ -758,6 +799,8 @@ window.appUpdater.onStatus((payload) => {
   const state = payload && payload.state ? String(payload.state) : '';
   const progressPercent =
     payload && Number.isFinite(Number(payload.percent)) ? Number(payload.percent) : 0;
+  latestUpdatePayload = payload || latestUpdatePayload;
+  syncUpdateInfoCard(latestUpdatePayload);
   setUpdateStatusText(normalizeUpdateMessage(payload));
   if (state === 'checking' || state === 'downloading' || state === 'error') {
     setToolbarDetailsVisible(true);
