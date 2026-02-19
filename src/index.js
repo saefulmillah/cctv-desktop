@@ -219,6 +219,17 @@ const resolveAutoUpdateFeedUrl = async () => {
   return resolved.feedUrl;
 };
 
+const getSquirrelUpdateExePath = () =>
+  path.resolve(path.dirname(process.execPath), '..', 'Update.exe');
+
+const hasSquirrelRuntime = () => {
+  if (process.platform !== 'win32') {
+    return false;
+  }
+
+  return fs.existsSync(getSquirrelUpdateExePath());
+};
+
 const setupAutoUpdater = async () => {
   autoUpdaterConfigured = false;
 
@@ -234,6 +245,14 @@ const setupAutoUpdater = async () => {
     sendUpdateStatus({
       state: 'disabled',
       message: 'Auto update is currently configured for Windows.',
+    });
+    return;
+  }
+
+  if (!hasSquirrelRuntime()) {
+    sendUpdateStatus({
+      state: 'disabled',
+      message: 'Auto update requires Squirrel installation (run the Squirrel Setup.exe installer).',
     });
     return;
   }
@@ -483,8 +502,8 @@ const createWindow = () => {
   mainWindow = new BrowserWindow({
     width: 600,
     height: 500,
-    frame: true, // 👈 no title bar
-    alwaysOnTop: false, // 👈 floating
+    frame: true, // standard window frame
+    alwaysOnTop: false,
     resizable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -670,6 +689,16 @@ const registerServiceHandlers = () => {
       };
     }
 
+    if (!hasSquirrelRuntime()) {
+      return {
+        status: 200,
+        data: {
+          state: 'disabled',
+          message: 'Auto update requires Squirrel installation (run the Squirrel Setup.exe installer).',
+        },
+      };
+    }
+
     if (!autoUpdaterConfigured) {
       const feedUrl = await resolveAutoUpdateFeedUrl();
       if (!feedUrl) {
@@ -756,3 +785,4 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
 });
+

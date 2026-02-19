@@ -66,8 +66,24 @@ body {
   cursor: pointer;
 }
 
+.toolbar-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .toolbar-btn:hover {
   background: #273243;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-icon {
+  font-size: 13px;
+  line-height: 1;
 }
 
 .toolbar-toggle-btn {

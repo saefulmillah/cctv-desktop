@@ -15,6 +15,7 @@ const apiBaseUrlEl = document.getElementById('apiBaseUrl');
 const openApiConfigBtn = document.getElementById('openApiConfigBtn');
 const openUpdateConfigBtn = document.getElementById('openUpdateConfigBtn');
 const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+const reloadStreamBtn = document.getElementById('reloadStreamBtn');
 const updateStatusEl = document.getElementById('updateStatus');
 const apiConfigModalEl = document.getElementById('apiConfigModal');
 const closeApiConfigBtn = document.getElementById('closeApiConfigBtn');
@@ -37,6 +38,7 @@ let lastApiConfigOpenAt = 0;
 let lastUpdateConfigOpenAt = 0;
 let toolbarVisible = true;
 let isCheckingUpdate = false;
+let isRefreshingStreams = false;
 
 const setApiBaseUrlText = (value) => {
   apiBaseUrlEl.textContent = `API: ${value || '-'}`;
@@ -54,6 +56,15 @@ const setUpdateButtonState = (checking) => {
   isCheckingUpdate = checking;
   checkUpdateBtn.disabled = checking;
   checkUpdateBtn.textContent = checking ? 'Checking...' : 'Check Update';
+};
+
+const setReloadButtonState = (refreshing) => {
+  isRefreshingStreams = refreshing;
+  const hasActiveBranch = Boolean(activeBranch && activeBranch.id);
+  reloadStreamBtn.disabled = refreshing || !hasActiveBranch;
+  reloadStreamBtn.innerHTML = refreshing
+    ? '<span class="btn-icon" aria-hidden="true">&#x21bb;</span><span>Refreshing...</span>'
+    : '<span class="btn-icon" aria-hidden="true">&#x21bb;</span><span>Reload Stream</span>';
 };
 
 const normalizeUpdateMessage = (payload) => {
@@ -328,7 +339,29 @@ const loadBranchCameras = async (branch, page = 1) => {
   renderCameras(Array.isArray(response.data) ? response.data : []);
   currentBranchEl.textContent = `Active branch: ${branch.branch_code} - ${branch.branch_name} (Page ${activePage})`;
   updatePagingUi();
+  setReloadButtonState(false);
   hidePicker();
+};
+
+const refreshCurrentStreams = async () => {
+  if (isRefreshingStreams) {
+    return;
+  }
+
+  if (!activeBranch || !activeBranch.id) {
+    pickerStatusEl.textContent = 'Select branch first before reloading streams.';
+    return;
+  }
+
+  setReloadButtonState(true);
+  try {
+    await loadBranchCameras(activeBranch, activePage);
+    pickerStatusEl.textContent = `Streams reloaded for ${activeBranch.branch_name} (Page ${activePage}).`;
+  } catch (error) {
+    pickerStatusEl.textContent = error.message || 'Failed to reload streams.';
+  } finally {
+    setReloadButtonState(false);
+  }
 };
 
 const renderBranches = (branches) => {
@@ -473,6 +506,9 @@ openUpdateConfigBtn.addEventListener('click', () => {
     pickerStatusEl.textContent = 'Failed to open auto update feed configuration.';
   });
 });
+reloadStreamBtn.addEventListener('click', () => {
+  refreshCurrentStreams();
+});
 closeApiConfigBtn.addEventListener('click', hideApiConfigModal);
 closeUpdateConfigBtn.addEventListener('click', hideUpdateConfigModal);
 apiConfigFormEl.addEventListener('submit', async (event) => {
@@ -565,6 +601,7 @@ checkUpdateBtn.addEventListener('click', async () => {
 
 updatePagingUi();
 setPagingVisible(false);
+setReloadButtonState(false);
 setUpdateStatusText('idle');
 window.appInfo
   .getVersion()
