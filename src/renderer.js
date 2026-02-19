@@ -206,9 +206,17 @@ const withCacheBuster = (url) => {
 };
 
 const attachStreamWithRetry = (videoEl, streamUrl, statusEl) => {
+  const freezeCheckIntervalMs = 5000;
+  const freezeThresholdMs = 15000;
   const maxRetryDelayMs = 30000;
   let retryCount = 0;
   let retryTimer = null;
+  let watchdogTimer = null;
+  let lastPlaybackAt = Date.now();
+  let lastCurrentTime = 0;
+  let activeHls = null;
+  let mediaRecoveryAttempts = 0;
+  let reconnectInProgress = false;
 
   const clearRetryTimer = () => {
     if (!retryTimer) {
@@ -218,11 +226,54 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl) => {
     retryTimer = null;
   };
 
+  const clearWatchdogTimer = () => {
+    if (!watchdogTimer) {
+      return;
+    }
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  };
+
+  const startWatchdog = () => {
+    clearWatchdogTimer();
+    lastPlaybackAt = Date.now();
+    lastCurrentTime = videoEl.currentTime || 0;
+    watchdogTimer = setInterval(() => {
+      if (videoEl.paused || videoEl.ended || videoEl.readyState < 2) {
+        return;
+      }
+
+      const currentTime = videoEl.currentTime || 0;
+      if (currentTime > lastCurrentTime + 0.01) {
+        lastCurrentTime = currentTime;
+        lastPlaybackAt = Date.now();
+        return;
+      }
+
+      if (Date.now() - lastPlaybackAt >= freezeThresholdMs) {
+        scheduleRetry();
+      }
+    }, freezeCheckIntervalMs);
+    retryTimers.push(watchdogTimer);
+  };
+
   const scheduleRetry = () => {
+    if (reconnectInProgress) {
+      return;
+    }
+    reconnectInProgress = true;
     setStreamStatus(statusEl, false);
     clearRetryTimer();
+    clearWatchdogTimer();
 
-    const delayMs = Math.min(maxRetryDelayMs, 2000 * 2 ** Math.min(retryCount, 4));
+    if (activeHls) {
+      activeHls.destroy();
+      activeHls = null;
+    }
+
+    const baseDelayMs = Math.min(maxRetryDelayMs, 2000 * 2 ** Math.min(retryCount, 4));
+    const jitterMs = Math.floor(Math.random() * 1000);
+    const delayMs = baseDelayMs + jitterMs;
     retryCount += 1;
     retryTimer = setTimeout(() => {
       connect();
@@ -231,6 +282,8 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl) => {
   };
 
   const connect = () => {
+    reconnectInProgress = false;
+    mediaRecoveryAttempts = 0;
     videoEl.pause();
     videoEl.removeAttribute('src');
     videoEl.load();
@@ -244,23 +297,38 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl) => {
 
     if (window.Hls && window.Hls.isSupported()) {
       const hls = new window.Hls({
-        lowLatencyMode: true,
-        backBufferLength: 30,
+        lowLatencyMode: false,
+        backBufferLength: 10,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 20,
+        liveSyncDurationCount: 3,
+        enableWorker: true,
       });
+      activeHls = hls;
 
       hls.on(window.Hls.Events.MEDIA_ATTACHED, () => {
         hls.loadSource(withCacheBuster(streamUrl));
       });
 
       hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        mediaRecoveryAttempts = 0;
         videoEl.play().catch(() => scheduleRetry());
       });
 
       hls.on(window.Hls.Events.ERROR, (_event, data) => {
-        if (data && data.fatal) {
-          hls.destroy();
-          scheduleRetry();
+        if (!data || !data.fatal) {
+          return;
         }
+
+        if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveryAttempts < 1) {
+          mediaRecoveryAttempts += 1;
+          hls.recoverMediaError();
+          return;
+        }
+
+        hls.destroy();
+        activeHls = null;
+        scheduleRetry();
       });
 
       hls.attachMedia(videoEl);
@@ -274,7 +342,19 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl) => {
   videoEl.addEventListener('playing', () => {
     retryCount = 0;
     clearRetryTimer();
+    reconnectInProgress = false;
+    mediaRecoveryAttempts = 0;
+    lastPlaybackAt = Date.now();
+    lastCurrentTime = videoEl.currentTime || 0;
+    startWatchdog();
     setStreamStatus(statusEl, true);
+  });
+  videoEl.addEventListener('timeupdate', () => {
+    const currentTime = videoEl.currentTime || 0;
+    if (currentTime > lastCurrentTime + 0.01) {
+      lastCurrentTime = currentTime;
+      lastPlaybackAt = Date.now();
+    }
   });
   videoEl.addEventListener('error', scheduleRetry);
   videoEl.addEventListener('stalled', scheduleRetry);
