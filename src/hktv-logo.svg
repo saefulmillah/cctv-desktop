@@ -1,0 +1,28 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="textFill" x1="252" y1="812" x2="772" y2="812" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E53935"/>
+      <stop offset="1" stop-color="#1565C0"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="6" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#glow)">
+    <text x="512" y="610" text-anchor="middle" fill="url(#textFill)"
+      font-family="Segoe UI, Tahoma, Arial, sans-serif" font-size="244" font-weight="800"
+      letter-spacing="18">HKTV</text>
+  </g>
+</svg>
