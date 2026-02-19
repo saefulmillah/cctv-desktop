@@ -24,6 +24,7 @@ const apiBaseUrlInputEl = document.getElementById('apiBaseUrlInput');
 const updateConfigModalEl = document.getElementById('updateConfigModal');
 const closeUpdateConfigBtn = document.getElementById('closeUpdateConfigBtn');
 const updateConfigFormEl = document.getElementById('updateConfigForm');
+const saveUpdateConfigBtn = document.getElementById('saveUpdateConfigBtn');
 const updateFeedUrlInputEl = document.getElementById('updateFeedUrlInput');
 const updateGithubOwnerInputEl = document.getElementById('updateGithubOwnerInput');
 const updateGithubRepoInputEl = document.getElementById('updateGithubRepoInput');
@@ -436,10 +437,19 @@ const openUpdateFeedConfig = async () => {
   }
 
   const data = response.data || {};
+  const readOnlyMode = data.mode === 'electron-updater';
   updateFeedUrlInputEl.value = data.feedUrl || data.suggestedFeedUrl || '';
   updateGithubOwnerInputEl.value = data.githubOwner || data.suggestedGitHubOwner || '';
   updateGithubRepoInputEl.value = data.githubRepo || data.suggestedGitHubRepo || '';
   useGithubReleaseCheckboxEl.checked = Boolean(data.githubOwner && data.githubRepo);
+  updateFeedUrlInputEl.disabled = readOnlyMode;
+  updateGithubOwnerInputEl.disabled = readOnlyMode;
+  updateGithubRepoInputEl.disabled = readOnlyMode;
+  useGithubReleaseCheckboxEl.disabled = readOnlyMode;
+  saveUpdateConfigBtn.disabled = readOnlyMode;
+  if (readOnlyMode) {
+    pickerStatusEl.textContent = data.message || 'Auto update feed is managed by build configuration.';
+  }
   showUpdateConfigModal();
   updateFeedUrlInputEl.focus();
   updateFeedUrlInputEl.select();
@@ -533,6 +543,12 @@ apiConfigFormEl.addEventListener('submit', async (event) => {
 });
 updateConfigFormEl.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (saveUpdateConfigBtn.disabled) {
+    pickerStatusEl.textContent = 'Auto update feed is read-only in electron-updater mode.';
+    hideUpdateConfigModal();
+    return;
+  }
+
   const feedUrl = updateFeedUrlInputEl.value.trim();
   const githubOwner = updateGithubOwnerInputEl.value.trim();
   const githubRepo = updateGithubRepoInputEl.value.trim();
@@ -551,7 +567,7 @@ updateConfigFormEl.addEventListener('submit', async (event) => {
 
   const data = response.data || {};
   setUpdateStatusText(`Feed configured (${data.source || 'config'}).`);
-  pickerStatusEl.textContent = `AUTO_UPDATE_FEED_URL set to ${data.feedUrl || '-'}`;
+  pickerStatusEl.textContent = `Update source configured to ${data.feedUrl || '-'}`;
   hideUpdateConfigModal();
 });
 prevPageBtn.addEventListener('click', async () => {

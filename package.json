@@ -8,9 +8,10 @@
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-forge make",
+    "make": "electron-builder --win nsis",
+    "dist:win": "electron-builder --win nsis",
     "make:wizard": "powershell -ExecutionPolicy Bypass -File scripts/build-wizard-installer.ps1",
-    "publish": "electron-forge publish",
+    "publish": "electron-builder --win nsis --publish always",
     "lint": "echo \"No linting configured\""
   },
   "keywords": [],
@@ -18,9 +19,13 @@
     "name": "saefulmillah",
     "email": "saeful.millah0607@gmail.com"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/saefulmillah/cctv-desktop.git"
+  },
   "license": "MIT",
   "dependencies": {
-    "electron-squirrel-startup": "^1.0.1"
+    "electron-updater": "^6.6.2"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.1",
@@ -31,6 +36,37 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.11.1",
     "@electron-forge/plugin-fuses": "^7.11.1",
     "@electron/fuses": "^1.8.0",
-    "electron": "40.4.1"
+    "electron": "40.4.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.saefulmillah.cctvdesktop",
+    "productName": "cctv-desktop",
+    "directories": {
+      "output": "out/builder"
+    },
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "saefulmillah",
+        "repo": "cctv-desktop"
+      }
+    ]
   }
 }

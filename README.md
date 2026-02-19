@@ -37,9 +37,9 @@ npm run make:wizard
 
 - `npm start`: Start Electron app in development mode.
 - `npm run package`: Package the app without creating installers.
-- `npm run make`: Build platform installer/artifacts.
+- `npm run make`: Build Windows NSIS installer/artifacts via electron-builder.
 - `npm run make:wizard`: Build Windows wizard installer using Inno Setup.
-- `npm run publish`: Publish artifacts (if configured).
+- `npm run publish`: Build and publish Windows NSIS release artifacts.
 
 ## Features
 
@@ -54,24 +54,17 @@ npm run make:wizard
 ## Auto Update Setup (Windows)
 
 This app supports manual update checks from the in-app toolbar (`Check Update` button) and
-feed configuration from UI (`Config Update` / `Shift+U`).
+update information from UI (`Update Info` / `Shift+U`).
 
 Requirements:
 
 - Packaged app (not `npm start` development mode).
-- Windows installer build using Squirrel (`npm run make`).
-- Update feed URL configured in app settings (`app-config.json`).
+- Windows NSIS installer build using electron-builder (`npm run make`).
+- GitHub publish target configured in `package.json` (`build.publish`).
 
-GitHub Releases endpoint format used by this app:
+GitHub Releases are consumed by `electron-updater` from builder metadata (`latest.yml`).
 
-- `https://update.electronjs.org/<owner>/<repo>/win32-x64/<current-version>`
-
-You can configure feed in two ways from UI:
-
-- Manual URL: fill `AUTO_UPDATE_FEED_URL`.
-- GitHub generator: fill `GitHub owner` + `GitHub repo`, enable `Use GitHub Releases endpoint generator`.
-
-Note: `update.electronjs.org` works for public GitHub repositories.
+Runtime feed override from UI is disabled in this mode.
 
 Update flow:
 

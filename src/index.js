@@ -1,11 +1,11 @@
 const {
   app,
-  autoUpdater,
   BrowserWindow,
   dialog,
   globalShortcut,
   ipcMain,
 } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -77,8 +77,6 @@ const persistApiBaseUrl = async (apiBaseUrl) => {
   });
 };
 
-const normalizeConfigString = (value) => (typeof value === 'string' ? value.trim() : '');
-
 const parseGitHubRepoFromPackageJson = () => {
   try {
     const raw = fs.readFileSync(APP_PACKAGE_JSON_PATH, 'utf8');
@@ -111,93 +109,33 @@ const parseGitHubRepoFromPackageJson = () => {
 
 const getPlatformArchTarget = () => `${process.platform}-${process.arch}`;
 
-const buildGitHubReleasesFeedUrl = (owner, repo) => {
-  const encodedOwner = encodeURIComponent(owner);
-  const encodedRepo = encodeURIComponent(repo);
-  const target = getPlatformArchTarget();
-  const currentVersion = app.getVersion();
-  return `https://update.electronjs.org/${encodedOwner}/${encodedRepo}/${target}/${currentVersion}`;
-};
+const parseBuilderPublishFromPackageJson = () => {
+  try {
+    const raw = fs.readFileSync(APP_PACKAGE_JSON_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    const publish = parsed && parsed.build ? parsed.build.publish : null;
+    const list = Array.isArray(publish) ? publish : publish ? [publish] : [];
+    const githubProvider = list.find(
+      (item) =>
+        item &&
+        typeof item === 'object' &&
+        String(item.provider || '').toLowerCase() === 'github'
+    );
 
-const resolveFeedFromConfig = (config) => {
-  const directFeedUrl = normalizeConfigString(config.AUTO_UPDATE_FEED_URL);
-  const configOwner = normalizeConfigString(config.AUTO_UPDATE_GITHUB_OWNER);
-  const configRepo = normalizeConfigString(config.AUTO_UPDATE_GITHUB_REPO);
-  const packageRepo = parseGitHubRepoFromPackageJson();
+    if (!githubProvider) {
+      return null;
+    }
 
-  if (configOwner && configRepo) {
-    return {
-      feedUrl: buildGitHubReleasesFeedUrl(configOwner, configRepo),
-      source: 'github-release-config',
-      githubOwner: configOwner,
-      githubRepo: configRepo,
-      suggestedGitHubOwner: packageRepo && packageRepo.owner ? packageRepo.owner : '',
-      suggestedGitHubRepo: packageRepo && packageRepo.repo ? packageRepo.repo : '',
-      suggestedFeedUrl:
-        packageRepo && packageRepo.owner && packageRepo.repo
-          ? buildGitHubReleasesFeedUrl(packageRepo.owner, packageRepo.repo)
-          : '',
-    };
+    const owner = String(githubProvider.owner || '').trim();
+    const repo = String(githubProvider.repo || '').trim();
+    if (!owner || !repo) {
+      return null;
+    }
+
+    return { owner, repo };
+  } catch (_) {
+    return null;
   }
-
-  if (directFeedUrl) {
-    return {
-      feedUrl: directFeedUrl,
-      source: 'config',
-      githubOwner: configOwner,
-      githubRepo: configRepo,
-      suggestedGitHubOwner: packageRepo && packageRepo.owner ? packageRepo.owner : '',
-      suggestedGitHubRepo: packageRepo && packageRepo.repo ? packageRepo.repo : '',
-      suggestedFeedUrl:
-        packageRepo && packageRepo.owner && packageRepo.repo
-          ? buildGitHubReleasesFeedUrl(packageRepo.owner, packageRepo.repo)
-          : '',
-    };
-  }
-
-  if (packageRepo && packageRepo.owner && packageRepo.repo) {
-    return {
-      feedUrl: buildGitHubReleasesFeedUrl(packageRepo.owner, packageRepo.repo),
-      source: 'github-release-package',
-      githubOwner: configOwner,
-      githubRepo: configRepo,
-      suggestedGitHubOwner: packageRepo && packageRepo.owner ? packageRepo.owner : '',
-      suggestedGitHubRepo: packageRepo && packageRepo.repo ? packageRepo.repo : '',
-      suggestedFeedUrl:
-        packageRepo && packageRepo.owner && packageRepo.repo
-          ? buildGitHubReleasesFeedUrl(packageRepo.owner, packageRepo.repo)
-          : '',
-    };
-  }
-
-  const envFeedUrl = normalizeConfigString(process.env.AUTO_UPDATE_FEED_URL);
-  if (envFeedUrl) {
-    return {
-      feedUrl: envFeedUrl,
-      source: 'env',
-      githubOwner: configOwner,
-      githubRepo: configRepo,
-      suggestedGitHubOwner: packageRepo && packageRepo.owner ? packageRepo.owner : '',
-      suggestedGitHubRepo: packageRepo && packageRepo.repo ? packageRepo.repo : '',
-      suggestedFeedUrl:
-        packageRepo && packageRepo.owner && packageRepo.repo
-          ? buildGitHubReleasesFeedUrl(packageRepo.owner, packageRepo.repo)
-          : '',
-    };
-  }
-
-  return {
-    feedUrl: '',
-    source: '',
-    githubOwner: configOwner,
-    githubRepo: configRepo,
-    suggestedGitHubOwner: packageRepo && packageRepo.owner ? packageRepo.owner : '',
-    suggestedGitHubRepo: packageRepo && packageRepo.repo ? packageRepo.repo : '',
-    suggestedFeedUrl:
-      packageRepo && packageRepo.owner && packageRepo.repo
-        ? buildGitHubReleasesFeedUrl(packageRepo.owner, packageRepo.repo)
-        : '',
-  };
 };
 
 const sendUpdateStatus = (payload) => {
@@ -213,22 +151,11 @@ const toUpdateError = (error, fallbackMessage) => ({
   message: (error && error.message) || fallbackMessage,
 });
 
-const resolveAutoUpdateFeedUrl = async () => {
-  const config = await readConfig();
-  const resolved = resolveFeedFromConfig(config);
-  return resolved.feedUrl;
-};
+const getAutoUpdateRepository = () =>
+  parseBuilderPublishFromPackageJson() || parseGitHubRepoFromPackageJson();
 
-const getSquirrelUpdateExePath = () =>
-  path.resolve(path.dirname(process.execPath), '..', 'Update.exe');
-
-const hasSquirrelRuntime = () => {
-  if (process.platform !== 'win32') {
-    return false;
-  }
-
-  return fs.existsSync(getSquirrelUpdateExePath());
-};
+const toGitHubLatestReleaseUrl = (owner, repo) =>
+  `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`;
 
 const setupAutoUpdater = async () => {
   autoUpdaterConfigured = false;
@@ -249,113 +176,53 @@ const setupAutoUpdater = async () => {
     return;
   }
 
-  if (!hasSquirrelRuntime()) {
+  const repository = getAutoUpdateRepository();
+  if (!repository) {
     sendUpdateStatus({
       state: 'disabled',
-      message: 'Auto update requires Squirrel installation (run the Squirrel Setup.exe installer).',
+      message: 'GitHub publish target is not configured in package.json build.publish.',
     });
     return;
   }
 
-  const feedUrl = await resolveAutoUpdateFeedUrl();
-  if (!feedUrl) {
-    sendUpdateStatus({
-      state: 'disabled',
-      message: 'AUTO_UPDATE_FEED_URL is not configured.',
-    });
-    return;
-  }
-
-  try {
-    autoUpdater.setFeedURL({ url: feedUrl });
-    autoUpdaterConfigured = true;
-    sendUpdateStatus({
-      state: 'ready',
-      message: 'Updater ready.',
-    });
-  } catch (error) {
-    autoUpdaterConfigured = false;
-    sendUpdateStatus({
-      state: 'error',
-      message: (error && error.message) || 'Failed to configure updater.',
-    });
-  }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdaterConfigured = true;
+  sendUpdateStatus({
+    state: 'ready',
+    message: 'Updater ready.',
+  });
 };
 
 const getAutoUpdateConfig = async () => {
-  const config = await readConfig();
-  const resolved = resolveFeedFromConfig(config);
+  const repository = getAutoUpdateRepository();
+  const owner = repository && repository.owner ? repository.owner : '';
+  const repo = repository && repository.repo ? repository.repo : '';
+  const latestReleaseUrl = owner && repo ? toGitHubLatestReleaseUrl(owner, repo) : '';
 
   return {
-    feedUrl: resolved.feedUrl,
-    source: resolved.source,
-    githubOwner: resolved.githubOwner,
-    githubRepo: resolved.githubRepo,
-    suggestedGitHubOwner: resolved.suggestedGitHubOwner,
-    suggestedGitHubRepo: resolved.suggestedGitHubRepo,
-    suggestedFeedUrl: resolved.suggestedFeedUrl,
+    feedUrl: latestReleaseUrl,
+    source: 'electron-updater-github',
+    githubOwner: owner,
+    githubRepo: repo,
+    suggestedGitHubOwner: owner,
+    suggestedGitHubRepo: repo,
+    suggestedFeedUrl: latestReleaseUrl,
     platformArchTarget: getPlatformArchTarget(),
     appVersion: app.getVersion(),
+    mode: 'electron-updater',
+    message:
+      'Feed URL is managed by electron-builder build.publish. Runtime custom feed override is disabled.',
   };
 };
 
-const validateUrl = (rawValue, fieldName) => {
-  let parsed;
-  try {
-    parsed = new URL(rawValue);
-  } catch (_) {
-    const error = new Error(`${fieldName} must be a valid URL.`);
-    error.status = 400;
-    throw error;
-  }
-
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    const error = new Error(`${fieldName} must use http or https.`);
-    error.status = 400;
-    throw error;
-  }
-};
-
 const persistAutoUpdateConfig = async (payload) => {
-  const nextFeedUrl = normalizeConfigString(payload && payload.feedUrl);
-  const nextGithubOwner = normalizeConfigString(payload && payload.githubOwner);
-  const nextGithubRepo = normalizeConfigString(payload && payload.githubRepo);
-  const useGitHubRelease = Boolean(payload && payload.useGitHubRelease);
-  const config = await readConfig();
-
-  let resolvedFeedUrl = nextFeedUrl;
-  let resolvedOwner = nextGithubOwner;
-  let resolvedRepo = nextGithubRepo;
-
-  if (useGitHubRelease || resolvedOwner || resolvedRepo) {
-    if (!resolvedOwner || !resolvedRepo) {
-      const error = new Error('GitHub owner and repository are required.');
-      error.status = 400;
-      throw error;
-    }
-
-    resolvedFeedUrl = buildGitHubReleasesFeedUrl(resolvedOwner, resolvedRepo);
-    validateUrl(resolvedFeedUrl, 'AUTO_UPDATE_FEED_URL');
-  } else {
-    if (!resolvedFeedUrl) {
-      const error = new Error('AUTO_UPDATE_FEED_URL cannot be empty.');
-      error.status = 400;
-      throw error;
-    }
-    validateUrl(resolvedFeedUrl, 'AUTO_UPDATE_FEED_URL');
-    resolvedOwner = '';
-    resolvedRepo = '';
-  }
-
-  await writeConfig({
-    ...config,
-    AUTO_UPDATE_FEED_URL: resolvedFeedUrl,
-    AUTO_UPDATE_GITHUB_OWNER: resolvedOwner,
-    AUTO_UPDATE_GITHUB_REPO: resolvedRepo,
-  });
-
-  await setupAutoUpdater();
-  return getAutoUpdateConfig();
+  void payload;
+  const error = new Error(
+    'Runtime update feed config is disabled in electron-updater mode. Update package.json build.publish instead.'
+  );
+  error.status = 400;
+  throw error;
 };
 
 const promptInstallUpdate = async () => {
@@ -404,9 +271,18 @@ const registerAutoUpdaterHandlers = () => {
   });
 
   autoUpdater.on('update-available', () => {
+    autoUpdaterChecking = true;
     sendUpdateStatus({
       state: 'downloading',
       message: 'Update found. Downloading...',
+    });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    const percent = progress && Number.isFinite(progress.percent) ? progress.percent : 0;
+    sendUpdateStatus({
+      state: 'downloading',
+      message: `Downloading update... ${percent.toFixed(1)}%`,
     });
   });
 
@@ -689,24 +565,14 @@ const registerServiceHandlers = () => {
       };
     }
 
-    if (!hasSquirrelRuntime()) {
-      return {
-        status: 200,
-        data: {
-          state: 'disabled',
-          message: 'Auto update requires Squirrel installation (run the Squirrel Setup.exe installer).',
-        },
-      };
-    }
-
     if (!autoUpdaterConfigured) {
-      const feedUrl = await resolveAutoUpdateFeedUrl();
-      if (!feedUrl) {
+      const repository = getAutoUpdateRepository();
+      if (!repository) {
         return {
           status: 200,
           data: {
             state: 'disabled',
-            message: 'AUTO_UPDATE_FEED_URL is not configured.',
+            message: 'GitHub publish target is not configured in package.json build.publish.',
           },
         };
       }
