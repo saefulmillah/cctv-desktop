@@ -8,23 +8,15 @@ const toolbarMenuBtn = document.getElementById('toolbarMenuBtn');
 const toolbarMenuPanel = document.getElementById('toolbarMenuPanel');
 const menuApiConfigBtn = document.getElementById('menuApiConfigBtn');
 const menuUpdateInfoBtn = document.getElementById('menuUpdateInfoBtn');
-const menuToggleDetailsBtn = document.getElementById('menuToggleDetailsBtn');
 const menuHelpBtn = document.getElementById('menuHelpBtn');
-const toolbarDetailsEl = document.getElementById('toolbarDetails');
-const updateProgressWrapEl = document.getElementById('updateProgressWrap');
-const updateProgressBarEl = document.getElementById('updateProgressBar');
-const updateProgressTextEl = document.getElementById('updateProgressText');
-const updateStatusBtn = document.getElementById('updateStatusBtn');
 const currentBranchEl = document.getElementById('currentBranch');
 const installedVersionEl = document.getElementById('installedVersion');
 const pagingControlEl = document.getElementById('pagingControl');
 const prevPageBtn = document.getElementById('prevPageBtn');
 const nextPageBtn = document.getElementById('nextPageBtn');
 const pageInfoEl = document.getElementById('pageInfo');
-const apiBaseUrlEl = document.getElementById('apiBaseUrl');
 const checkUpdateBtn = document.getElementById('checkUpdateBtn');
 const reloadStreamBtn = document.getElementById('reloadStreamBtn');
-const updateStatusEl = document.getElementById('updateStatus');
 const apiConfigModalEl = document.getElementById('apiConfigModal');
 const closeApiConfigBtn = document.getElementById('closeApiConfigBtn');
 const apiConfigFormEl = document.getElementById('apiConfigForm');
@@ -56,11 +48,10 @@ let isCheckingUpdate = false;
 let isRefreshingStreams = false;
 let toolbarPinnedByMouse = false;
 let toolbarHideTimer = null;
-let toolbarDetailsVisible = false;
 let latestUpdatePayload = null;
 
 const setApiBaseUrlText = (value) => {
-  apiBaseUrlEl.textContent = `API: ${value || '-'}`;
+  void value;
 };
 
 const setInstalledVersionText = (value) => {
@@ -68,23 +59,7 @@ const setInstalledVersionText = (value) => {
 };
 
 const setUpdateStatusText = (message) => {
-  updateStatusEl.textContent = `Update: ${message || '-'}`;
-};
-
-const setToolbarDetailsVisible = (visible) => {
-  toolbarDetailsVisible = visible;
-  toolbarDetailsEl.classList.toggle('hidden', !visible);
-  menuToggleDetailsBtn.textContent = visible ? 'Hide Details' : 'Show Details';
-};
-
-const setUpdateProgressVisible = (visible) => {
-  updateProgressWrapEl.classList.toggle('hidden', !visible);
-};
-
-const setUpdateProgress = (percent) => {
-  const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
-  updateProgressBarEl.style.width = `${safePercent}%`;
-  updateProgressTextEl.textContent = `${safePercent.toFixed(1)}%`;
+  updateInfoMessageEl.textContent = String(message || '-');
 };
 
 const syncUpdateInfoCard = (payload, configData) => {
@@ -126,7 +101,7 @@ const setReloadButtonState = (refreshing) => {
   reloadStreamBtn.disabled = refreshing || !hasActiveBranch;
   reloadStreamBtn.innerHTML = refreshing
     ? '<span class="btn-icon" aria-hidden="true">&#x21bb;</span><span>Refreshing...</span>'
-    : '<span class="btn-icon" aria-hidden="true">&#x21bb;</span><span>Reload Stream</span>';
+    : '<span class="btn-icon" aria-hidden="true">&#x21bb;</span><span>Reload</span>';
 };
 
 const normalizeUpdateMessage = (payload) => {
@@ -542,7 +517,6 @@ const openUpdateFeedConfig = async () => {
     pickerStatusEl.textContent = data.message || 'Auto update feed is managed by build configuration.';
   }
   syncUpdateInfoCard(latestUpdatePayload, data);
-  setToolbarDetailsVisible(true);
   showUpdateConfigModal();
   updateFeedUrlInputEl.focus();
   updateFeedUrlInputEl.select();
@@ -618,17 +592,8 @@ menuHelpBtn.addEventListener('click', () => {
   setToolbarMenuVisible(false);
   showHelp();
 });
-menuToggleDetailsBtn.addEventListener('click', () => {
-  setToolbarMenuVisible(false);
-  setToolbarDetailsVisible(!toolbarDetailsVisible);
-});
 reloadStreamBtn.addEventListener('click', () => {
   refreshCurrentStreams();
-});
-updateStatusBtn.addEventListener('click', () => {
-  openUpdateFeedConfig().catch(() => {
-    pickerStatusEl.textContent = 'Failed to open update information.';
-  });
 });
 closeApiConfigBtn.addEventListener('click', hideApiConfigModal);
 closeUpdateConfigBtn.addEventListener('click', hideUpdateConfigModal);
@@ -684,7 +649,6 @@ apiConfigFormEl.addEventListener('submit', async (event) => {
   const updatedApiBaseUrl =
     response && response.data && response.data.apiBaseUrl ? response.data.apiBaseUrl : '';
   setApiBaseUrlText(updatedApiBaseUrl);
-  setToolbarDetailsVisible(true);
   pickerStatusEl.textContent = `API_BASE_URL updated to ${updatedApiBaseUrl}`;
   hideApiConfigModal();
 });
@@ -748,9 +712,6 @@ checkUpdateBtn.addEventListener('click', async () => {
     return;
   }
 
-  setToolbarDetailsVisible(true);
-  setUpdateProgressVisible(false);
-  setUpdateProgress(0);
   setUpdateButtonState(true);
   setUpdateStatusText('Checking for update...');
 
@@ -768,9 +729,6 @@ checkUpdateBtn.addEventListener('click', async () => {
 updatePagingUi();
 setPagingVisible(false);
 setReloadButtonState(false);
-setToolbarDetailsVisible(false);
-setUpdateProgressVisible(false);
-setUpdateProgress(0);
 setToolbarMenuVisible(false);
 setToolbarVisible(false);
 setUpdateStatusText('idle');
@@ -797,26 +755,9 @@ window.appUpdater
   });
 window.appUpdater.onStatus((payload) => {
   const state = payload && payload.state ? String(payload.state) : '';
-  const progressPercent =
-    payload && Number.isFinite(Number(payload.percent)) ? Number(payload.percent) : 0;
   latestUpdatePayload = payload || latestUpdatePayload;
   syncUpdateInfoCard(latestUpdatePayload);
   setUpdateStatusText(normalizeUpdateMessage(payload));
-  if (state === 'checking' || state === 'downloading' || state === 'error') {
-    setToolbarDetailsVisible(true);
-  }
-
-  if (state === 'downloading') {
-    setUpdateProgressVisible(true);
-    setUpdateProgress(progressPercent);
-  } else {
-    setUpdateProgressVisible(false);
-    if (state === 'downloaded') {
-      setUpdateProgress(100);
-    } else {
-      setUpdateProgress(0);
-    }
-  }
 
   if (state === 'checking' || state === 'downloading') {
     setUpdateButtonState(true);
