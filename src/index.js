@@ -275,6 +275,7 @@ const registerAutoUpdaterHandlers = () => {
     sendUpdateStatus({
       state: 'downloading',
       message: 'Update found. Downloading...',
+      percent: 0,
     });
   });
 
@@ -283,6 +284,7 @@ const registerAutoUpdaterHandlers = () => {
     sendUpdateStatus({
       state: 'downloading',
       message: `Downloading update... ${percent.toFixed(1)}%`,
+      percent,
     });
   });
 
@@ -308,6 +310,7 @@ const registerAutoUpdaterHandlers = () => {
     sendUpdateStatus({
       state: 'downloaded',
       message: 'Update downloaded. Waiting for confirmation.',
+      percent: 100,
     });
     await promptInstallUpdate();
   });
