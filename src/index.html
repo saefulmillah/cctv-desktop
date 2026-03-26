@@ -15,7 +15,7 @@
           <p class="eyebrow">HK Toll Vision</p>
           <h1 id="activeRouteTitle">Ruas Belum Dipilih</h1>
         </div>
-        <span id="modeBadge" class="mode-badge">Normal Mode</span>
+        <span id="modeBadge" class="mode-badge sidebar-section-hidden">Normal Mode</span>
       </div>
 
       <div class="activity-panel__stats">
@@ -33,13 +33,34 @@
         </article>
       </div>
 
-      <div class="activity-panel__meta">
+      <div class="activity-panel__meta sidebar-section-hidden">
         <span id="currentBranchMini" class="meta-pill">Branch: -</span>
         <span id="activityVersion" class="meta-pill">Version: -</span>
         <span id="apiBaseUrlLabel" class="meta-pill">API: -</span>
       </div>
 
-      <div class="activity-panel__feed-wrap">
+      <div class="map-panel">
+        <div class="map-panel__header">
+          <h2>Peta CCTV</h2>
+          <span id="sidebarMapSummary" class="meta-pill">Belum ada marker</span>
+        </div>
+        <div class="map-panel__legend" aria-label="Map legend">
+          <span class="map-legend-item">
+            <img src="./assets/maps-marker_32x32.ico" alt="" />
+            <span>Online</span>
+          </span>
+          <span class="map-legend-item">
+            <img src="./assets/maps-marker_32x32-offline.ico" alt="" />
+            <span>Offline</span>
+          </span>
+        </div>
+        <div id="sidebarMap" class="sidebar-map sidebar-section-hidden" aria-label="CCTV map"></div>
+        <div id="sidebarMapEmpty" class="sidebar-map-empty">
+          Pilih ruas untuk memuat marker CCTV berdasarkan koordinat kamera.
+        </div>
+      </div>
+
+      <div class="activity-panel__feed-wrap sidebar-section-hidden">
         <div class="activity-panel__feed-head">
           <h2>Recent Activity</h2>
           <span id="updateStatusBadge" class="status-pill neutral">Updater idle</span>
@@ -155,6 +176,26 @@
             placeholder="Bearer token"
             rows="4"
           ></textarea>
+          <div id="apiTokenInfo" class="token-info-card hidden" aria-live="polite">
+            <div class="token-info-grid">
+              <div class="token-info-item">
+                <span class="token-info-label">Username</span>
+                <strong id="apiTokenUsername">-</strong>
+              </div>
+              <div class="token-info-item">
+                <span class="token-info-label">Role</span>
+                <strong id="apiTokenRole">-</strong>
+              </div>
+              <div class="token-info-item">
+                <span class="token-info-label">Status</span>
+                <strong id="apiTokenStatus">-</strong>
+              </div>
+              <div class="token-info-item">
+                <span class="token-info-label">Expired</span>
+                <strong id="apiTokenExpiry">-</strong>
+              </div>
+            </div>
+          </div>
           <div id="apiCheckStatus" class="api-check-status neutral">
             Enter an API URL, then use Check URL to verify connectivity.
           </div>
