@@ -1,5 +1,6 @@
 const DEFAULT_API_BASE_URL = 'http://localhost:3002';
 let apiBaseUrl = process.env.API_BASE_URL || DEFAULT_API_BASE_URL;
+let apiAuthToken = String(process.env.API_AUTH_TOKEN || '').trim();
 
 const normalizeApiBaseUrl = (value) => {
   const rawValue = String(value || '').trim();
@@ -23,6 +24,19 @@ const normalizeApiBaseUrl = (value) => {
 
 apiBaseUrl = normalizeApiBaseUrl(apiBaseUrl);
 
+const buildAuthHeaders = (headers = {}) => {
+  const nextHeaders = {
+    'Content-Type': 'application/json',
+    ...headers,
+  };
+
+  if (apiAuthToken) {
+    nextHeaders.Authorization = `Bearer ${apiAuthToken}`;
+  }
+
+  return nextHeaders;
+};
+
 const buildUrl = (pathname, query = {}) => {
   const url = new URL(pathname, apiBaseUrl);
   Object.entries(query).forEach(([key, value]) => {
@@ -39,33 +53,64 @@ const toPathAndSearch = (urlString) => {
   return `${url.pathname}${url.search}`;
 };
 
-const toError = async (response) => {
+const logApiError = ({ method, url, status, payload, rawBody, message }) => {
+  const detail = {
+    method,
+    url,
+    status,
+    message,
+  };
+
+  if (payload !== null && payload !== undefined) {
+    detail.payload = payload;
+  } else if (rawBody) {
+    detail.rawBody = rawBody;
+  }
+
+  console.error('[cameraService] API request failed', detail);
+};
+
+const toError = async (response, requestMeta = {}) => {
   let payload = null;
+  let rawBody = '';
   try {
     payload = await response.json();
   } catch (_) {
+    try {
+      rawBody = await response.text();
+    } catch (_) {
+      rawBody = '';
+    }
     payload = null;
   }
 
   const message =
     (payload && payload.message) || `Request failed with status ${response.status}`;
+  logApiError({
+    method: requestMeta.method || 'GET',
+    url: requestMeta.url || 'unknown',
+    status: response.status,
+    payload,
+    rawBody,
+    message,
+  });
   const error = new Error(message);
   error.status = response.status;
   error.payload = payload;
+  error.rawBody = rawBody;
   throw error;
 };
 
 const requestJson = async (pathname, options = {}) => {
-  const response = await fetch(`${apiBaseUrl}${pathname}`, {
+  const method = options.method || 'GET';
+  const url = `${apiBaseUrl}${pathname}`;
+  const response = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
+    headers: buildAuthHeaders(options.headers || {}),
   });
 
   if (!response.ok) {
-    await toError(response);
+    await toError(response, { method, url });
   }
 
   return response.json();
@@ -75,10 +120,60 @@ const getHealth = () => requestJson('/health');
 
 const getApiDocsUrl = () => `${apiBaseUrl}/api-docs`;
 const getApiBaseUrl = () => apiBaseUrl;
+const getApiAuthToken = () => apiAuthToken;
 
 const setApiBaseUrl = (nextApiBaseUrl) => {
   apiBaseUrl = normalizeApiBaseUrl(nextApiBaseUrl);
   return apiBaseUrl;
+};
+
+const setApiAuthToken = (nextApiAuthToken) => {
+  apiAuthToken = String(nextApiAuthToken || '').trim();
+  return apiAuthToken;
+};
+
+const checkApiBaseUrl = async (candidateApiBaseUrl, candidateApiAuthToken = '') => {
+  const normalizedApiBaseUrl = normalizeApiBaseUrl(candidateApiBaseUrl);
+  const normalizedApiAuthToken = String(candidateApiAuthToken || '').trim();
+  const headers = buildAuthHeaders();
+  if (normalizedApiAuthToken) {
+    headers.Authorization = `Bearer ${normalizedApiAuthToken}`;
+  }
+  const response = await fetch(`${normalizedApiBaseUrl}/health`, {
+    headers,
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_) {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    logApiError({
+      method: 'GET',
+      url: `${normalizedApiBaseUrl}/health`,
+      status: response.status,
+      payload,
+      rawBody: '',
+      message:
+        (payload && payload.message) || `Health check failed with status ${response.status}`,
+    });
+    const error = new Error(
+      (payload && payload.message) || `Health check failed with status ${response.status}`
+    );
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+
+  return {
+    apiBaseUrl: normalizedApiBaseUrl,
+    apiAuthToken: normalizedApiAuthToken,
+    message: (payload && payload.message) || 'API health check succeeded.',
+    health: payload,
+  };
 };
 
 const getBranches = (query = {}) =>
@@ -95,6 +190,9 @@ const getCamerasByBranch = (branchId, page = 1) =>
 const getCameras = (query = {}) =>
   requestJson(toPathAndSearch(buildUrl('/api/cameras', query)));
 
+const searchCameras = (query = {}) =>
+  requestJson(toPathAndSearch(buildUrl('/api/cameras/search', query)));
+
 const createCamera = (payload) =>
   requestJson('/api/cameras', {
     method: 'POST',
@@ -104,12 +202,16 @@ const createCamera = (payload) =>
 module.exports = {
   getApiDocsUrl,
   getApiBaseUrl,
+  getApiAuthToken,
   getBranches,
   getBranchPages,
   getCameras,
+  searchCameras,
   getCamerasByBranch,
   getGates,
   getHealth,
+  checkApiBaseUrl,
+  setApiAuthToken,
   setApiBaseUrl,
   createCamera,
 };

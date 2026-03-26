@@ -2,12 +2,20 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('cameraService', {
   createCamera: (payload) => ipcRenderer.invoke('camera-service:create-camera', payload),
+  getApiAuthToken: () => ipcRenderer.invoke('camera-service:get-api-auth-token'),
   getApiBaseUrl: () => ipcRenderer.invoke('camera-service:get-api-base-url'),
   getApiDocsUrl: () => ipcRenderer.invoke('camera-service:get-api-docs-url'),
+  checkApiBaseUrl: (candidateApiBaseUrl, candidateApiAuthToken) =>
+    ipcRenderer.invoke(
+      'camera-service:check-api-base-url',
+      candidateApiBaseUrl,
+      candidateApiAuthToken
+    ),
   getBranchPages: (branchId) =>
     ipcRenderer.invoke('camera-service:get-branch-pages', branchId),
   getBranches: (query) => ipcRenderer.invoke('camera-service:get-branches', query),
   getCameras: (query) => ipcRenderer.invoke('camera-service:get-cameras', query),
+  searchCameras: (query) => ipcRenderer.invoke('camera-service:search-cameras', query),
   getCamerasByBranch: (branchId, page) =>
     ipcRenderer.invoke('camera-service:get-cameras-by-branch', branchId, page),
   getGates: (query) => ipcRenderer.invoke('camera-service:get-gates', query),
@@ -30,8 +38,44 @@ contextBridge.exposeInMainWorld('cameraService', {
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   },
-  setApiBaseUrl: (nextApiBaseUrl) =>
-    ipcRenderer.invoke('camera-service:set-api-base-url', nextApiBaseUrl),
+  onOpenHelp: (callback) => {
+    const channel = 'shortcut:open-help';
+    const listener = () => callback();
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  onOpenCameraSearch: (callback) => {
+    const channel = 'shortcut:open-camera-search';
+    const listener = () => callback();
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  onOpenLayoutConfig: (callback) => {
+    const channel = 'shortcut:open-layout-config';
+    const listener = () => callback();
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  onEnterFocusMode: (callback) => {
+    const channel = 'shortcut:enter-focus-mode';
+    const listener = () => callback();
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  onLeaveFocusMode: (callback) => {
+    const channel = 'shortcut:leave-focus-mode';
+    const listener = () => callback();
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  onReloadStreams: (callback) => {
+    const channel = 'shortcut:reload-streams';
+    const listener = () => callback();
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  setApiConfig: (nextApiBaseUrl, nextApiAuthToken) =>
+    ipcRenderer.invoke('camera-service:set-api-config', nextApiBaseUrl, nextApiAuthToken),
 });
 
 contextBridge.exposeInMainWorld('appUpdater', {

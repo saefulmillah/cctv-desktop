@@ -1,0 +1,144 @@
+<svg width="1600" height="1000" viewBox="0 0 1600 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="120" y1="80" x2="1480" y2="920" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07111E"/>
+      <stop offset="0.55" stop-color="#0E2135"/>
+      <stop offset="1" stop-color="#061019"/>
+    </linearGradient>
+    <linearGradient id="card" x1="280" y1="170" x2="1280" y2="830" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0D1B2B" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#09121D" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="video" x1="330" y1="230" x2="1230" y2="770" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2A4C67"/>
+      <stop offset="0.45" stop-color="#1B3346"/>
+      <stop offset="1" stop-color="#0D1822"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="390" y1="260" x2="1110" y2="780" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.18"/>
+      <stop offset="0.35" stop-color="white" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="white" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="180" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17C964"/>
+      <stop offset="1" stop-color="#69F0AE"/>
+    </linearGradient>
+    <filter id="shadow" x="220" y="120" width="1160" height="760" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="18"/>
+      <feGaussianBlur stdDeviation="28"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.0117647 0 0 0 0 0.0588235 0 0 0 0 0.101961 0 0 0 0.45 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_0_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_0_1" result="shape"/>
+    </filter>
+    <filter id="blurPanel" x="0" y="0" width="1600" height="1000" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feGaussianBlur in="BackgroundImageFix" stdDeviation="12"/>
+      <feComposite in2="SourceAlpha" operator="in" result="effect1_backgroundBlur_0_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_backgroundBlur_0_1" result="shape"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#bg)"/>
+  <circle cx="190" cy="130" r="220" fill="#113A5C" fill-opacity="0.45"/>
+  <circle cx="1440" cy="920" r="280" fill="#0D5E54" fill-opacity="0.22"/>
+  <circle cx="1240" cy="180" r="190" fill="#1B355D" fill-opacity="0.28"/>
+
+  <g opacity="0.15">
+    <path d="M0 120H1600" stroke="white"/>
+    <path d="M0 320H1600" stroke="white"/>
+    <path d="M0 520H1600" stroke="white"/>
+    <path d="M0 720H1600" stroke="white"/>
+    <path d="M0 920H1600" stroke="white"/>
+    <path d="M240 0V1000" stroke="white"/>
+    <path d="M560 0V1000" stroke="white"/>
+    <path d="M880 0V1000" stroke="white"/>
+    <path d="M1200 0V1000" stroke="white"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="280" y="170" width="1040" height="660" rx="34" fill="url(#card)"/>
+    <rect x="281" y="171" width="1038" height="658" rx="33" stroke="white" stroke-opacity="0.08" stroke-width="2"/>
+  </g>
+
+  <rect x="330" y="230" width="940" height="540" rx="26" fill="url(#video)"/>
+  <rect x="330" y="230" width="940" height="540" rx="26" stroke="#7ED4FF" stroke-opacity="0.22" stroke-width="2"/>
+  <path d="M330 420C460 360 598 334 760 344C942 355 1100 432 1270 382V744C1110 724 960 710 812 710C660 710 501 730 330 770V420Z" fill="#0A121A" fill-opacity="0.46"/>
+  <rect x="330" y="230" width="940" height="540" rx="26" fill="url(#shine)"/>
+
+  <g opacity="0.7">
+    <path d="M390 310H610" stroke="#D2F5FF" stroke-opacity="0.45" stroke-width="4" stroke-linecap="round"/>
+    <path d="M390 338H550" stroke="#D2F5FF" stroke-opacity="0.28" stroke-width="3" stroke-linecap="round"/>
+    <path d="M1000 320H1200" stroke="#D2F5FF" stroke-opacity="0.18" stroke-width="3" stroke-linecap="round"/>
+    <path d="M1020 350H1170" stroke="#D2F5FF" stroke-opacity="0.12" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <g filter="url(#blurPanel)">
+    <rect x="362" y="260" width="178" height="44" rx="22" fill="#0D1621" fill-opacity="0.64"/>
+    <rect x="362.75" y="260.75" width="176.5" height="42.5" rx="21.25" stroke="white" stroke-opacity="0.12" stroke-width="1.5"/>
+    <circle cx="392" cy="282" r="7" fill="url(#badge)"/>
+    <text x="410" y="288" fill="#F4FFFB" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">LIVE</text>
+    <text x="470" y="288" fill="#A7C7C2" font-family="Segoe UI, Arial, sans-serif" font-size="16">12 ms</text>
+  </g>
+
+  <g filter="url(#blurPanel)">
+    <rect x="1042" y="260" width="186" height="44" rx="22" fill="#0D1621" fill-opacity="0.64"/>
+    <rect x="1042.75" y="260.75" width="184.5" height="42.5" rx="21.25" stroke="white" stroke-opacity="0.12" stroke-width="1.5"/>
+    <text x="1082" y="288" fill="#DBE8F3" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600">FULL VIEW</text>
+  </g>
+
+  <g filter="url(#blurPanel)">
+    <rect x="380" y="674" width="470" height="72" rx="24" fill="#09131C" fill-opacity="0.82"/>
+    <rect x="380.75" y="674.75" width="468.5" height="70.5" rx="23.25" stroke="white" stroke-opacity="0.12" stroke-width="1.5"/>
+    <text x="412" y="706" fill="white" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Gate A1 - Main Entrance</text>
+    <text x="412" y="730" fill="#8BA6BC" font-family="Segoe UI, Arial, sans-serif" font-size="18">Branch JKT-01 • Camera 03 • Stream stable</text>
+  </g>
+
+  <g filter="url(#blurPanel)">
+    <rect x="990" y="654" width="238" height="92" rx="24" fill="#09131C" fill-opacity="0.82"/>
+    <rect x="990.75" y="654.75" width="236.5" height="90.5" rx="23.25" stroke="white" stroke-opacity="0.12" stroke-width="1.5"/>
+    <text x="1022" y="691" fill="#98B1C5" font-family="Segoe UI, Arial, sans-serif" font-size="16">Last motion</text>
+    <text x="1022" y="724" fill="white" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">2m 14s ago</text>
+  </g>
+
+  <g>
+    <rect x="390" y="800" width="840" height="10" rx="5" fill="#102130"/>
+    <rect x="390" y="800" width="544" height="10" rx="5" fill="url(#badge)"/>
+  </g>
+
+  <text x="120" y="96" fill="#EAF6FF" font-family="Segoe UI, Arial, sans-serif" font-size="42" font-weight="700">Modern Camera Card Concept</text>
+  <text x="120" y="132" fill="#93AFC6" font-family="Segoe UI, Arial, sans-serif" font-size="22">Glass panel, layered metadata, clear status badge, and action-first overlay for a command center feel.</text>
+
+  <g>
+    <line x1="540" y1="282" x2="662" y2="182" stroke="#8EE8BE" stroke-width="2"/>
+    <rect x="662" y="146" width="270" height="64" rx="18" fill="#10202F"/>
+    <rect x="662.75" y="146.75" width="268.5" height="62.5" rx="17.25" stroke="#8EE8BE" stroke-opacity="0.45" stroke-width="1.5"/>
+    <text x="686" y="174" fill="#E6FFF2" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Status chip</text>
+    <text x="686" y="197" fill="#A6CDB8" font-family="Segoe UI, Arial, sans-serif" font-size="16">Live state, latency, reconnect info</text>
+  </g>
+
+  <g>
+    <line x1="1135" y1="282" x2="1364" y2="196" stroke="#9CCFFF" stroke-width="2"/>
+    <rect x="1228" y="160" width="240" height="72" rx="18" fill="#10202F"/>
+    <rect x="1228.75" y="160.75" width="238.5" height="70.5" rx="17.25" stroke="#9CCFFF" stroke-opacity="0.45" stroke-width="1.5"/>
+    <text x="1250" y="190" fill="#EEF7FF" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Quick action</text>
+    <text x="1250" y="214" fill="#AEC7DA" font-family="Segoe UI, Arial, sans-serif" font-size="16">Fullscreen, focus, reload</text>
+  </g>
+
+  <g>
+    <line x1="678" y1="708" x2="156" y2="850" stroke="#FFD08A" stroke-width="2"/>
+    <rect x="92" y="818" width="344" height="82" rx="18" fill="#2B1D12"/>
+    <rect x="92.75" y="818.75" width="342.5" height="80.5" rx="17.25" stroke="#FFD08A" stroke-opacity="0.45" stroke-width="1.5"/>
+    <text x="118" y="852" fill="#FFF2DF" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Identity block</text>
+    <text x="118" y="878" fill="#E2C6A2" font-family="Segoe UI, Arial, sans-serif" font-size="16">Name, branch, stream state, priority</text>
+  </g>
+
+  <g>
+    <line x1="1110" y1="700" x2="1444" y2="770" stroke="#DAB0FF" stroke-width="2"/>
+    <rect x="1290" y="738" width="220" height="84" rx="18" fill="#23152F"/>
+    <rect x="1290.75" y="738.75" width="218.5" height="82.5" rx="17.25" stroke="#DAB0FF" stroke-opacity="0.45" stroke-width="1.5"/>
+    <text x="1314" y="772" fill="#FAEFFF" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Telemetry</text>
+    <text x="1314" y="798" fill="#D8B6EA" font-family="Segoe UI, Arial, sans-serif" font-size="16">Last motion, bitrate, FPS, errors</text>
+  </g>
+</svg>

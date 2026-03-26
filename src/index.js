@@ -69,11 +69,30 @@ const loadPersistedApiBaseUrl = async () => {
   cameraService.setApiBaseUrl(persistedApiBaseUrl);
 };
 
+const loadPersistedApiAuthToken = async () => {
+  const config = await readConfig();
+  const persistedApiAuthToken = config.API_AUTH_TOKEN;
+  if (typeof persistedApiAuthToken !== 'string') {
+    return;
+  }
+
+  cameraService.setApiAuthToken(persistedApiAuthToken);
+};
+
 const persistApiBaseUrl = async (apiBaseUrl) => {
   const config = await readConfig();
   await writeConfig({
     ...config,
     API_BASE_URL: apiBaseUrl,
+  });
+};
+
+const persistApiConfig = async ({ apiBaseUrl, apiAuthToken }) => {
+  const config = await readConfig();
+  await writeConfig({
+    ...config,
+    API_BASE_URL: apiBaseUrl,
+    API_AUTH_TOKEN: String(apiAuthToken || ''),
   });
 };
 
@@ -457,6 +476,90 @@ const registerUpdateFeedConfigShortcut = () => {
   }
 };
 
+const registerHelpShortcut = () => {
+  const registered = globalShortcut.register('Shift+H', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.webContents.send('shortcut:open-help');
+  });
+
+  if (!registered) {
+    console.error('Failed to register shortcut Shift+H');
+  }
+};
+
+const registerQuickSearchShortcut = () => {
+  const registered = globalShortcut.register('Control+K', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.webContents.send('shortcut:open-camera-search');
+  });
+
+  if (!registered) {
+    console.error('Failed to register shortcut Ctrl+K');
+  }
+};
+
+const registerLayoutShortcut = () => {
+  const registered = globalShortcut.register('Shift+G', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.webContents.send('shortcut:open-layout-config');
+  });
+
+  if (!registered) {
+    console.error('Failed to register shortcut Shift+G');
+  }
+};
+
+const registerFocusShortcut = () => {
+  const registered = globalShortcut.register('Shift+F', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.webContents.send('shortcut:enter-focus-mode');
+  });
+
+  if (!registered) {
+    console.error('Failed to register shortcut Shift+F');
+  }
+};
+
+const registerNormalModeShortcut = () => {
+  const registered = globalShortcut.register('Shift+N', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.webContents.send('shortcut:leave-focus-mode');
+  });
+
+  if (!registered) {
+    console.error('Failed to register shortcut Shift+N');
+  }
+};
+
+const registerReloadShortcut = () => {
+  const registered = globalShortcut.register('Shift+R', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.webContents.send('shortcut:reload-streams');
+  });
+
+  if (!registered) {
+    console.error('Failed to register shortcut Shift+R');
+  }
+};
+
 const toIpcError = (error) => ({
   status: error.status || 500,
   message: error.message || 'Internal server error',
@@ -476,20 +579,42 @@ const registerServiceHandlers = () => {
 
   ipcMain.handle('camera-service:get-api-docs-url', () => cameraService.getApiDocsUrl());
   ipcMain.handle('camera-service:get-api-base-url', () => cameraService.getApiBaseUrl());
-  ipcMain.handle('camera-service:set-api-base-url', async (_event, nextApiBaseUrl) => {
+  ipcMain.handle('camera-service:get-api-auth-token', () => cameraService.getApiAuthToken());
+  ipcMain.handle(
+    'camera-service:check-api-base-url',
+    async (_event, candidateApiBaseUrl, candidateApiAuthToken) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.checkApiBaseUrl(candidateApiBaseUrl, candidateApiAuthToken),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+  ipcMain.handle(
+    'camera-service:set-api-config',
+    async (_event, nextApiBaseUrl, nextApiAuthToken) => {
     const previousApiBaseUrl = cameraService.getApiBaseUrl();
+    const previousApiAuthToken = cameraService.getApiAuthToken();
     try {
       const updatedApiBaseUrl = cameraService.setApiBaseUrl(nextApiBaseUrl);
-      await persistApiBaseUrl(updatedApiBaseUrl);
+      const updatedApiAuthToken = cameraService.setApiAuthToken(nextApiAuthToken);
+      await persistApiConfig({
+        apiBaseUrl: updatedApiBaseUrl,
+        apiAuthToken: updatedApiAuthToken,
+      });
       return {
         status: 200,
         data: {
           apiBaseUrl: updatedApiBaseUrl,
+          apiAuthToken: updatedApiAuthToken,
         },
       };
     } catch (error) {
       try {
         cameraService.setApiBaseUrl(previousApiBaseUrl);
+        cameraService.setApiAuthToken(previousApiAuthToken);
       } catch (_) {
         // Ignore rollback error and return the original failure.
       }
@@ -535,6 +660,13 @@ const registerServiceHandlers = () => {
   ipcMain.handle('camera-service:get-cameras', async (_event, query) => {
     try {
       return await cameraService.getCameras(query);
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+  ipcMain.handle('camera-service:search-cameras', async (_event, query) => {
+    try {
+      return await cameraService.searchCameras(query);
     } catch (error) {
       return toIpcError(error);
     }
@@ -628,6 +760,7 @@ app.whenReady().then(async () => {
   try {
     await startLocalServer();
     await loadPersistedApiBaseUrl();
+    await loadPersistedApiAuthToken();
     registerServiceHandlers();
     registerAutoUpdaterHandlers();
     createWindow();
@@ -635,6 +768,12 @@ app.whenReady().then(async () => {
     registerBranchListShortcut();
     registerApiBaseUrlShortcut();
     registerUpdateFeedConfigShortcut();
+    registerHelpShortcut();
+    registerQuickSearchShortcut();
+    registerLayoutShortcut();
+    registerFocusShortcut();
+    registerNormalModeShortcut();
+    registerReloadShortcut();
     await setupAutoUpdater();
   } catch (error) {
     console.error(`Failed to start local server on port ${PORT}:`, error);
