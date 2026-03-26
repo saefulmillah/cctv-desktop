@@ -117,12 +117,16 @@ let perfObserverTimer = null;
 let playerAttachSequence = 0;
 let googleMapsLoaderPromise = null;
 let sidebarMapInstance = null;
-let sidebarMapInfoWindow = null;
 let sidebarTrafficLayer = null;
 let sidebarMapMarkers = [];
 let sidebarMapRefreshTimer = null;
 let sidebarMapShouldAutoFit = true;
+let sidebarMapProjectionOverlay = null;
+let spiderfyLegs = [];
+let spiderfiedMarkerIds = new Set();
+let spiderfySourceCameraId = null;
 let selectedMapCameraId = null;
+let suppressSidebarMapClickUntil = 0;
 let gridLayout = {
   type: '5x4',
   columns: 5,
@@ -475,7 +479,7 @@ const shortenMarkerLabel = (text, maxLength) => {
   if (normalized.length <= maxLength) {
     return normalized;
   }
-  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 };
 
 const normalizeMarkerLabelSource = (camera) => {
@@ -483,57 +487,31 @@ const normalizeMarkerLabelSource = (camera) => {
   if (!rawName) {
     return 'CCTV';
   }
-
   const parts = rawName.split(/\s+/).filter(Boolean);
   if (parts.length <= 1) {
     return rawName;
   }
-
   const trimmed = parts.slice(1).join(' ').trim();
   return trimmed || rawName;
 };
 
-const getMarkerLabelText = (camera, zoom) => {
-  const isSelected = String(camera && camera.id) === String(selectedMapCameraId);
-  const numericZoom = Number(zoom || 0);
-  const baseLabel = normalizeMarkerLabelSource(camera);
-  if (!camera) {
-    return '';
-  }
-  if (isSelected) {
-    return shortenMarkerLabel(baseLabel, numericZoom >= 15 ? 28 : 18);
-  }
-  if (numericZoom >= 16) {
-    return shortenMarkerLabel(baseLabel, 18);
-  }
-  if (numericZoom >= 14) {
-    return shortenMarkerLabel(baseLabel, 10);
-  }
-  return '';
-};
-
-const buildMarkerLabelConfig = (camera, zoom) => {
-  const text = getMarkerLabelText(camera, zoom);
-  if (!text) {
+const buildSpiderfyLabelConfig = (camera) => {
+  if (!camera || !spiderfiedMarkerIds.has(String(camera.id))) {
     return null;
   }
-  const selected = String(camera && camera.id) === String(selectedMapCameraId);
+  const selected = String(camera.id) === String(selectedMapCameraId);
   return {
-    text,
+    text: shortenMarkerLabel(normalizeMarkerLabelSource(camera), selected ? 22 : 16),
     className: selected ? 'map-marker-label map-marker-label--selected' : 'map-marker-label',
   };
 };
 
-const applySidebarMarkerLabels = () => {
-  if (!sidebarMapInstance || !sidebarMapMarkers.length) {
-    return;
-  }
-  const zoom = Number(sidebarMapInstance.getZoom() || 0);
+const applySpiderfyMarkerLabels = () => {
   sidebarMapMarkers.forEach((entry) => {
-    if (!entry || !entry.marker) {
+    if (!entry || !entry.marker || !entry.camera) {
       return;
     }
-    entry.marker.setLabel(buildMarkerLabelConfig(entry.camera, zoom));
+    entry.marker.setLabel(buildSpiderfyLabelConfig(entry.camera));
     entry.marker.setZIndex(
       String(entry.camera && entry.camera.id) === String(selectedMapCameraId) ? 1000 : undefined
     );
@@ -560,6 +538,14 @@ const getBranchPageCameraMap = () => {
 };
 
 const clearSidebarMapMarkers = () => {
+  spiderfyLegs.forEach((leg) => {
+    if (leg && typeof leg.setMap === 'function') {
+      leg.setMap(null);
+    }
+  });
+  spiderfyLegs = [];
+  spiderfiedMarkerIds = new Set();
+  spiderfySourceCameraId = null;
   sidebarMapMarkers.forEach((entry) => {
     if (entry && entry.marker && typeof entry.marker.setMap === 'function') {
       entry.marker.setMap(null);
@@ -568,18 +554,108 @@ const clearSidebarMapMarkers = () => {
   sidebarMapMarkers = [];
 };
 
-const buildMapInfoWindowContent = (camera) =>
-  `<div style="min-width:180px;"><strong>${camera.cctv_name || 'CCTV'}</strong></div>`;
-
-const openMapInfoWindow = (map, marker, camera) => {
-  if (!sidebarMapInfoWindow || !map || !marker || !camera) {
+const collapseSpiderfy = () => {
+  if (!spiderfiedMarkerIds.size) {
     return;
   }
-  sidebarMapInfoWindow.setContent(buildMapInfoWindowContent(camera));
-  sidebarMapInfoWindow.open({
-    anchor: marker,
-    map,
+
+  spiderfyLegs.forEach((leg) => {
+    if (leg && typeof leg.setMap === 'function') {
+      leg.setMap(null);
+    }
   });
+  spiderfyLegs = [];
+
+  sidebarMapMarkers.forEach((entry) => {
+    if (!entry || !entry.marker || !entry.originalPosition) {
+      return;
+    }
+    entry.marker.setPosition(entry.originalPosition);
+  });
+
+  spiderfiedMarkerIds = new Set();
+  spiderfySourceCameraId = null;
+  applySpiderfyMarkerLabels();
+};
+
+const getNearbyMarkerEntries = (sourceEntry, projection) => {
+  if (!sourceEntry || !projection) {
+    return [];
+  }
+
+  const sourcePixel = projection.fromLatLngToDivPixel(sourceEntry.originalPosition || sourceEntry.marker.getPosition());
+  if (!sourcePixel) {
+    return [];
+  }
+
+  return sidebarMapMarkers.filter((entry) => {
+    if (!entry || !entry.marker) {
+      return false;
+    }
+    const pixel = projection.fromLatLngToDivPixel(entry.originalPosition || entry.marker.getPosition());
+    if (!pixel) {
+      return false;
+    }
+    return Math.abs(pixel.x - sourcePixel.x) <= 18 && Math.abs(pixel.y - sourcePixel.y) <= 18;
+  });
+};
+
+const spiderfyMarkerGroup = (sourceEntry) => {
+  if (!sidebarMapInstance || !sidebarMapProjectionOverlay || !sourceEntry) {
+    return false;
+  }
+
+  const projection = sidebarMapProjectionOverlay.getProjection();
+  if (!projection) {
+    return false;
+  }
+
+  const nearbyEntries = getNearbyMarkerEntries(sourceEntry, projection);
+  if (nearbyEntries.length <= 1) {
+    collapseSpiderfy();
+    return false;
+  }
+
+  collapseSpiderfy();
+  const centerPixel = projection.fromLatLngToDivPixel(
+    sourceEntry.originalPosition || sourceEntry.marker.getPosition()
+  );
+  if (!centerPixel) {
+    return false;
+  }
+
+  const radius = Math.max(34, 18 + nearbyEntries.length * 4);
+  const step = (Math.PI * 2) / nearbyEntries.length;
+
+  nearbyEntries.forEach((entry, index) => {
+    const angle = -Math.PI / 2 + step * index;
+    const targetPixel = new window.google.maps.Point(
+      centerPixel.x + Math.cos(angle) * radius,
+      centerPixel.y + Math.sin(angle) * radius
+    );
+    const targetLatLng = projection.fromDivPixelToLatLng(targetPixel);
+    if (!targetLatLng) {
+      return;
+    }
+
+    entry.marker.setPosition(targetLatLng);
+    spiderfiedMarkerIds.add(String(entry.camera.id));
+
+    const leg = new window.google.maps.Polyline({
+      map: sidebarMapInstance,
+      path: [entry.originalPosition, targetLatLng],
+      strokeColor: '#ffffff',
+      strokeOpacity: 0.85,
+      strokeWeight: 1.5,
+      clickable: false,
+      zIndex: 1,
+    });
+    spiderfyLegs.push(leg);
+  });
+
+  spiderfySourceCameraId = String(sourceEntry.camera.id);
+  applySpiderfyMarkerLabels();
+  return true;
 };
 
 const loadGoogleMapsApi = () => {
@@ -636,15 +712,27 @@ const ensureSidebarMap = async () => {
       { featureType: 'transit', stylers: [{ visibility: 'off' }] },
     ],
   });
-  sidebarMapInfoWindow = new maps.InfoWindow();
-  sidebarTrafficLayer = new maps.TrafficLayer();
+    sidebarTrafficLayer = new maps.TrafficLayer();
   sidebarTrafficLayer.setMap(sidebarMapInstance);
+  sidebarMapProjectionOverlay = new maps.OverlayView();
+  sidebarMapProjectionOverlay.onAdd = () => {};
+  sidebarMapProjectionOverlay.draw = () => {};
+  sidebarMapProjectionOverlay.onRemove = () => {};
+  sidebarMapProjectionOverlay.setMap(sidebarMapInstance);
   sidebarMapInstance.addListener('dragstart', () => {
     sidebarMapShouldAutoFit = false;
+    collapseSpiderfy();
   });
   sidebarMapInstance.addListener('zoom_changed', () => {
     sidebarMapShouldAutoFit = false;
-    applySidebarMarkerLabels();
+    collapseSpiderfy();
+    
+  });
+  sidebarMapInstance.addListener('click', () => {
+    if (Date.now() < suppressSidebarMapClickUntil) {
+      return;
+    }
+    collapseSpiderfy();
   });
   return sidebarMapInstance;
 };
@@ -737,18 +825,31 @@ const updateSidebarMap = async () => {
       });
 
       marker.addListener('click', () => {
-        openMapInfoWindow(map, marker, camera);
+        const entry = sidebarMapMarkers.find((item) => item && item.marker === marker);
+        suppressSidebarMapClickUntil = Date.now() + 250;
+        const markerId = String(camera.id);
+        if (entry && spiderfiedMarkerIds.has(markerId)) {
+          void focusCameraFromMap(camera);
+          return;
+        }
+        if (entry) {
+          const spiderfied = spiderfyMarkerGroup(entry);
+          if (spiderfied) {
+            return;
+          }
+        }
         void focusCameraFromMap(camera);
       });
 
       sidebarMapMarkers.push({
         marker,
         camera,
+        originalPosition: position,
       });
       bounds.extend(position);
     });
 
-    applySidebarMarkerLabels();
+    
 
     if (sidebarMapShouldAutoFit && camerasWithCoordinates.length === 1) {
       map.setCenter(getCameraCoordinates(camerasWithCoordinates[0]));
@@ -2512,3 +2613,5 @@ window.cameraService.onOpenLayoutConfig(openLayoutConfig);
 window.cameraService.onEnterFocusMode(enterFocusMode);
 window.cameraService.onLeaveFocusMode(leaveFocusMode);
 window.cameraService.onReloadStreams(refreshCurrentStreams);
+
+

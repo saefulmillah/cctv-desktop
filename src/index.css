@@ -1219,25 +1219,25 @@ body.theme-dashboard-enterprise .stat-card strong {
 
 .map-marker-label {
   display: inline-block;
-  padding: 4px 8px;
+  padding: 2px 6px;
   border-radius: 999px;
-  border: 1px solid rgba(237, 247, 255, 0.16);
+  border: 1px solid rgba(237, 247, 255, 0.14);
   background: rgba(235, 246, 255, 0.08);
-  color: #f4fbff;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.2;
+  color: #ffffff;
+  font-size: 8px;
+  font-weight: 400;
+  line-height: 1.1;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  box-shadow: 0 2px 10px rgba(8, 24, 49, 0.12);
-  backdrop-filter: blur(6px);
+  box-shadow: 0 2px 8px rgba(8, 24, 49, 0.08);
   text-shadow: 0 1px 2px rgba(8, 24, 49, 0.35);
 }
 
 .map-marker-label--selected {
-  border-color: rgba(237, 247, 255, 0.24);
+  border-color: rgba(237, 247, 255, 0.2);
   background: rgba(235, 246, 255, 0.12);
 }
+
 
 @media (max-width: 1280px) {
   .activity-panel {
@@ -1290,3 +1290,4 @@ body.theme-dashboard-enterprise .stat-card strong {
     grid-template-columns: 1fr;
   }
 }
+
