@@ -30,6 +30,7 @@ const selectedCountEl = document.getElementById('selectedCount');
 const sidebarMapEl = document.getElementById('sidebarMap');
 const sidebarMapEmptyEl = document.getElementById('sidebarMapEmpty');
 const sidebarMapSummaryEl = document.getElementById('sidebarMapSummary');
+const resetWorkspaceBtn = document.getElementById('resetWorkspaceBtn');
 
 const pickerEl = document.getElementById('branchPicker');
 const branchListEl = document.getElementById('branchList');
@@ -112,19 +113,26 @@ let quickSearchContext = {
 const slotOverrides = new Map();
 let quickSearchRequestId = 0;
 let quickSearchDebounceTimer = null;
+let workspacePersistTimer = null;
+let workspaceRestoreInProgress = false;
 let globalWatchdogTimer = null;
 let perfObserverTimer = null;
 let playerAttachSequence = 0;
 let googleMapsLoaderPromise = null;
+let markerClustererLoaderPromise = null;
 let sidebarMapInstance = null;
 let sidebarTrafficLayer = null;
 let sidebarMapMarkers = [];
+let sidebarMarkerCluster = null;
 let sidebarMapRefreshTimer = null;
 let sidebarMapShouldAutoFit = true;
+let sidebarMapViewportLocked = false;
 let sidebarMapProjectionOverlay = null;
 let spiderfyLegs = [];
+let spiderfyTempMarkers = [];
 let spiderfiedMarkerIds = new Set();
 let spiderfySourceCameraId = null;
+let spiderfyClusterMarker = null;
 let selectedMapCameraId = null;
 let suppressSidebarMapClickUntil = 0;
 let gridLayout = {
@@ -138,6 +146,8 @@ let gridLayout = {
 
 const DEFAULT_GRID_COUNT = 20;
 const ACTIVITY_LIMIT = 6;
+const WORKSPACE_STATE_VERSION = 1;
+const WORKSPACE_PERSIST_DELAY_MS = 500;
 const PERF_FLAGS = {
   ENABLE_PERF_OBSERVER: false,
   USE_CENTRAL_WATCHDOG: true,
@@ -148,8 +158,8 @@ const ACTIVE_UI_THEME = 'theme-dashboard-enterprise';
 const GOOGLE_MAPS_API_KEY = 'AIzaSyAuNghu_4V4kxgcCa5UX0XBV_zPMZzV-Cg';
 const WATCHDOG_INTERVAL_MS = 5000;
 const WATCHDOG_FREEZE_THRESHOLD_MS = 15000;
-const ONLINE_MARKER_URL = new URL('./assets/maps-marker_32x32.ico', window.location.href).toString();
-const OFFLINE_MARKER_URL = new URL('./assets/maps-marker_32x32-offline.ico', window.location.href).toString();
+const ONLINE_MARKER_URL = new URL('./assets/marker-map-online.svg', window.location.href).toString();
+const OFFLINE_MARKER_URL = new URL('./assets/marker-map-offline.svg', window.location.href).toString();
 
 const setTextIfChanged = (element, value) => {
   if (!element) {
@@ -177,6 +187,29 @@ const setClassNameIfChanged = (element, value) => {
     element.className = value;
   }
 };
+
+const setInnerHtmlIfChanged = (element, value) => {
+  if (!element) {
+    return;
+  }
+  const normalized = String(value ?? '');
+  if (!PERF_FLAGS.USE_DOM_PATCH_GUARDS) {
+    element.innerHTML = normalized;
+    return;
+  }
+  if (element.innerHTML !== normalized) {
+    element.innerHTML = normalized;
+  }
+};
+
+const getDefaultGridLayout = () => ({
+  type: '5x4',
+  columns: 5,
+  rows: 4,
+  limit: 20,
+  mainCount: 1,
+  sideCount: 6,
+});
 
 const getReconnectRegistrySize = () => reconnectTimers.size;
 
@@ -459,7 +492,30 @@ const getCameraCoordinates = (camera) => {
   return { lat, lng };
 };
 
-const getMapCameraCollection = () => (branchWideCameras.length ? branchWideCameras : currentCameras);
+const getMapCameraCollection = () => {
+  const baseCollection = branchWideCameras.length ? branchWideCameras : currentCameras;
+  if (currentMode !== 'focus') {
+    return baseCollection;
+  }
+
+  const combined = new Map();
+  baseCollection.forEach((camera) => {
+    if (camera && camera.id != null) {
+      combined.set(String(camera.id), camera);
+    }
+  });
+  getRenderableCameras().forEach((camera) => {
+    if (camera && camera.id != null) {
+      combined.set(String(camera.id), camera);
+    }
+  });
+  selectedCameraMap.forEach((camera, cameraId) => {
+    if (camera && camera.id != null) {
+      combined.set(String(cameraId), camera);
+    }
+  });
+  return Array.from(combined.values());
+};
 
 const getCameraOperationalState = (camera) => {
   return Number(camera && camera.is_active) === 1 ? 'online' : 'offline';
@@ -538,14 +594,34 @@ const getBranchPageCameraMap = () => {
 };
 
 const clearSidebarMapMarkers = () => {
+  if (sidebarMarkerCluster) {
+    if (typeof sidebarMarkerCluster.clearMarkers === 'function') {
+      sidebarMarkerCluster.clearMarkers();
+    }
+    if (typeof sidebarMarkerCluster.setMap === 'function') {
+      sidebarMarkerCluster.setMap(null);
+    }
+    sidebarMarkerCluster = null;
+  }
+
   spiderfyLegs.forEach((leg) => {
     if (leg && typeof leg.setMap === 'function') {
       leg.setMap(null);
     }
   });
   spiderfyLegs = [];
+  spiderfyTempMarkers.forEach((marker) => {
+    if (marker && typeof marker.setMap === 'function') {
+      marker.setMap(null);
+    }
+  });
+  spiderfyTempMarkers = [];
   spiderfiedMarkerIds = new Set();
   spiderfySourceCameraId = null;
+  if (spiderfyClusterMarker && typeof spiderfyClusterMarker.setOpacity === 'function') {
+    spiderfyClusterMarker.setOpacity(1);
+  }
+  spiderfyClusterMarker = null;
   sidebarMapMarkers.forEach((entry) => {
     if (entry && entry.marker && typeof entry.marker.setMap === 'function') {
       entry.marker.setMap(null);
@@ -565,6 +641,16 @@ const collapseSpiderfy = () => {
     }
   });
   spiderfyLegs = [];
+  spiderfyTempMarkers.forEach((marker) => {
+    if (marker && typeof marker.setMap === 'function') {
+      marker.setMap(null);
+    }
+  });
+  spiderfyTempMarkers = [];
+  if (spiderfyClusterMarker && typeof spiderfyClusterMarker.setOpacity === 'function') {
+    spiderfyClusterMarker.setOpacity(1);
+  }
+  spiderfyClusterMarker = null;
 
   sidebarMapMarkers.forEach((entry) => {
     if (!entry || !entry.marker || !entry.originalPosition) {
@@ -600,7 +686,7 @@ const getNearbyMarkerEntries = (sourceEntry, projection) => {
   });
 };
 
-const spiderfyMarkerGroup = (sourceEntry) => {
+const spiderfyMarkerGroup = (sourceEntry, customEntries = null, customCenter = null) => {
   if (!sidebarMapInstance || !sidebarMapProjectionOverlay || !sourceEntry) {
     return false;
   }
@@ -610,16 +696,17 @@ const spiderfyMarkerGroup = (sourceEntry) => {
     return false;
   }
 
-  const nearbyEntries = getNearbyMarkerEntries(sourceEntry, projection);
+  const nearbyEntries = Array.isArray(customEntries) && customEntries.length
+    ? customEntries
+    : getNearbyMarkerEntries(sourceEntry, projection);
   if (nearbyEntries.length <= 1) {
     collapseSpiderfy();
     return false;
   }
 
   collapseSpiderfy();
-  const centerPixel = projection.fromLatLngToDivPixel(
-    sourceEntry.originalPosition || sourceEntry.marker.getPosition()
-  );
+  const centerLatLng = customCenter || sourceEntry.originalPosition || sourceEntry.marker.getPosition();
+  const centerPixel = projection.fromLatLngToDivPixel(centerLatLng);
   if (!centerPixel) {
     return false;
   }
@@ -638,9 +725,43 @@ const spiderfyMarkerGroup = (sourceEntry) => {
       return;
     }
 
-    entry.marker.setPosition(targetLatLng);
     spiderfiedMarkerIds.add(String(entry.camera.id));
 
+    if (customEntries) {
+      const spiderfyMarker = new window.google.maps.Marker({
+        map: sidebarMapInstance,
+        position: targetLatLng,
+        title: entry.camera.cctv_name || 'CCTV',
+        icon: {
+          url: getMapMarkerIconUrl(entry.camera),
+          scaledSize: new window.google.maps.Size(
+            getMapMarkerScaledSize(entry.camera),
+            getMapMarkerScaledSize(entry.camera)
+          ),
+        },
+        zIndex: String(entry.camera && entry.camera.id) === String(selectedMapCameraId) ? 1000 : 950,
+      });
+
+      spiderfyMarker.addListener('click', () => {
+        suppressSidebarMapClickUntil = Date.now() + 250;
+        void focusCameraFromMap(entry.camera);
+      });
+
+      spiderfyTempMarkers.push(spiderfyMarker);
+      const leg = new window.google.maps.Polyline({
+        map: sidebarMapInstance,
+        path: [centerLatLng, targetLatLng],
+        strokeColor: '#ffffff',
+        strokeOpacity: 0.85,
+        strokeWeight: 1.5,
+        clickable: false,
+        zIndex: 1,
+      });
+      spiderfyLegs.push(leg);
+      return;
+    }
+
+    entry.marker.setPosition(targetLatLng);
     const leg = new window.google.maps.Polyline({
       map: sidebarMapInstance,
       path: [entry.originalPosition, targetLatLng],
@@ -688,6 +809,174 @@ const loadGoogleMapsApi = () => {
   return googleMapsLoaderPromise;
 };
 
+const loadMarkerClustererLibrary = () => {
+  if (window.markerClusterer && window.markerClusterer.MarkerClusterer) {
+    return Promise.resolve(window.markerClusterer);
+  }
+
+  if (markerClustererLoaderPromise) {
+    return markerClustererLoaderPromise;
+  }
+
+  markerClustererLoaderPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src =
+      'https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      if (window.markerClusterer && window.markerClusterer.MarkerClusterer) {
+        resolve(window.markerClusterer);
+        return;
+      }
+      reject(new Error('Failed to initialize MarkerClusterer.'));
+    };
+    script.onerror = () => reject(new Error('Failed to load MarkerClusterer.'));
+    document.head.appendChild(script);
+  });
+
+  return markerClustererLoaderPromise;
+};
+
+const getClusterTone = (count) => {
+  if (count <= 3) {
+    return {
+      stroke: 'rgba(65, 231, 93, 0.15)',
+      fill: 'rgba(65, 231, 93, 0.75)',
+      glow: 'rgba(65, 231, 93, 0.18)',
+    };
+  }
+  if (count <= 9) {
+    return {
+      stroke: 'rgba(255, 156, 28, 0.15)',
+      fill: 'rgba(255, 156, 28, 0.75)',
+      glow: 'rgba(255, 156, 28, 0.18)',
+    };
+  }
+  return {
+    stroke: 'rgba(255, 63, 77, 0.15)',
+    fill: 'rgba(255, 63, 77, 0.75)',
+    glow: 'rgba(255, 63, 77, 0.18)',
+  };
+};
+
+const buildClusterSvgDataUrl = (count) => {
+  const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
+  const tone = getClusterTone(count);
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.stroke}" stroke-width="3.2" />
+      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 11}" fill="rgba(255,255,255,0.02)" stroke="${tone.glow}" stroke-width="1.8" />
+    </svg>
+  `.trim();
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+};
+
+const animateMapZoom = (map, targetZoom, center, stepDelay = 90) => {
+  if (!map || !Number.isFinite(targetZoom)) {
+    return;
+  }
+
+  const startZoom = Number(map.getZoom() || 0);
+  if (center) {
+    map.panTo(center);
+  }
+  if (startZoom >= targetZoom) {
+    return;
+  }
+
+  let nextZoom = startZoom + 1;
+  const tick = () => {
+    if (nextZoom > targetZoom) {
+      return;
+    }
+    map.setZoom(nextZoom);
+    nextZoom += 1;
+    if (nextZoom <= targetZoom) {
+      window.setTimeout(tick, stepDelay);
+    }
+  };
+  window.setTimeout(tick, stepDelay);
+};
+
+const createSidebarMarkerCluster = async (map, markers) => {
+  if (!map || !markers.length) {
+    return null;
+  }
+
+  const markerClustererLib = await loadMarkerClustererLibrary();
+  const MarkerClustererCtor = markerClustererLib.MarkerClusterer;
+  if (!MarkerClustererCtor) {
+    throw new Error('MarkerClusterer constructor unavailable.');
+  }
+
+  const renderer = {
+    render({ count, position }) {
+      const iconUrl = buildClusterSvgDataUrl(count);
+      return new window.google.maps.Marker({
+        position,
+        icon: {
+          url: iconUrl,
+          scaledSize: new window.google.maps.Size(count >= 100 ? 62 : count >= 10 ? 56 : 52, count >= 100 ? 62 : count >= 10 ? 56 : 52),
+        },
+        label: {
+          text: String(count),
+          color: '#ffffff',
+          fontSize: count >= 100 ? '13px' : '12px',
+          fontWeight: '600',
+        },
+        zIndex: 900,
+      });
+    },
+  };
+
+  return new MarkerClustererCtor({
+    map,
+    markers,
+    renderer,
+    onClusterClick: (_, cluster) => {
+      sidebarMapShouldAutoFit = false;
+      sidebarMapViewportLocked = true;
+      suppressSidebarMapClickUntil = Date.now() + 250;
+      const clusterMarkers = Array.isArray(cluster && cluster.markers) ? cluster.markers : [];
+      const entries = clusterMarkers
+        .map((marker) => sidebarMapMarkers.find((entry) => entry && entry.marker === marker))
+        .filter(Boolean);
+
+      if (entries.length <= 1) {
+        const singleCamera = entries[0] && entries[0].camera;
+        if (singleCamera) {
+          void focusCameraFromMap(singleCamera);
+        }
+        return;
+      }
+
+      if (entries.length > 3) {
+        collapseSpiderfy();
+        const clusterCenter =
+          (cluster && cluster.position) ||
+          entries[0].originalPosition ||
+          (entries[0].marker && entries[0].marker.getPosition && entries[0].marker.getPosition());
+        const zoomStep = entries.length >= 10 ? 1 : 2;
+        const nextZoom = Math.min((map.getZoom() || 4) + zoomStep, 20);
+        animateMapZoom(map, nextZoom, clusterCenter);
+        return;
+      }
+
+      const clusterCenter =
+        (cluster && cluster.position) ||
+        entries[0].originalPosition ||
+        (entries[0].marker && entries[0].marker.getPosition && entries[0].marker.getPosition());
+      const clusterMarker = cluster && (cluster.marker || cluster._marker || null);
+      if (clusterMarker && typeof clusterMarker.setOpacity === 'function') {
+        clusterMarker.setOpacity(entries.length === 2 ? 0.22 : 0.32);
+        spiderfyClusterMarker = clusterMarker;
+      }
+      spiderfyMarkerGroup(entries[0], entries, clusterCenter);
+    },
+  });
+};
+
 const ensureSidebarMap = async () => {
   if (sidebarMapInstance) {
     return sidebarMapInstance;
@@ -721,10 +1010,12 @@ const ensureSidebarMap = async () => {
   sidebarMapProjectionOverlay.setMap(sidebarMapInstance);
   sidebarMapInstance.addListener('dragstart', () => {
     sidebarMapShouldAutoFit = false;
+    sidebarMapViewportLocked = true;
     collapseSpiderfy();
   });
   sidebarMapInstance.addListener('zoom_changed', () => {
     sidebarMapShouldAutoFit = false;
+    sidebarMapViewportLocked = true;
     collapseSpiderfy();
     
   });
@@ -746,6 +1037,7 @@ const focusCameraFromMap = async (camera) => {
   const targetPage = pageMap.get(String(camera.id)) || 1;
   selectedMapCameraId = String(camera.id);
   sidebarMapShouldAutoFit = false;
+  sidebarMapViewportLocked = true;
   selectedCameraIds.add(String(camera.id));
   selectedCameraMap.set(String(camera.id), camera);
 
@@ -849,7 +1141,15 @@ const updateSidebarMap = async () => {
       bounds.extend(position);
     });
 
-    
+    try {
+      sidebarMarkerCluster = await createSidebarMarkerCluster(
+        map,
+        sidebarMapMarkers.map((entry) => entry.marker)
+      );
+    } catch (clusterError) {
+      console.warn('[sidebarMap] cluster fallback:', clusterError);
+      sidebarMarkerCluster = null;
+    }
 
     if (sidebarMapShouldAutoFit && camerasWithCoordinates.length === 1) {
       map.setCenter(getCameraCoordinates(camerasWithCoordinates[0]));
@@ -917,6 +1217,240 @@ const syncLayoutControls = () => {
 const setGridLayoutState = (nextLayout) => {
   gridLayout = nextLayout;
   syncLayoutControls();
+  scheduleWorkspacePersist();
+};
+
+const sanitizeCameraForPersistence = (camera) => {
+  if (!camera || typeof camera !== 'object') {
+    return null;
+  }
+  return {
+    id: camera.id,
+    cctv_name: camera.cctv_name || '',
+    gate_name: camera.gate_name || '',
+    branch_id: camera.branch_id || null,
+    branch_code: camera.branch_code || '',
+    branch_name: camera.branch_name || '',
+    stream_play_url: camera.stream_play_url || '',
+    cctv_lat: camera.cctv_lat ?? null,
+    cctv_lon: camera.cctv_lon ?? null,
+    is_active: camera.is_active ?? 0,
+    __sourcePage: camera.__sourcePage || camera.page || null,
+  };
+};
+
+const serializeWorkspaceState = () => ({
+  version: WORKSPACE_STATE_VERSION,
+  activeBranch: activeBranch
+    ? {
+        id: activeBranch.id,
+        branch_code: activeBranch.branch_code || '',
+        branch_name: activeBranch.branch_name || '',
+      }
+    : null,
+  activePage,
+  mode: currentMode === 'focus' ? 'focus' : 'normal',
+  layout: {
+    type: gridLayout.type,
+    columns: Number(gridLayout.columns || 5),
+    rows: Number(gridLayout.rows || 4),
+    limit: Number(gridLayout.limit || DEFAULT_GRID_COUNT),
+    mainCount: Number(gridLayout.mainCount || 1),
+    sideCount: Number(gridLayout.sideCount || 6),
+  },
+  selectedCameraIds: Array.from(selectedCameraIds),
+  selectedCameras: Array.from(selectedCameraMap.values())
+    .map(sanitizeCameraForPersistence)
+    .filter(Boolean),
+  slotOverrides: Array.from(slotOverrides.entries())
+    .map(([key, camera]) => ({
+      key,
+      camera: sanitizeCameraForPersistence(camera),
+    }))
+    .filter((item) => item.key && item.camera),
+});
+
+const persistWorkspaceState = async () => {
+  if (workspaceRestoreInProgress) {
+    return;
+  }
+
+  const response = await window.appState.saveWorkspaceState(serializeWorkspaceState());
+  if (response.status >= 400) {
+    throw new Error(response.message || 'Failed to save workspace state.');
+  }
+};
+
+const scheduleWorkspacePersist = () => {
+  if (workspaceRestoreInProgress) {
+    return;
+  }
+  if (workspacePersistTimer) {
+    clearTimeout(workspacePersistTimer);
+  }
+  workspacePersistTimer = window.setTimeout(() => {
+    workspacePersistTimer = null;
+    persistWorkspaceState().catch((error) => {
+      addActivity('Workspace state failed', error.message || 'Failed to save workspace state.', 'warning');
+    });
+  }, WORKSPACE_PERSIST_DELAY_MS);
+};
+
+const clearWorkspaceVisualState = () => {
+  activeBranch = null;
+  activePage = 1;
+  totalPages = 1;
+  currentCameras = [];
+  branchWideCameras = [];
+  selectedCameraIds.clear();
+  selectedCameraMap.clear();
+  slotOverrides.clear();
+  selectedMapCameraId = null;
+  sidebarMapViewportLocked = false;
+  sidebarMapShouldAutoFit = true;
+  clearSidebarMapMarkers();
+  setGridLayoutState(getDefaultGridLayout());
+  setMode('normal');
+  setPagingVisible(false);
+  updatePagingUi();
+  updateCurrentBranchLabels();
+  renderWelcomeState();
+};
+
+const resetWorkspaceState = async () => {
+  const response = await window.appState.clearWorkspaceState();
+  if (response.status >= 400) {
+    throw new Error(response.message || 'Failed to clear workspace state.');
+  }
+  workspaceRestoreInProgress = true;
+  try {
+    clearWorkspaceVisualState();
+  } finally {
+    workspaceRestoreInProgress = false;
+  }
+  addActivity('Workspace reset', 'Workspace preferences were cleared for this device.', 'success');
+};
+
+const restoreWorkspaceState = async () => {
+  workspaceRestoreInProgress = true;
+  try {
+    const response = await window.appState.getWorkspaceState();
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Failed to load workspace state.');
+    }
+
+    const state = response.data;
+    if (!state || typeof state !== 'object') {
+      renderWelcomeState();
+      return;
+    }
+
+    if (state.layout && typeof state.layout === 'object') {
+      const layoutType = String(state.layout.type || '5x4');
+      if (layoutType === '4x4') {
+        setGridLayoutState({
+          type: '4x4',
+          columns: 4,
+          rows: 4,
+          limit: 16,
+          mainCount: Number(state.layout.mainCount || 1),
+          sideCount: Number(state.layout.sideCount || 6),
+        });
+      } else if (layoutType === '3x3') {
+        setGridLayoutState({
+          type: '3x3',
+          columns: 3,
+          rows: 3,
+          limit: 9,
+          mainCount: Number(state.layout.mainCount || 1),
+          sideCount: Number(state.layout.sideCount || 6),
+        });
+      } else if (layoutType === 'spotlight') {
+        const mainCount = Math.max(1, Number(state.layout.mainCount || 1));
+        const sideCount = Math.max(1, Number(state.layout.sideCount || 6));
+        setGridLayoutState({
+          type: 'spotlight',
+          columns: 4,
+          rows: 4,
+          limit: mainCount + sideCount,
+          mainCount,
+          sideCount,
+        });
+      } else {
+        setGridLayoutState(getDefaultGridLayout());
+      }
+    }
+
+    const persistedBranch = state.activeBranch;
+    if (
+      !persistedBranch ||
+      typeof persistedBranch !== 'object' ||
+      !persistedBranch.id
+    ) {
+      renderWelcomeState();
+      return;
+    }
+
+    await loadBranchPages(persistedBranch.id);
+    const restoredPage = Math.min(
+      Math.max(1, Number.parseInt(state.activePage, 10) || 1),
+      totalPages
+    );
+    await loadBranchCameras(persistedBranch, restoredPage);
+    setPagingVisible(totalPages > 1);
+
+    selectedCameraIds.clear();
+    selectedCameraMap.clear();
+    slotOverrides.clear();
+
+    if (Array.isArray(state.selectedCameras)) {
+      state.selectedCameras.forEach((camera) => {
+        const sanitized = sanitizeCameraForPersistence(camera);
+        if (!sanitized || sanitized.id == null) {
+          return;
+        }
+        selectedCameraMap.set(String(sanitized.id), sanitized);
+      });
+    }
+
+    if (Array.isArray(state.selectedCameraIds)) {
+      state.selectedCameraIds.forEach((cameraId) => {
+        const normalizedId = String(cameraId);
+        if (selectedCameraMap.has(normalizedId)) {
+          selectedCameraIds.add(normalizedId);
+        }
+      });
+    }
+
+    currentCameras.forEach((camera) => {
+      const normalizedId = String(camera.id);
+      if (selectedCameraIds.has(normalizedId)) {
+        selectedCameraMap.set(normalizedId, camera);
+      }
+    });
+
+    if (Array.isArray(state.slotOverrides)) {
+      state.slotOverrides.forEach((item) => {
+        if (!item || typeof item !== 'object' || !item.key) {
+          return;
+        }
+        const sanitized = sanitizeCameraForPersistence(item.camera);
+        if (!sanitized) {
+          return;
+        }
+        slotOverrides.set(String(item.key), sanitized);
+      });
+    }
+
+    if (String(state.mode || '') === 'focus' && selectedCameraIds.size > 0) {
+      setMode('focus');
+    } else {
+      setMode('normal');
+    }
+  } finally {
+    workspaceRestoreInProgress = false;
+  }
+  scheduleWorkspacePersist();
 };
 
 const searchCameraCatalog = async (query) => {
@@ -938,18 +1472,56 @@ const searchCameraCatalog = async (query) => {
 
 const updateMiniPanel = () => {
   const visibleCameras = getRenderableCameras();
+  const branchSummaryMap = new Map();
+  visibleCameras
+    .filter(Boolean)
+    .forEach((camera) => {
+      const branchId = String(camera.branch_id || camera.branch_code || camera.branch_name || '');
+      if (!branchId) {
+        return;
+      }
+      const existing = branchSummaryMap.get(branchId);
+      if (existing) {
+        existing.count += 1;
+        return;
+      }
+      branchSummaryMap.set(branchId, {
+        branchCode: camera.branch_code || '-',
+        branchName: camera.branch_name || camera.branch_code || 'Ruas',
+        count: 1,
+      });
+    });
+  const uniqueBranches = Array.from(branchSummaryMap.values());
   const onlineCount = visibleCameras.filter((camera) => streamStateByCameraId.get(camera.id) === 'online').length;
   const offlineCount = visibleCameras.filter((camera) => streamStateByCameraId.get(camera.id) !== 'online').length;
   setTextIfChanged(onlineCountEl, String(onlineCount));
   setTextIfChanged(offlineCountEl, String(offlineCount));
   setTextIfChanged(selectedCountEl, String(selectedCameraIds.size));
-  setTextIfChanged(
-    currentBranchMiniEl,
-    activeBranch ? `Branch: ${activeBranch.branch_code} - ${activeBranch.branch_name}` : 'Branch: -'
-  );
+  const branchPills =
+    currentMode === 'focus'
+      ? uniqueBranches.length
+        ? uniqueBranches
+            .slice(0, 4)
+            .map(
+              (item) =>
+                `<span class="meta-pill route-chip">${item.branchCode || item.branchName}<strong class="route-chip__count">${item.count}</strong></span>`
+            )
+            .join('') +
+          (uniqueBranches.length > 4
+            ? `<span class="meta-pill route-chip">+${uniqueBranches.length - 4}</span>`
+            : '')
+        : '<span class="meta-pill route-chip">Ruas: -</span>'
+      : activeBranch
+        ? `<span class="meta-pill route-chip">${activeBranch.branch_name || activeBranch.branch_code || '-'}</span>`
+        : '<span class="meta-pill route-chip">Branch: -</span>';
+  setInnerHtmlIfChanged(currentBranchMiniEl, branchPills);
   setTextIfChanged(
     activeRouteTitleEl,
-    activeBranch ? activeBranch.branch_name || activeBranch.branch_code || 'Ruas Aktif' : 'Ruas Belum Dipilih'
+    currentMode === 'focus'
+      ? 'FOCUS MODE'
+      : activeBranch
+        ? activeBranch.branch_name || activeBranch.branch_code || 'Ruas Aktif'
+        : 'Ruas Belum Dipilih'
   );
   setTextIfChanged(
     modeBadgeEl,
@@ -1059,6 +1631,42 @@ const renderEmptyStateCard = (text) => {
   card.className = 'camera-card--empty';
   card.textContent = text;
   return card;
+};
+
+const renderWelcomeState = () => {
+  clearPlayers();
+  gridEl.classList.remove('loading', 'grid--spotlight');
+  gridEl.innerHTML = '';
+  applyGridMetrics(1, 1);
+
+  const panel = document.createElement('section');
+  panel.className = 'welcome-state';
+  panel.innerHTML = `
+    <div class="welcome-state__inner">
+      <p class="welcome-state__eyebrow">HK Toll Vision</p>
+      <h2 class="welcome-state__title">Pilih Ruas Untuk Memulai</h2>
+      <p class="welcome-state__message">
+        Pilih ruas terlebih dahulu untuk memuat grid CCTV. Setelah itu kamu bisa masuk ke focus mode,
+        mencari kamera tertentu, dan menyesuaikan layout sesuai kebutuhan command center.
+      </p>
+      <div class="welcome-state__actions">
+        <span class="welcome-state__chip">Shift+L Pilih Ruas</span>
+        <span class="welcome-state__chip">Ctrl+K Cari Kamera</span>
+        <span class="welcome-state__chip">Shift+H Buka Help</span>
+      </div>
+      <p class="welcome-state__hint">
+        Gunakan menu Help untuk melihat shortcut lengkap dan panduan penggunaan.
+      </p>
+    </div>
+  `;
+  gridEl.appendChild(panel);
+};
+
+const ensureGridHasVisibleContent = () => {
+  if (!gridEl || gridEl.children.length > 0) {
+    return;
+  }
+  renderWelcomeState();
 };
 
 const requestFullscreen = async (targetEl) => {
@@ -1394,6 +2002,7 @@ const setMode = (mode) => {
   updateMiniPanel();
   renderCameras(currentCameras);
   scheduleSidebarMapRefresh();
+  scheduleWorkspacePersist();
 };
 
 const updateCardSelectionUi = (cameraId) => {
@@ -1439,6 +2048,7 @@ const toggleSelectedCamera = (cameraId, cameraData) => {
   updateCardSelectionUi(normalizedId);
   updateMiniPanel();
   scheduleSidebarMapRefresh();
+  scheduleWorkspacePersist();
   if (currentMode === 'focus') {
     renderCameras(currentCameras);
   }
@@ -1547,15 +2157,13 @@ const createCameraCard = (camera, index, options = {}) => {
   titleEl.textContent = camera.cctv_name || `Camera ${index + 1}`;
   const subtitleEl = document.createElement('p');
   subtitleEl.className = 'camera-card__subtitle';
-  const cameraBranchCode = String(camera.branch_code || '').trim();
   const cameraBranchName = String(camera.branch_name || '').trim();
-  const activeBranchCode = String((activeBranch && activeBranch.branch_code) || '').trim();
   const activeBranchName = String((activeBranch && activeBranch.branch_name) || '').trim();
 
-  if (cameraBranchCode || cameraBranchName) {
-    subtitleEl.textContent = `${cameraBranchCode || '-'} | ${cameraBranchName || 'Ruas kamera'}`;
-  } else if (activeBranchCode || activeBranchName) {
-    subtitleEl.textContent = `${activeBranchCode || '-'} | ${activeBranchName || 'Ruas aktif'}`;
+  if (cameraBranchName) {
+    subtitleEl.textContent = cameraBranchName || 'Ruas kamera';
+  } else if (activeBranchName) {
+    subtitleEl.textContent = activeBranchName || 'Ruas aktif';
   } else {
     subtitleEl.textContent = 'Ruas belum dipilih';
   }
@@ -1665,7 +2273,7 @@ const loadBranchPages = async (branchId) => {
 const loadAllBranchCamerasForMap = async (branch) => {
   if (!branch || !branch.id) {
     branchWideCameras = [];
-    sidebarMapShouldAutoFit = true;
+    sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
     scheduleSidebarMapRefresh();
     return;
   }
@@ -1673,7 +2281,7 @@ const loadAllBranchCamerasForMap = async (branch) => {
   const cacheKey = `${branch.id}:${totalPages}`;
   if (branchWideCameraCache.has(cacheKey)) {
     branchWideCameras = branchWideCameraCache.get(cacheKey) || [];
-    sidebarMapShouldAutoFit = true;
+    sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
     scheduleSidebarMapRefresh();
     return;
   }
@@ -1699,13 +2307,13 @@ const loadAllBranchCamerasForMap = async (branch) => {
     const pageResults = await Promise.all(pageRequests);
     branchWideCameras = pageResults.flat();
     branchWideCameraCache.set(cacheKey, branchWideCameras);
-    sidebarMapShouldAutoFit = true;
+    sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
   } catch (error) {
     branchWideCameras = currentCameras.map((camera) => ({
       ...camera,
       __sourcePage: activePage,
     }));
-    sidebarMapShouldAutoFit = true;
+    sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
     addActivity('Map camera sync failed', error.message || 'Unable to load all map markers.', 'warning');
   }
 
@@ -1750,6 +2358,7 @@ const loadBranchCameras = async (branch, page = 1) => {
     'success'
   );
   void loadAllBranchCamerasForMap(branch);
+  scheduleWorkspacePersist();
 };
 
 const refreshCurrentStreams = async () => {
@@ -1763,11 +2372,6 @@ const refreshCurrentStreams = async () => {
     return;
   }
 
-  Array.from(slotOverrides.keys()).forEach((key) => {
-    if (key.startsWith(`${activeBranch.id}:${activePage}:`)) {
-      slotOverrides.delete(key);
-    }
-  });
   Array.from(branchWideCameraCache.keys()).forEach((key) => {
     if (key.startsWith(`${activeBranch.id}:`)) {
       branchWideCameraCache.delete(key);
@@ -1777,6 +2381,8 @@ const refreshCurrentStreams = async () => {
   setReloadButtonState(true);
   renderSkeletonCards(currentMode === 'focus' ? Math.max(selectedCameraIds.size, 1) : getLayoutCount());
   try {
+    sidebarMapViewportLocked = false;
+    sidebarMapShouldAutoFit = true;
     await loadBranchCameras(activeBranch, activePage);
     pickerStatusEl.textContent = `Streams reloaded for ${activeBranch.branch_name} (Page ${activePage}).`;
   } catch (error) {
@@ -1794,6 +2400,8 @@ const createBranchButton = (branch, onSelect) => {
   button.innerHTML = `<strong>${branch.branch_code || '-'}</strong><span>${branch.branch_name || '-'}</span>`;
   button.addEventListener('click', async () => {
     try {
+      sidebarMapViewportLocked = false;
+      sidebarMapShouldAutoFit = true;
       await loadBranchPages(branch.id);
       await loadBranchCameras(branch, 1);
       setPagingVisible(totalPages > 1);
@@ -1863,6 +2471,7 @@ const resolveCameraById = (cameraId) => {
   const normalizedId = String(cameraId);
   return (
     selectedCameraMap.get(normalizedId) ||
+    branchWideCameras.find((camera) => String(camera.id) === normalizedId) ||
     currentCameras.find((camera) => String(camera.id) === normalizedId) ||
     Array.from(slotOverrides.values()).find((camera) => String(camera.id) === normalizedId) ||
     null
@@ -1905,9 +2514,12 @@ const renderQuickSearchResults = async () => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'branch-search-item';
+    const detailParts = [camera.gate_name, camera.branch_name]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
     button.innerHTML = `
       <strong>${camera.cctv_name || `Camera ${camera.id || '-'}`}</strong>
-      <span>${camera.gate_name || '-'} | ${camera.branch_code || '-'} | ${camera.branch_name || '-'}</span>
+      <span>${detailParts.join(' | ')}</span>
     `;
     button.addEventListener('click', () => {
       if (quickSearchContext.mode === 'replace-slot' && Number.isInteger(quickSearchContext.slotIndex)) {
@@ -1919,6 +2531,7 @@ const renderQuickSearchResults = async () => {
           `${camera.cctv_name || 'Camera'} assigned to slot ${slotIndex + 1}.`,
           'success'
         );
+        scheduleWorkspacePersist();
         renderCameras(currentCameras);
         return;
       }
@@ -1932,6 +2545,7 @@ const renderQuickSearchResults = async () => {
         'success'
       );
       updateMiniPanel();
+      scheduleWorkspacePersist();
       if (currentMode === 'focus') {
         renderCameras(currentCameras);
       }
@@ -2123,6 +2737,9 @@ const handleGridClick = async (event) => {
 };
 
 const handleGridDoubleClick = (event) => {
+  if (currentMode === 'focus') {
+    return;
+  }
   const cardEl = event.target instanceof HTMLElement ? event.target.closest('.camera-card') : null;
   if (!cardEl || !cardEl.dataset.cameraId) {
     return;
@@ -2137,6 +2754,7 @@ const handleGridDoubleClick = (event) => {
   }
   enterFocusMode();
 };
+
 
 let lastToolbarPointerCheckAt = 0;
 const handleDocumentMouseMove = (event) => {
@@ -2311,6 +2929,11 @@ menuHelpBtn.addEventListener('click', () => {
   showHelp();
 });
 reloadStreamBtn.addEventListener('click', refreshCurrentStreams);
+resetWorkspaceBtn.addEventListener('click', () => {
+  resetWorkspaceState().catch((error) => {
+    addActivity('Workspace reset failed', error.message || 'Failed to reset workspace.', 'danger');
+  });
+});
 closeApiConfigBtn.addEventListener('click', () => hideModal(apiConfigModalEl));
 closeUpdateConfigBtn.addEventListener('click', () => hideModal(updateConfigModalEl));
 closeHelpBtn.addEventListener('click', hideHelp);
@@ -2500,6 +3123,8 @@ prevPageBtn.addEventListener('click', async () => {
   }
 
   try {
+    sidebarMapViewportLocked = false;
+    sidebarMapShouldAutoFit = true;
     await loadBranchCameras(activeBranch, activePage - 1);
   } catch (error) {
     pickerStatusEl.textContent = error.message || 'Failed to load cameras.';
@@ -2513,6 +3138,8 @@ nextPageBtn.addEventListener('click', async () => {
   }
 
   try {
+    sidebarMapViewportLocked = false;
+    sidebarMapShouldAutoFit = true;
     await loadBranchCameras(activeBranch, activePage + 1);
   } catch (error) {
     pickerStatusEl.textContent = error.message || 'Failed to load cameras.';
@@ -2550,7 +3177,7 @@ if (ACTIVE_UI_THEME) {
   document.body.classList.add(ACTIVE_UI_THEME);
 }
 syncLayoutControls();
-renderSkeletonCards(getLayoutCount());
+renderWelcomeState();
 setUpdateStatusText('Updater idle', 'ready');
 addActivity('Dashboard ready', 'Waiting for branch selection or quick search.', 'neutral');
 startPerfObserver();
@@ -2563,6 +3190,14 @@ window.appInfo
   .getVersion()
   .then((version) => setInstalledVersionText(version))
   .catch(() => setInstalledVersionText('-'));
+
+restoreWorkspaceState().catch((error) => {
+  addActivity('Workspace restore failed', error.message || 'Failed to restore workspace state.', 'warning');
+  renderWelcomeState();
+});
+
+window.setTimeout(ensureGridHasVisibleContent, 250);
+window.setTimeout(ensureGridHasVisibleContent, 1000);
 
 window.cameraService
   .getApiBaseUrl()
@@ -2613,5 +3248,6 @@ window.cameraService.onOpenLayoutConfig(openLayoutConfig);
 window.cameraService.onEnterFocusMode(enterFocusMode);
 window.cameraService.onLeaveFocusMode(leaveFocusMode);
 window.cameraService.onReloadStreams(refreshCurrentStreams);
+
 
 

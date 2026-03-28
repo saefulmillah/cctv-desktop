@@ -94,3 +94,9 @@ contextBridge.exposeInMainWorld('appUpdater', {
 contextBridge.exposeInMainWorld('appInfo', {
   getVersion: () => ipcRenderer.invoke('app:get-version'),
 });
+
+contextBridge.exposeInMainWorld('appState', {
+  getWorkspaceState: () => ipcRenderer.invoke('app-state:get-workspace'),
+  saveWorkspaceState: (payload) => ipcRenderer.invoke('app-state:save-workspace', payload),
+  clearWorkspaceState: () => ipcRenderer.invoke('app-state:clear-workspace'),
+});

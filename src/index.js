@@ -20,6 +20,7 @@ let updatePromptOpen = false;
 const PORT = 3005;
 const SRC_DIR = __dirname;
 const CONFIG_FILE_NAME = 'app-config.json';
+const WORKSPACE_STATE_KEY = 'WORKSPACE_STATE';
 const APP_PACKAGE_JSON_PATH = path.resolve(__dirname, '..', 'package.json');
 const { promises: fsPromises } = fs;
 
@@ -94,6 +95,30 @@ const persistApiConfig = async ({ apiBaseUrl, apiAuthToken }) => {
     API_BASE_URL: apiBaseUrl,
     API_AUTH_TOKEN: String(apiAuthToken || ''),
   });
+};
+
+const getPersistedWorkspaceState = async () => {
+  const config = await readConfig();
+  const state = config[WORKSPACE_STATE_KEY];
+  return state && typeof state === 'object' ? state : null;
+};
+
+const persistWorkspaceState = async (workspaceState) => {
+  const config = await readConfig();
+  await writeConfig({
+    ...config,
+    [WORKSPACE_STATE_KEY]: workspaceState,
+  });
+};
+
+const clearPersistedWorkspaceState = async () => {
+  const config = await readConfig();
+  if (!(WORKSPACE_STATE_KEY in config)) {
+    return;
+  }
+  const nextConfig = { ...config };
+  delete nextConfig[WORKSPACE_STATE_KEY];
+  await writeConfig(nextConfig);
 };
 
 const parseGitHubRepoFromPackageJson = () => {
@@ -568,6 +593,38 @@ const toIpcError = (error) => ({
 
 const registerServiceHandlers = () => {
   ipcMain.handle('app:get-version', () => app.getVersion());
+  ipcMain.handle('app-state:get-workspace', async () => {
+    try {
+      return {
+        status: 200,
+        data: await getPersistedWorkspaceState(),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+  ipcMain.handle('app-state:save-workspace', async (_event, payload) => {
+    try {
+      await persistWorkspaceState(payload && typeof payload === 'object' ? payload : null);
+      return {
+        status: 200,
+        data: payload || null,
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+  ipcMain.handle('app-state:clear-workspace', async () => {
+    try {
+      await clearPersistedWorkspaceState();
+      return {
+        status: 200,
+        data: null,
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
 
   ipcMain.handle('camera-service:get-health', async () => {
     try {

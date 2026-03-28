@@ -33,26 +33,24 @@
         </article>
       </div>
 
-      <div class="activity-panel__meta sidebar-section-hidden">
-        <span id="currentBranchMini" class="meta-pill">Branch: -</span>
-        <span id="activityVersion" class="meta-pill">Version: -</span>
-        <span id="apiBaseUrlLabel" class="meta-pill">API: -</span>
+      <div class="activity-panel__meta">
+        <div id="currentBranchMini" class="route-chip-list">
+          <span class="meta-pill route-chip">Branch: -</span>
+        </div>
+        <span id="activityVersion" class="meta-pill sidebar-section-hidden">Version: -</span>
+        <span id="apiBaseUrlLabel" class="meta-pill sidebar-section-hidden">API: -</span>
+      </div>
+
+      <div class="activity-panel__workspace-actions">
+        <button id="resetWorkspaceBtn" class="workspace-reset-btn" type="button">
+          Reset Workspace
+        </button>
       </div>
 
       <div class="map-panel">
         <div class="map-panel__header">
           <h2>Peta CCTV</h2>
           <span id="sidebarMapSummary" class="meta-pill">Belum ada marker</span>
-        </div>
-        <div class="map-panel__legend" aria-label="Map legend">
-          <span class="map-legend-item">
-            <img src="./assets/maps-marker_32x32.ico" alt="" />
-            <span>Online</span>
-          </span>
-          <span class="map-legend-item">
-            <img src="./assets/maps-marker_32x32-offline.ico" alt="" />
-            <span>Offline</span>
-          </span>
         </div>
         <div id="sidebarMap" class="sidebar-map sidebar-section-hidden" aria-label="CCTV map"></div>
         <div id="sidebarMapEmpty" class="sidebar-map-empty">

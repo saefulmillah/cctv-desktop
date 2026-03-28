@@ -189,6 +189,60 @@ body.focus-mode .activity-panel {
   grid-template-columns: 1fr;
 }
 
+.activity-panel__workspace-actions {
+  margin-top: 12px;
+}
+
+.route-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.route-chip {
+  padding: 5px 10px;
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.route-chip__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.workspace-reset-btn {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.workspace-reset-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
+}
+
 .activity-panel__feed-wrap {
   margin-top: 18px;
 }
@@ -735,6 +789,77 @@ body.normal-mode .grid {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 18%),
     linear-gradient(135deg, rgba(38, 84, 143, 0.92), rgba(29, 68, 120, 0.96));
+}
+
+.welcome-state {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.welcome-state__inner {
+  width: min(760px, calc(100vw - 72px));
+  padding: 34px 38px;
+  text-align: center;
+  border-radius: 28px;
+  border: 1px solid rgba(242, 249, 255, 0.78);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 18%),
+    linear-gradient(135deg, rgba(39, 84, 143, 0.9), rgba(28, 67, 118, 0.94));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 20px 48px rgba(8, 23, 47, 0.24);
+  backdrop-filter: blur(16px);
+}
+
+.welcome-state__eyebrow {
+  margin: 0 0 10px;
+  color: #d7ecff;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+
+.welcome-state__title {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 42px);
+  line-height: 1.05;
+}
+
+.welcome-state__message {
+  width: min(620px, 100%);
+  margin: 16px auto 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.welcome-state__actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.welcome-state__chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(237, 247, 255, 0.18);
+  background: rgba(235, 246, 255, 0.08);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.welcome-state__hint {
+  margin: 18px 0 0;
+  color: #d7ecff;
+  font-size: 12px;
 }
 
 .camera-card--skeleton::before {
