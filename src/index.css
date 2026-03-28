@@ -303,9 +303,38 @@ body.focus-mode .activity-panel {
 
 .sidebar-map {
   overflow: hidden;
+  position: relative;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 18%),
     linear-gradient(180deg, rgba(37, 84, 146, 0.86), rgba(28, 67, 118, 0.88));
+}
+
+.sidebar-cluster-tooltip {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  top: 0;
+  min-width: 102px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #13345f;
+  box-shadow: 0 10px 24px rgba(16, 28, 48, 0.18);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(calc(-100% - 8px), -50%);
+  transition: opacity 0.14s ease;
+}
+
+.sidebar-cluster-tooltip.is-visible {
+  opacity: 1;
+}
+
+.sidebar-cluster-tooltip__title {
+  margin-bottom: 4px;
+  font-weight: 600;
 }
 
 .sidebar-map-empty {
@@ -1344,23 +1373,23 @@ body.theme-dashboard-enterprise .stat-card strong {
 
 .map-marker-label {
   display: inline-block;
-  padding: 2px 6px;
+  padding: 1px 5px;
   border-radius: 999px;
   border: 1px solid rgba(237, 247, 255, 0.14);
-  background: rgba(235, 246, 255, 0.08);
-  color: #ffffff;
-  font-size: 8px;
+  background: rgba(235, 246, 255, 0.65);
+  color: rgba(19, 52, 95, 0.88);
+  font-size: 6px;
   font-weight: 400;
-  line-height: 1.1;
-  letter-spacing: 0.01em;
+  line-height: 1;
+  letter-spacing: 0;
   white-space: nowrap;
   box-shadow: 0 2px 8px rgba(8, 24, 49, 0.08);
-  text-shadow: 0 1px 2px rgba(8, 24, 49, 0.35);
+  text-shadow: none;
 }
 
 .map-marker-label--selected {
   border-color: rgba(237, 247, 255, 0.2);
-  background: rgba(235, 246, 255, 0.12);
+  background: rgba(235, 246, 255, 0.65);
 }
 
 

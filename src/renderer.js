@@ -29,7 +29,7 @@ const offlineCountEl = document.getElementById('offlineCount');
 const selectedCountEl = document.getElementById('selectedCount');
 const sidebarMapEl = document.getElementById('sidebarMap');
 const sidebarMapEmptyEl = document.getElementById('sidebarMapEmpty');
-const sidebarMapSummaryEl = document.getElementById('sidebarMapSummary');
+const sidebarMapTitleEl = document.getElementById('sidebarMapTitle');
 const resetWorkspaceBtn = document.getElementById('resetWorkspaceBtn');
 
 const pickerEl = document.getElementById('branchPicker');
@@ -124,6 +124,10 @@ let sidebarMapInstance = null;
 let sidebarTrafficLayer = null;
 let sidebarMapMarkers = [];
 let sidebarMarkerCluster = null;
+let sidebarClusterTooltipEl = null;
+let sidebarClusterHoverCloseTimer = null;
+let sidebarClusterHoverOpenTimer = null;
+let activeClusterTooltipKey = null;
 let sidebarMapRefreshTimer = null;
 let sidebarMapShouldAutoFit = true;
 let sidebarMapViewportLocked = false;
@@ -147,7 +151,7 @@ let gridLayout = {
 const DEFAULT_GRID_COUNT = 20;
 const ACTIVITY_LIMIT = 6;
 const WORKSPACE_STATE_VERSION = 1;
-const WORKSPACE_PERSIST_DELAY_MS = 500;
+const WORKSPACE_PERSIST_DELAY_MS = 1400;
 const PERF_FLAGS = {
   ENABLE_PERF_OBSERVER: false,
   USE_CENTRAL_WATCHDOG: true,
@@ -493,28 +497,7 @@ const getCameraCoordinates = (camera) => {
 };
 
 const getMapCameraCollection = () => {
-  const baseCollection = branchWideCameras.length ? branchWideCameras : currentCameras;
-  if (currentMode !== 'focus') {
-    return baseCollection;
-  }
-
-  const combined = new Map();
-  baseCollection.forEach((camera) => {
-    if (camera && camera.id != null) {
-      combined.set(String(camera.id), camera);
-    }
-  });
-  getRenderableCameras().forEach((camera) => {
-    if (camera && camera.id != null) {
-      combined.set(String(camera.id), camera);
-    }
-  });
-  selectedCameraMap.forEach((camera, cameraId) => {
-    if (camera && camera.id != null) {
-      combined.set(String(cameraId), camera);
-    }
-  });
-  return Array.from(combined.values());
+  return branchWideCameras.length ? branchWideCameras : currentCameras;
 };
 
 const getCameraOperationalState = (camera) => {
@@ -557,9 +540,16 @@ const buildSpiderfyLabelConfig = (camera) => {
   }
   const selected = String(camera.id) === String(selectedMapCameraId);
   return {
-    text: shortenMarkerLabel(normalizeMarkerLabelSource(camera), selected ? 22 : 16),
+    text: shortenMarkerLabel(normalizeMarkerLabelSource(camera), selected ? 18 : 12),
     className: selected ? 'map-marker-label map-marker-label--selected' : 'map-marker-label',
   };
+};
+
+const getSpiderfyLabelOrigin = (xOffset, yOffset) => {
+  if (yOffset <= 0) {
+    return new window.google.maps.Point(16, -14);
+  }
+  return new window.google.maps.Point(16, 42);
 };
 
 const applySpiderfyMarkerLabels = () => {
@@ -587,13 +577,28 @@ const scheduleSidebarMapRefresh = () => {
 const getBranchPageCameraMap = () => {
   const pageMap = new Map();
   getMapCameraCollection().forEach((camera) => {
-    const pageNumber = Number(camera.__sourcePage || camera.page || 1);
-    pageMap.set(String(camera.id), Number.isFinite(pageNumber) && pageNumber > 0 ? pageNumber : 1);
+    const pageNumber = Number(camera.__sourcePage || camera.page || activePage || 1);
+    pageMap.set(
+      String(camera.id),
+      Number.isFinite(pageNumber) && pageNumber > 0 ? pageNumber : Math.max(1, Number(activePage || 1))
+    );
   });
   return pageMap;
 };
 
 const clearSidebarMapMarkers = () => {
+  if (sidebarClusterHoverOpenTimer) {
+    clearTimeout(sidebarClusterHoverOpenTimer);
+    sidebarClusterHoverOpenTimer = null;
+  }
+  if (sidebarClusterHoverCloseTimer) {
+    clearTimeout(sidebarClusterHoverCloseTimer);
+    sidebarClusterHoverCloseTimer = null;
+  }
+  if (sidebarClusterTooltipEl) {
+    sidebarClusterTooltipEl.classList.remove('is-visible');
+  }
+  activeClusterTooltipKey = null;
   if (sidebarMarkerCluster) {
     if (typeof sidebarMarkerCluster.clearMarkers === 'function') {
       sidebarMarkerCluster.clearMarkers();
@@ -664,6 +669,44 @@ const collapseSpiderfy = () => {
   applySpiderfyMarkerLabels();
 };
 
+const interpolateLatLng = (fromLatLng, toLatLng, progress) => {
+  if (!fromLatLng || !toLatLng) {
+    return toLatLng || fromLatLng || null;
+  }
+  const startLat = typeof fromLatLng.lat === 'function' ? fromLatLng.lat() : fromLatLng.lat;
+  const startLng = typeof fromLatLng.lng === 'function' ? fromLatLng.lng() : fromLatLng.lng;
+  const endLat = typeof toLatLng.lat === 'function' ? toLatLng.lat() : toLatLng.lat;
+  const endLng = typeof toLatLng.lng === 'function' ? toLatLng.lng() : toLatLng.lng;
+  return new window.google.maps.LatLng(
+    startLat + (endLat - startLat) * progress,
+    startLng + (endLng - startLng) * progress
+  );
+};
+
+const animateSpiderfyMarker = (marker, fromLatLng, toLatLng, leg, legAnchorLatLng, duration = 180) => {
+  if (!marker || !fromLatLng || !toLatLng) {
+    return;
+  }
+
+  const startAt = performance.now();
+  const step = (now) => {
+    const progress = Math.min(1, (now - startAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const nextLatLng = interpolateLatLng(fromLatLng, toLatLng, eased);
+    if (nextLatLng) {
+      marker.setPosition(nextLatLng);
+      if (leg && typeof leg.setPath === 'function') {
+        leg.setPath([legAnchorLatLng, nextLatLng]);
+      }
+    }
+    if (progress < 1) {
+      window.requestAnimationFrame(step);
+    }
+  };
+
+  window.requestAnimationFrame(step);
+};
+
 const getNearbyMarkerEntries = (sourceEntry, projection) => {
   if (!sourceEntry || !projection) {
     return [];
@@ -711,14 +754,16 @@ const spiderfyMarkerGroup = (sourceEntry, customEntries = null, customCenter = n
     return false;
   }
 
-  const radius = Math.max(34, 18 + nearbyEntries.length * 4);
-  const step = (Math.PI * 2) / nearbyEntries.length;
+  const spacing = Math.max(68, Math.min(90, 56 + nearbyEntries.length * 4));
+  const baseYOffsets = [0, -16, 16, -28, 28, -38, 38, -48, 48];
+  const middleIndex = (nearbyEntries.length - 1) / 2;
 
   nearbyEntries.forEach((entry, index) => {
-    const angle = -Math.PI / 2 + step * index;
+    const xOffset = (index - middleIndex) * spacing;
+    const yOffset = baseYOffsets[index] ?? ((index % 2 === 0 ? 1 : -1) * (18 + Math.floor(index / 2) * 12));
     const targetPixel = new window.google.maps.Point(
-      centerPixel.x + Math.cos(angle) * radius,
-      centerPixel.y + Math.sin(angle) * radius
+      centerPixel.x + xOffset,
+      centerPixel.y + yOffset
     );
     const targetLatLng = projection.fromDivPixelToLatLng(targetPixel);
     if (!targetLatLng) {
@@ -728,17 +773,17 @@ const spiderfyMarkerGroup = (sourceEntry, customEntries = null, customCenter = n
     spiderfiedMarkerIds.add(String(entry.camera.id));
 
     if (customEntries) {
+      const scaledSize = getMapMarkerScaledSize(entry.camera);
       const spiderfyMarker = new window.google.maps.Marker({
         map: sidebarMapInstance,
-        position: targetLatLng,
+        position: centerLatLng,
         title: entry.camera.cctv_name || 'CCTV',
         icon: {
           url: getMapMarkerIconUrl(entry.camera),
-          scaledSize: new window.google.maps.Size(
-            getMapMarkerScaledSize(entry.camera),
-            getMapMarkerScaledSize(entry.camera)
-          ),
+          scaledSize: new window.google.maps.Size(scaledSize, scaledSize),
+          labelOrigin: getSpiderfyLabelOrigin(xOffset, yOffset),
         },
+        label: buildSpiderfyLabelConfig(entry.camera),
         zIndex: String(entry.camera && entry.camera.id) === String(selectedMapCameraId) ? 1000 : 950,
       });
 
@@ -750,7 +795,7 @@ const spiderfyMarkerGroup = (sourceEntry, customEntries = null, customCenter = n
       spiderfyTempMarkers.push(spiderfyMarker);
       const leg = new window.google.maps.Polyline({
         map: sidebarMapInstance,
-        path: [centerLatLng, targetLatLng],
+        path: [centerLatLng, centerLatLng],
         strokeColor: '#ffffff',
         strokeOpacity: 0.85,
         strokeWeight: 1.5,
@@ -758,13 +803,14 @@ const spiderfyMarkerGroup = (sourceEntry, customEntries = null, customCenter = n
         zIndex: 1,
       });
       spiderfyLegs.push(leg);
+      animateSpiderfyMarker(spiderfyMarker, centerLatLng, targetLatLng, leg, centerLatLng);
       return;
     }
 
-    entry.marker.setPosition(targetLatLng);
+    entry.marker.setPosition(entry.originalPosition);
     const leg = new window.google.maps.Polyline({
       map: sidebarMapInstance,
-      path: [entry.originalPosition, targetLatLng],
+      path: [entry.originalPosition, entry.originalPosition],
       strokeColor: '#ffffff',
       strokeOpacity: 0.85,
       strokeWeight: 1.5,
@@ -772,6 +818,7 @@ const spiderfyMarkerGroup = (sourceEntry, customEntries = null, customCenter = n
       zIndex: 1,
     });
     spiderfyLegs.push(leg);
+    animateSpiderfyMarker(entry.marker, entry.originalPosition, targetLatLng, leg, entry.originalPosition);
   });
 
   spiderfySourceCameraId = String(sourceEntry.camera.id);
@@ -838,35 +885,54 @@ const loadMarkerClustererLibrary = () => {
   return markerClustererLoaderPromise;
 };
 
-const getClusterTone = (count) => {
-  if (count <= 3) {
+const getClusterTone = (onlineCount, offlineCount) => {
+  const total = Math.max(1, Number(onlineCount || 0) + Number(offlineCount || 0));
+  const onlineRatio = Number(onlineCount || 0) / total;
+  const offlineRatio = Number(offlineCount || 0) / total;
+  if (onlineRatio >= 0.7) {
     return {
-      stroke: 'rgba(65, 231, 93, 0.15)',
-      fill: 'rgba(65, 231, 93, 0.75)',
-      glow: 'rgba(65, 231, 93, 0.18)',
+      fill: 'rgba(65, 231, 93, 0.82)',
+      border: 'rgba(65, 231, 93, 0.22)',
     };
   }
-  if (count <= 9) {
+  if (offlineRatio >= 0.7) {
     return {
-      stroke: 'rgba(255, 156, 28, 0.15)',
-      fill: 'rgba(255, 156, 28, 0.75)',
-      glow: 'rgba(255, 156, 28, 0.18)',
+      fill: 'rgba(255, 63, 77, 0.82)',
+      border: 'rgba(255, 63, 77, 0.22)',
     };
   }
   return {
-    stroke: 'rgba(255, 63, 77, 0.15)',
-    fill: 'rgba(255, 63, 77, 0.75)',
-    glow: 'rgba(255, 63, 77, 0.18)',
+    fill: 'rgba(255, 156, 28, 0.82)',
+    border: 'rgba(255, 156, 28, 0.22)',
   };
 };
 
-const buildClusterSvgDataUrl = (count) => {
+const describeClusterStatus = (markers) => {
+  const summary = {
+    onlineCount: 0,
+    offlineCount: 0,
+  };
+  markers.forEach((marker) => {
+    const entry = sidebarMapMarkers.find((item) => item && item.marker === marker);
+    if (!entry || !entry.camera) {
+      return;
+    }
+    if (getCameraOperationalState(entry.camera) === 'online') {
+      summary.onlineCount += 1;
+      return;
+    }
+    summary.offlineCount += 1;
+  });
+  return summary;
+};
+
+const buildClusterSvgDataUrl = (count, onlineCount, offlineCount) => {
   const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
-  const tone = getClusterTone(count);
+  const tone = getClusterTone(onlineCount, offlineCount);
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.stroke}" stroke-width="3.2" />
-      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 11}" fill="rgba(255,255,255,0.02)" stroke="${tone.glow}" stroke-width="1.8" />
+      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
+      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
     </svg>
   `.trim();
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
@@ -899,6 +965,72 @@ const animateMapZoom = (map, targetZoom, center, stepDelay = 90) => {
   window.setTimeout(tick, stepDelay);
 };
 
+const ensureSidebarClusterTooltip = () => {
+  if (sidebarClusterTooltipEl) {
+    return sidebarClusterTooltipEl;
+  }
+  const tooltipEl = document.createElement('div');
+  tooltipEl.className = 'sidebar-cluster-tooltip';
+  sidebarMapEl.appendChild(tooltipEl);
+  sidebarClusterTooltipEl = tooltipEl;
+  return sidebarClusterTooltipEl;
+};
+
+const hideSidebarClusterTooltip = () => {
+  if (sidebarClusterHoverOpenTimer) {
+    clearTimeout(sidebarClusterHoverOpenTimer);
+    sidebarClusterHoverOpenTimer = null;
+  }
+  if (sidebarClusterHoverCloseTimer) {
+    clearTimeout(sidebarClusterHoverCloseTimer);
+    sidebarClusterHoverCloseTimer = null;
+  }
+  if (sidebarClusterTooltipEl) {
+    sidebarClusterTooltipEl.classList.remove('is-visible');
+  }
+  activeClusterTooltipKey = null;
+};
+
+const showSidebarClusterTooltip = (marker, summary, tooltipKey) => {
+  if (!sidebarMapProjectionOverlay || !sidebarMapInstance || !marker || !summary) {
+    return;
+  }
+  const projection = sidebarMapProjectionOverlay.getProjection();
+  const position = marker.getPosition();
+  if (!projection || !position) {
+    return;
+  }
+  const pixel = projection.fromLatLngToContainerPixel(position);
+  if (!pixel) {
+    return;
+  }
+  if (tooltipKey && activeClusterTooltipKey === tooltipKey && sidebarClusterTooltipEl?.classList.contains('is-visible')) {
+    return;
+  }
+  const tooltipEl = ensureSidebarClusterTooltip();
+  tooltipEl.innerHTML = `
+    <div class="sidebar-cluster-tooltip__title">${summary.count} camera</div>
+    <div>${summary.onlineCount} online</div>
+    <div>${summary.offlineCount} offline</div>
+  `;
+  const mapWidth = sidebarMapEl.clientWidth || 0;
+  const mapHeight = sidebarMapEl.clientHeight || 0;
+  const tooltipWidth = tooltipEl.offsetWidth || 120;
+  const tooltipHeight = tooltipEl.offsetHeight || 72;
+  const desiredLeft = pixel.x - 10;
+  const desiredTop = pixel.y;
+  const minLeft = tooltipWidth + 12;
+  const maxLeft = Math.max(minLeft, mapWidth - 12);
+  const minTop = tooltipHeight / 2 + 12;
+  const maxTop = Math.max(minTop, mapHeight - tooltipHeight / 2 - 12);
+  const clampedLeft = Math.min(Math.max(desiredLeft, minLeft), maxLeft);
+  const clampedTop = Math.min(Math.max(desiredTop, minTop), maxTop);
+  tooltipEl.style.left = `${clampedLeft}px`;
+  tooltipEl.style.top = `${clampedTop}px`;
+  tooltipEl.classList.add('is-visible');
+  activeClusterTooltipKey = tooltipKey || null;
+};
+
 const createSidebarMarkerCluster = async (map, markers) => {
   if (!map || !markers.length) {
     return null;
@@ -906,18 +1038,23 @@ const createSidebarMarkerCluster = async (map, markers) => {
 
   const markerClustererLib = await loadMarkerClustererLibrary();
   const MarkerClustererCtor = markerClustererLib.MarkerClusterer;
+  const SuperClusterAlgorithmCtor = markerClustererLib.SuperClusterAlgorithm;
   if (!MarkerClustererCtor) {
     throw new Error('MarkerClusterer constructor unavailable.');
   }
 
   const renderer = {
-    render({ count, position }) {
-      const iconUrl = buildClusterSvgDataUrl(count);
-      return new window.google.maps.Marker({
+    render({ count, position, markers: clusterMarkers }) {
+      const { onlineCount, offlineCount } = describeClusterStatus(
+        Array.isArray(clusterMarkers) ? clusterMarkers : []
+      );
+      const iconUrl = buildClusterSvgDataUrl(count, onlineCount, offlineCount);
+      const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
+      const marker = new window.google.maps.Marker({
         position,
         icon: {
           url: iconUrl,
-          scaledSize: new window.google.maps.Size(count >= 100 ? 62 : count >= 10 ? 56 : 52, count >= 100 ? 62 : count >= 10 ? 56 : 52),
+          scaledSize: new window.google.maps.Size(size, size),
         },
         label: {
           text: String(count),
@@ -927,14 +1064,52 @@ const createSidebarMarkerCluster = async (map, markers) => {
         },
         zIndex: 900,
       });
+      marker.__clusterSummary = { count, onlineCount, offlineCount };
+      marker.__clusterTooltipKey = `${count}:${onlineCount}:${offlineCount}:${position && position.lat ? position.lat() : ''}:${position && position.lng ? position.lng() : ''}`;
+      marker.addListener('mouseover', () => {
+        if (sidebarClusterHoverCloseTimer) {
+          clearTimeout(sidebarClusterHoverCloseTimer);
+          sidebarClusterHoverCloseTimer = null;
+        }
+        const summary = marker.__clusterSummary || { count, onlineCount, offlineCount };
+        if (sidebarClusterHoverOpenTimer) {
+          clearTimeout(sidebarClusterHoverOpenTimer);
+        }
+        sidebarClusterHoverOpenTimer = window.setTimeout(() => {
+          sidebarClusterHoverOpenTimer = null;
+          showSidebarClusterTooltip(marker, summary, marker.__clusterTooltipKey);
+        }, 90);
+      });
+      marker.addListener('mouseout', () => {
+        if (sidebarClusterHoverOpenTimer) {
+          clearTimeout(sidebarClusterHoverOpenTimer);
+          sidebarClusterHoverOpenTimer = null;
+        }
+        if (sidebarClusterHoverCloseTimer) {
+          clearTimeout(sidebarClusterHoverCloseTimer);
+        }
+        sidebarClusterHoverCloseTimer = window.setTimeout(() => {
+          sidebarClusterHoverCloseTimer = null;
+          hideSidebarClusterTooltip();
+        }, 180);
+      });
+      return marker;
     },
   };
 
   return new MarkerClustererCtor({
     map,
     markers,
+    algorithm: SuperClusterAlgorithmCtor
+      ? new SuperClusterAlgorithmCtor({
+          radius: 170,
+          maxZoom: 22,
+        })
+      : undefined,
     renderer,
     onClusterClick: (_, cluster) => {
+      collapseSpiderfy();
+      hideSidebarClusterTooltip();
       sidebarMapShouldAutoFit = false;
       sidebarMapViewportLocked = true;
       suppressSidebarMapClickUntil = Date.now() + 250;
@@ -1001,8 +1176,9 @@ const ensureSidebarMap = async () => {
       { featureType: 'transit', stylers: [{ visibility: 'off' }] },
     ],
   });
-    sidebarTrafficLayer = new maps.TrafficLayer();
+  sidebarTrafficLayer = new maps.TrafficLayer();
   sidebarTrafficLayer.setMap(sidebarMapInstance);
+  ensureSidebarClusterTooltip();
   sidebarMapProjectionOverlay = new maps.OverlayView();
   sidebarMapProjectionOverlay.onAdd = () => {};
   sidebarMapProjectionOverlay.draw = () => {};
@@ -1012,18 +1188,26 @@ const ensureSidebarMap = async () => {
     sidebarMapShouldAutoFit = false;
     sidebarMapViewportLocked = true;
     collapseSpiderfy();
+    hideSidebarClusterTooltip();
   });
   sidebarMapInstance.addListener('zoom_changed', () => {
     sidebarMapShouldAutoFit = false;
     sidebarMapViewportLocked = true;
     collapseSpiderfy();
-    
+    hideSidebarClusterTooltip();
   });
   sidebarMapInstance.addListener('click', () => {
     if (Date.now() < suppressSidebarMapClickUntil) {
       return;
     }
     collapseSpiderfy();
+    hideSidebarClusterTooltip();
+  });
+  sidebarMapInstance.addListener('idle', () => {
+    if (!sidebarMapViewportLocked) {
+      return;
+    }
+    scheduleWorkspacePersist();
   });
   return sidebarMapInstance;
 };
@@ -1062,17 +1246,19 @@ const updateSidebarMap = async () => {
     clearSidebarMapMarkers();
     sidebarMapEl.classList.add('sidebar-section-hidden');
     sidebarMapEmptyEl.classList.remove('sidebar-section-hidden');
-    setTextIfChanged(sidebarMapSummaryEl, 'Panel map aktif di Focus Mode');
+    setTextIfChanged(
+      sidebarMapTitleEl,
+      activeBranch ? `Peta ${activeBranch.branch_name || activeBranch.branch_code || 'CCTV'}` : 'Peta CCTV'
+    );
     setTextIfChanged(sidebarMapEmptyEl, 'Masuk ke Focus Mode untuk melihat peta CCTV.');
     return;
   }
 
   const camerasWithCoordinates = getMapCameraCollection().filter((camera) => getCameraCoordinates(camera));
+  const mapSource = getMapCameraCollection();
   setTextIfChanged(
-    sidebarMapSummaryEl,
-    camerasWithCoordinates.length
-      ? `${camerasWithCoordinates.length} marker CCTV`
-      : 'Belum ada marker'
+    sidebarMapTitleEl,
+    activeBranch ? `Peta ${activeBranch.branch_name || activeBranch.branch_code || 'CCTV'}` : 'Peta CCTV'
   );
 
   if (!camerasWithCoordinates.length) {
@@ -1117,19 +1303,8 @@ const updateSidebarMap = async () => {
       });
 
       marker.addListener('click', () => {
-        const entry = sidebarMapMarkers.find((item) => item && item.marker === marker);
         suppressSidebarMapClickUntil = Date.now() + 250;
-        const markerId = String(camera.id);
-        if (entry && spiderfiedMarkerIds.has(markerId)) {
-          void focusCameraFromMap(camera);
-          return;
-        }
-        if (entry) {
-          const spiderfied = spiderfyMarkerGroup(entry);
-          if (spiderfied) {
-            return;
-          }
-        }
+        hideSidebarClusterTooltip();
         void focusCameraFromMap(camera);
       });
 
@@ -1220,6 +1395,48 @@ const setGridLayoutState = (nextLayout) => {
   scheduleWorkspacePersist();
 };
 
+const serializeMapViewport = () => {
+  if (!sidebarMapInstance || typeof sidebarMapInstance.getCenter !== 'function') {
+    return null;
+  }
+  const center = sidebarMapInstance.getCenter();
+  const zoom = Number(sidebarMapInstance.getZoom());
+  if (!center || typeof center.lat !== 'function' || typeof center.lng !== 'function') {
+    return null;
+  }
+  return {
+    center: {
+      lat: center.lat(),
+      lng: center.lng(),
+    },
+    zoom: Number.isFinite(zoom) ? zoom : null,
+  };
+};
+
+const restoreMapViewport = async (mapViewport) => {
+  if (
+    !mapViewport ||
+    typeof mapViewport !== 'object' ||
+    !mapViewport.center ||
+    !Number.isFinite(Number(mapViewport.center.lat)) ||
+    !Number.isFinite(Number(mapViewport.center.lng))
+  ) {
+    return;
+  }
+
+  const map = await ensureSidebarMap();
+  sidebarMapViewportLocked = true;
+  sidebarMapShouldAutoFit = false;
+  map.setCenter({
+    lat: Number(mapViewport.center.lat),
+    lng: Number(mapViewport.center.lng),
+  });
+  const zoom = Number(mapViewport.zoom);
+  if (Number.isFinite(zoom) && zoom > 0) {
+    map.setZoom(zoom);
+  }
+};
+
 const sanitizeCameraForPersistence = (camera) => {
   if (!camera || typeof camera !== 'object') {
     return null;
@@ -1258,6 +1475,8 @@ const serializeWorkspaceState = () => ({
     mainCount: Number(gridLayout.mainCount || 1),
     sideCount: Number(gridLayout.sideCount || 6),
   },
+  selectedMapCameraId: selectedMapCameraId || null,
+  mapViewport: serializeMapViewport(),
   selectedCameraIds: Array.from(selectedCameraIds),
   selectedCameras: Array.from(selectedCameraMap.values())
     .map(sanitizeCameraForPersistence)
@@ -1297,11 +1516,16 @@ const scheduleWorkspacePersist = () => {
 };
 
 const clearWorkspaceVisualState = () => {
+  if (workspacePersistTimer) {
+    clearTimeout(workspacePersistTimer);
+    workspacePersistTimer = null;
+  }
   activeBranch = null;
   activePage = 1;
   totalPages = 1;
   currentCameras = [];
   branchWideCameras = [];
+  branchWideCameraCache.clear();
   selectedCameraIds.clear();
   selectedCameraMap.clear();
   slotOverrides.clear();
@@ -1442,10 +1666,31 @@ const restoreWorkspaceState = async () => {
       });
     }
 
+    const persistedSelectedMapCameraId = state.selectedMapCameraId
+      ? String(state.selectedMapCameraId)
+      : null;
+    if (persistedSelectedMapCameraId) {
+      if (
+        selectedCameraMap.has(persistedSelectedMapCameraId) ||
+        currentCameras.some((camera) => String(camera.id) === persistedSelectedMapCameraId) ||
+        branchWideCameras.some((camera) => String(camera.id) === persistedSelectedMapCameraId)
+      ) {
+        selectedMapCameraId = persistedSelectedMapCameraId;
+      }
+    }
+
     if (String(state.mode || '') === 'focus' && selectedCameraIds.size > 0) {
       setMode('focus');
     } else {
       setMode('normal');
+    }
+
+    if (currentMode === 'focus') {
+      await updateSidebarMap();
+      await restoreMapViewport(state.mapViewport);
+      if (selectedMapCameraId) {
+        scheduleSidebarMapRefresh();
+      }
     }
   } finally {
     workspaceRestoreInProgress = false;
@@ -1472,6 +1717,7 @@ const searchCameraCatalog = async (query) => {
 
 const updateMiniPanel = () => {
   const visibleCameras = getRenderableCameras();
+  const branchSummarySource = branchWideCameras.length ? branchWideCameras : currentCameras;
   const branchSummaryMap = new Map();
   visibleCameras
     .filter(Boolean)
@@ -1490,10 +1736,10 @@ const updateMiniPanel = () => {
         branchName: camera.branch_name || camera.branch_code || 'Ruas',
         count: 1,
       });
-    });
+  });
   const uniqueBranches = Array.from(branchSummaryMap.values());
-  const onlineCount = visibleCameras.filter((camera) => streamStateByCameraId.get(camera.id) === 'online').length;
-  const offlineCount = visibleCameras.filter((camera) => streamStateByCameraId.get(camera.id) !== 'online').length;
+  const onlineCount = branchSummarySource.filter((camera) => getCameraOperationalState(camera) === 'online').length;
+  const offlineCount = branchSummarySource.filter((camera) => getCameraOperationalState(camera) !== 'online').length;
   setTextIfChanged(onlineCountEl, String(onlineCount));
   setTextIfChanged(offlineCountEl, String(offlineCount));
   setTextIfChanged(selectedCountEl, String(selectedCameraIds.size));
@@ -1711,8 +1957,6 @@ const setStreamStatus = (statusEl, cameraId, state) => {
           ? 'Reconnecting'
           : 'Offline'
   );
-  updateMiniPanel();
-  scheduleSidebarMapRefresh();
 };
 
 const startPerfObserver = () => {
@@ -2278,34 +2522,24 @@ const loadAllBranchCamerasForMap = async (branch) => {
     return;
   }
 
-  const cacheKey = `${branch.id}:${totalPages}`;
+  const cacheKey = String(branch.id);
   if (branchWideCameraCache.has(cacheKey)) {
     branchWideCameras = branchWideCameraCache.get(cacheKey) || [];
     sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
+    updateMiniPanel();
     scheduleSidebarMapRefresh();
     return;
   }
 
-  const pagesToLoad = Math.max(1, totalPages);
-  const pageRequests = Array.from({ length: pagesToLoad }, (_unused, index) => {
-    const pageNumber = index + 1;
-    return window.cameraService
-      .getCamerasByBranch(branch.id, pageNumber)
-      .then((response) => {
-        if (response.status >= 400) {
-          throw new Error(response.message || 'Failed to load branch map cameras.');
-        }
-        const pageItems = Array.isArray(response.data) ? response.data : [];
-        return pageItems.map((camera) => ({
-          ...camera,
-          __sourcePage: pageNumber,
-        }));
-      });
-  });
-
   try {
-    const pageResults = await Promise.all(pageRequests);
-    branchWideCameras = pageResults.flat();
+    const response = await window.cameraService.getCameras({ branch_id: branch.id });
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Failed to load branch map cameras.');
+    }
+    branchWideCameras = (Array.isArray(response.data) ? response.data : []).map((camera) => ({
+      ...camera,
+      __sourcePage: camera.__sourcePage || camera.page || null,
+    }));
     branchWideCameraCache.set(cacheKey, branchWideCameras);
     sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
   } catch (error) {
@@ -2317,11 +2551,13 @@ const loadAllBranchCamerasForMap = async (branch) => {
     addActivity('Map camera sync failed', error.message || 'Unable to load all map markers.', 'warning');
   }
 
+  updateMiniPanel();
   scheduleSidebarMapRefresh();
 };
 
 const loadBranchCameras = async (branch, page = 1) => {
   pickerStatusEl.textContent = `Loading cameras for ${branch.branch_name}...`;
+  branchWideCameras = [];
   renderSkeletonCards(currentMode === 'focus' ? Math.max(selectedCameraIds.size, 1) : getLayoutCount());
   addActivity(
     'Loading branch cameras',
@@ -2372,11 +2608,7 @@ const refreshCurrentStreams = async () => {
     return;
   }
 
-  Array.from(branchWideCameraCache.keys()).forEach((key) => {
-    if (key.startsWith(`${activeBranch.id}:`)) {
-      branchWideCameraCache.delete(key);
-    }
-  });
+  branchWideCameraCache.delete(String(activeBranch.id));
 
   setReloadButtonState(true);
   renderSkeletonCards(currentMode === 'focus' ? Math.max(selectedCameraIds.size, 1) : getLayoutCount());
