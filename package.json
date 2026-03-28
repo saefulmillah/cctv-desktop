@@ -1,7 +1,7 @@
 {
   "name": "cctv-desktop",
   "productName": "HK Toll Vision (HKTV)",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "My Electron application description",
   "main": "src/index.js",
   "private": true,
