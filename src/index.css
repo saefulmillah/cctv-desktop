@@ -419,6 +419,67 @@ body.focus-mode .activity-panel {
   padding-right: 6px;
 }
 
+.health-monitor {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 1200;
+  width: min(360px, calc(100vw - 36px));
+  max-height: min(72vh, 720px);
+  overflow: auto;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(237, 247, 255, 0.2);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 16%),
+    rgba(13, 31, 58, 0.92);
+  box-shadow: 0 20px 48px rgba(6, 16, 34, 0.34);
+  backdrop-filter: blur(12px);
+}
+
+.health-monitor__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.health-monitor__header h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+
+.health-monitor__grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.health-monitor__card {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(237, 247, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.health-monitor__label {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.health-monitor__value {
+  display: block;
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
 .activity-item {
   display: grid;
   grid-template-columns: 10px 1fr;

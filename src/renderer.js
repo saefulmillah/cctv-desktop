@@ -78,6 +78,9 @@ const updateInfoSourceEl = document.getElementById('updateInfoSource');
 const updateInfoMessageEl = document.getElementById('updateInfoMessage');
 const helpModalEl = document.getElementById('helpModal');
 const closeHelpBtn = document.getElementById('closeHelpBtn');
+const healthMonitorPanelEl = document.getElementById('healthMonitorPanel');
+const healthMonitorGridEl = document.getElementById('healthMonitorGrid');
+const closeHealthMonitorBtn = document.getElementById('closeHealthMonitorBtn');
 
 const hlsPlayers = [];
 const selectedCameraIds = new Set();
@@ -118,6 +121,7 @@ let workspacePersistTimer = null;
 let workspaceRestoreInProgress = false;
 let globalWatchdogTimer = null;
 let perfObserverTimer = null;
+let healthMonitorTimer = null;
 let playerAttachSequence = 0;
 let googleMapsLoaderPromise = null;
 let markerClustererLoaderPromise = null;
@@ -167,6 +171,8 @@ const WATCHDOG_FREEZE_THRESHOLD_MS = 15000;
 const WATCHDOG_WARMUP_MS = 12000;
 const WATCHDOG_CONSECUTIVE_STUCK_SAMPLES = 2;
 const STREAM_RECOVERY_MAX_RETRIES = 6;
+const STREAM_SOURCE_FAST_RETRIES = 3;
+const STREAM_SOURCE_COOLDOWN_DELAYS_MS = [30000, 60000, 120000, 300000];
 const ONLINE_MARKER_URL = new URL('./assets/marker-map-online.svg', window.location.href).toString();
 const OFFLINE_MARKER_URL = new URL('./assets/marker-map-offline.svg', window.location.href).toString();
 
@@ -273,6 +279,99 @@ const setSidebarMapLoadingVisible = (visible) => {
 const setApiCheckStatus = (message, tone = 'neutral') => {
   setClassNameIfChanged(apiCheckStatusEl, `api-check-status ${tone}`);
   setTextIfChanged(apiCheckStatusEl, String(message || '-'));
+};
+
+const formatBytes = (bytes) => {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) {
+    return '-';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(size >= 100 ? 0 : size >= 10 ? 1 : 2)} ${units[unitIndex]}`;
+};
+
+const getRendererHeapStats = () => {
+  if (!window.performance || !window.performance.memory) {
+    return {
+      used: '-',
+      total: '-',
+      limit: '-',
+    };
+  }
+  return {
+    used: formatBytes(window.performance.memory.usedJSHeapSize),
+    total: formatBytes(window.performance.memory.totalJSHeapSize),
+    limit: formatBytes(window.performance.memory.jsHeapSizeLimit),
+  };
+};
+
+const renderHealthMonitor = () => {
+  if (!healthMonitorGridEl) {
+    return;
+  }
+  const heapStats = getRendererHeapStats();
+  const branchMapCameraCount = branchWideCameras.length || currentCameras.length;
+  const cards = [
+    ['Mode', currentMode === 'focus' ? 'Focus' : 'Normal'],
+    ['Branch', activeBranch ? activeBranch.branch_code || activeBranch.branch_name || '-' : '-'],
+    ['Active Page', String(activePage || 1)],
+    ['Selected', String(selectedCameraIds.size)],
+    ['Players', String(playerControllers.size)],
+    ['Reconnect Timers', String(reconnectTimers.size)],
+    ['Map Markers', String(sidebarMapMarkers.length)],
+    ['Branch Cameras', String(branchMapCameraCount)],
+    ['Map Cache', String(branchWideCameraCache.size)],
+    ['Recovering Streams', String(Array.from(playerControllers.values()).filter((controller) => controller && controller.recovering).length)],
+    ['Heap Used', heapStats.used],
+    ['Heap Total', heapStats.total],
+    ['Heap Limit', heapStats.limit],
+    ['Last Activity', activityItems[0] ? activityItems[0].title : '-'],
+  ];
+  setInnerHtmlIfChanged(
+    healthMonitorGridEl,
+    cards
+      .map(
+        ([label, value]) => `
+          <div class="health-monitor__card">
+            <span class="health-monitor__label">${label}</span>
+            <strong class="health-monitor__value">${value}</strong>
+          </div>
+        `
+      )
+      .join('')
+  );
+};
+
+const setHealthMonitorVisible = (visible) => {
+  if (!healthMonitorPanelEl) {
+    return;
+  }
+  healthMonitorPanelEl.classList.toggle('hidden', !visible);
+  healthMonitorPanelEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  if (visible) {
+    renderHealthMonitor();
+    if (!healthMonitorTimer) {
+      healthMonitorTimer = window.setInterval(renderHealthMonitor, 3000);
+    }
+    return;
+  }
+  if (healthMonitorTimer) {
+    clearInterval(healthMonitorTimer);
+    healthMonitorTimer = null;
+  }
+};
+
+const toggleHealthMonitor = () => {
+  if (!healthMonitorPanelEl) {
+    return;
+  }
+  setHealthMonitorVisible(healthMonitorPanelEl.classList.contains('hidden'));
 };
 
 const setApiCheckButtonState = (checking) => {
@@ -492,6 +591,9 @@ const addActivity = (title, detail, tone = 'neutral') => {
     `;
     activityFeedEl.appendChild(row);
   });
+  if (healthMonitorPanelEl && !healthMonitorPanelEl.classList.contains('hidden')) {
+    renderHealthMonitor();
+  }
 };
 
 const getCameraCoordinates = (camera) => {
@@ -855,7 +957,7 @@ const loadGoogleMapsApi = () => {
     };
 
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&callback=${callbackName}`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&loading=async&callback=${callbackName}`;
     script.async = true;
     script.defer = true;
     script.onerror = () => {
@@ -1172,22 +1274,22 @@ const createSidebarMarkerCluster = async (map, markers) => {
         return;
       }
 
-      if (entries.length > 3) {
-        collapseSpiderfy();
-        const clusterCenter =
-          (cluster && cluster.position) ||
-          entries[0].originalPosition ||
-          (entries[0].marker && entries[0].marker.getPosition && entries[0].marker.getPosition());
-        const zoomStep = entries.length >= 10 ? 1 : 2;
-        const nextZoom = Math.min((map.getZoom() || 4) + zoomStep, 20);
-        animateMapZoom(map, nextZoom, clusterCenter);
-        return;
-      }
-
       const clusterCenter =
         (cluster && cluster.position) ||
         entries[0].originalPosition ||
         (entries[0].marker && entries[0].marker.getPosition && entries[0].marker.getPosition());
+      const currentZoom = Number(map.getZoom() || 4);
+      if (entries.length > 4) {
+        const zoomStep = entries.length >= 10 ? 1 : 2;
+        const nextZoom = Math.min(currentZoom + zoomStep, 20);
+        const shouldSpiderfyInstead = currentZoom >= 19 || nextZoom === currentZoom;
+        if (!shouldSpiderfyInstead) {
+          collapseSpiderfy();
+          animateMapZoom(map, nextZoom, clusterCenter);
+          return;
+        }
+      }
+
       const clusterMarker = cluster && (cluster.marker || cluster._marker || null);
       if (clusterMarker && typeof clusterMarker.setOpacity === 'function') {
         clusterMarker.setOpacity(entries.length === 2 ? 0.22 : 0.32);
@@ -2092,7 +2194,36 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
   let consecutiveStuckSamples = 0;
   let recoveryAttemptCount = 0;
   let lastRecoveryReason = '';
+  let sourceUnavailableAttemptCount = 0;
   const controllerKey = `${cameraId}:${(playerAttachSequence += 1)}`;
+
+  const normalizeRecoveryReason = (reason) => {
+    if (!reason) {
+      return 'retry';
+    }
+    if (typeof reason === 'string') {
+      return reason;
+    }
+    if (reason instanceof Error) {
+      return `${reason.name || 'Error'}: ${reason.message || 'Unknown error'}`;
+    }
+    if (typeof reason === 'object' && reason.message) {
+      return String(reason.message);
+    }
+    return String(reason);
+  };
+
+  const isTransientSourceUnavailable = (reasonText) => {
+    const normalized = String(reasonText || '').toLowerCase();
+    return (
+      normalized.includes('notsupportederror') ||
+      normalized.includes('no supported source was found') ||
+      normalized.includes('manifest load error') ||
+      normalized.includes('level load error')
+    );
+  };
+
+  const logStreamRecovery = (_eventName, _extra = {}) => {};
 
   const clearLocalWatchdog = () => {
     if (!localWatchdogTimer) {
@@ -2125,6 +2256,10 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
     if (Date.now() - lastPlaybackAt >= WATCHDOG_FREEZE_THRESHOLD_MS) {
       consecutiveStuckSamples += 1;
       if (consecutiveStuckSamples >= WATCHDOG_CONSECUTIVE_STUCK_SAMPLES) {
+        logStreamRecovery('stuck-detected', {
+          consecutiveStuckSamples,
+          stalledForMs: Date.now() - lastPlaybackAt,
+        });
         scheduleRetry('watchdog');
       }
     }
@@ -2135,9 +2270,11 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
       return;
     }
 
+    const normalizedReason = normalizeRecoveryReason(reason);
+    const transientSourceUnavailable = isTransientSourceUnavailable(normalizedReason);
     reconnectInProgress = true;
     controller.recovering = true;
-    lastRecoveryReason = reason;
+    lastRecoveryReason = normalizedReason;
     consecutiveStuckSamples = 0;
     setStreamStatus(statusEl, cameraId, 'reconnecting');
     clearReconnectTimer(controllerKey);
@@ -2148,21 +2285,42 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
     }
 
     recoveryAttemptCount += 1;
-    if (recoveryAttemptCount > STREAM_RECOVERY_MAX_RETRIES) {
+    if (!transientSourceUnavailable && recoveryAttemptCount > STREAM_RECOVERY_MAX_RETRIES) {
       reconnectInProgress = false;
       controller.recovering = false;
       controller.watchdogEligible = false;
       setStreamStatus(statusEl, cameraId, 'offline');
       addActivity(
         'Stream recovery stopped',
-        `Camera ${cameraId} exceeded recovery limit after ${reason}.`,
+        `Camera ${cameraId} exceeded recovery limit after ${normalizedReason}.`,
         'warning'
       );
       return;
     }
 
-    const baseDelayMs = Math.min(maxRetryDelayMs, 2000 * 2 ** Math.min(retryCount, 4));
-    const delayMs = baseDelayMs + Math.floor(Math.random() * 1000);
+    let delayMs;
+    if (transientSourceUnavailable) {
+      sourceUnavailableAttemptCount += 1;
+      if (sourceUnavailableAttemptCount <= STREAM_SOURCE_FAST_RETRIES) {
+        delayMs = [2000, 5000, 10000][sourceUnavailableAttemptCount - 1] || 10000;
+      } else {
+        const cooldownIndex = Math.min(
+          sourceUnavailableAttemptCount - STREAM_SOURCE_FAST_RETRIES - 1,
+          STREAM_SOURCE_COOLDOWN_DELAYS_MS.length - 1
+        );
+        delayMs = STREAM_SOURCE_COOLDOWN_DELAYS_MS[cooldownIndex];
+      }
+    } else {
+      sourceUnavailableAttemptCount = 0;
+      const baseDelayMs = Math.min(maxRetryDelayMs, 2000 * 2 ** Math.min(retryCount, 4));
+      delayMs = baseDelayMs + Math.floor(Math.random() * 1000);
+    }
+    logStreamRecovery('recovery-scheduled', {
+      delayMs,
+      reason: normalizedReason,
+      transientSourceUnavailable,
+      sourceUnavailableAttemptCount,
+    });
     retryCount += 1;
     scheduleReconnectTimer(controllerKey, connect, delayMs);
   };
@@ -2175,6 +2333,7 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
     controller.recovering = false;
     mediaRecoveryAttempts = 0;
     controller.attachedAt = Date.now();
+    logStreamRecovery('rebind-started');
     setStreamStatus(statusEl, cameraId, retryCount > 0 ? 'reconnecting' : 'connecting');
     videoEl.pause();
     videoEl.removeAttribute('src');
@@ -2242,7 +2401,9 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
       return;
     }
     retryCount = 0;
+    const recoverySucceeded = recoveryAttemptCount > 0 || Boolean(lastRecoveryReason);
     recoveryAttemptCount = 0;
+    sourceUnavailableAttemptCount = 0;
     lastRecoveryReason = '';
     consecutiveStuckSamples = 0;
     clearReconnectTimer(controllerKey);
@@ -2257,6 +2418,9 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
       localWatchdogTimer = window.setInterval(checkPlaybackHealth, WATCHDOG_INTERVAL_MS);
     }
     setStreamStatus(statusEl, cameraId, 'online');
+    if (recoverySucceeded) {
+      logStreamRecovery('recovery-succeeded');
+    }
   };
 
   const handleTimeUpdate = () => {
@@ -2278,6 +2442,7 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
     controller.watchdogEligible = false;
     clearLocalWatchdog();
     setStreamStatus(statusEl, cameraId, 'offline');
+    logStreamRecovery('media-error');
     scheduleRetry('media-error');
   };
 
@@ -3199,6 +3364,12 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  if (event.shiftKey && event.key.toLowerCase() === 'm' && !typing) {
+    event.preventDefault();
+    toggleHealthMonitor();
+    return;
+  }
+
   if (pressedQuickSearch && !typing) {
     event.preventDefault();
     openQuickSearch().catch(() => {
@@ -3262,6 +3433,7 @@ resetWorkspaceBtn.addEventListener('click', () => {
 closeApiConfigBtn.addEventListener('click', () => hideModal(apiConfigModalEl));
 closeUpdateConfigBtn.addEventListener('click', () => hideModal(updateConfigModalEl));
 closeHelpBtn.addEventListener('click', hideHelp);
+closeHealthMonitorBtn.addEventListener('click', () => setHealthMonitorVisible(false));
 gridEl.addEventListener('click', (event) => {
   void handleGridClick(event);
 });

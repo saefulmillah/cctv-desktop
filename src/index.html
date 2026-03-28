@@ -325,6 +325,7 @@
           <li><code>Shift+F</code> Enter focus mode</li>
           <li><code>Shift+N</code> Return to normal mode</li>
           <li><code>Shift+R</code> Reload streams and clear overrides</li>
+          <li><code>Shift+M</code> Toggle health monitor</li>
           <li><code>Shift+K</code> Open API config</li>
           <li><code>Shift+U</code> Open update info</li>
           <li><code>Shift+H</code> Open help</li>
@@ -333,6 +334,17 @@
         </ul>
       </div>
     </section>
+
+    <aside id="healthMonitorPanel" class="health-monitor hidden" aria-hidden="true">
+      <div class="health-monitor__header">
+        <div>
+          <p class="eyebrow">Diagnostics</p>
+          <h2>Health Monitor</h2>
+        </div>
+        <button id="closeHealthMonitorBtn" type="button">Close</button>
+      </div>
+      <div id="healthMonitorGrid" class="health-monitor__grid"></div>
+    </aside>
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <script src="./renderer.js"></script>
