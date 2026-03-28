@@ -164,6 +164,9 @@ const ACTIVE_UI_THEME = 'theme-dashboard-enterprise';
 const GOOGLE_MAPS_API_KEY = 'AIzaSyAuNghu_4V4kxgcCa5UX0XBV_zPMZzV-Cg';
 const WATCHDOG_INTERVAL_MS = 5000;
 const WATCHDOG_FREEZE_THRESHOLD_MS = 15000;
+const WATCHDOG_WARMUP_MS = 12000;
+const WATCHDOG_CONSECUTIVE_STUCK_SAMPLES = 2;
+const STREAM_RECOVERY_MAX_RETRIES = 6;
 const ONLINE_MARKER_URL = new URL('./assets/marker-map-online.svg', window.location.href).toString();
 const OFFLINE_MARKER_URL = new URL('./assets/marker-map-offline.svg', window.location.href).toString();
 
@@ -2086,6 +2089,9 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
   let reconnectInProgress = false;
   let destroyed = false;
   let localWatchdogTimer = null;
+  let consecutiveStuckSamples = 0;
+  let recoveryAttemptCount = 0;
+  let lastRecoveryReason = '';
   const controllerKey = `${cameraId}:${(playerAttachSequence += 1)}`;
 
   const clearLocalWatchdog = () => {
@@ -2097,7 +2103,14 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
   };
 
   const checkPlaybackHealth = () => {
-    if (destroyed || videoEl.paused || videoEl.ended || videoEl.readyState < 2) {
+    if (
+      destroyed ||
+      videoEl.paused ||
+      videoEl.ended ||
+      videoEl.readyState < 2 ||
+      reconnectInProgress ||
+      Date.now() - controller.attachedAt < WATCHDOG_WARMUP_MS
+    ) {
       return;
     }
 
@@ -2105,26 +2118,47 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
     if (currentTime > lastCurrentTime + 0.01) {
       lastCurrentTime = currentTime;
       lastPlaybackAt = Date.now();
+      consecutiveStuckSamples = 0;
       return;
     }
 
     if (Date.now() - lastPlaybackAt >= WATCHDOG_FREEZE_THRESHOLD_MS) {
-      scheduleRetry();
+      consecutiveStuckSamples += 1;
+      if (consecutiveStuckSamples >= WATCHDOG_CONSECUTIVE_STUCK_SAMPLES) {
+        scheduleRetry('watchdog');
+      }
     }
   };
 
-  const scheduleRetry = () => {
+  const scheduleRetry = (reason = 'retry') => {
     if (destroyed || reconnectInProgress) {
       return;
     }
 
     reconnectInProgress = true;
+    controller.recovering = true;
+    lastRecoveryReason = reason;
+    consecutiveStuckSamples = 0;
     setStreamStatus(statusEl, cameraId, 'reconnecting');
     clearReconnectTimer(controllerKey);
 
     if (activeHls) {
       activeHls.destroy();
       activeHls = null;
+    }
+
+    recoveryAttemptCount += 1;
+    if (recoveryAttemptCount > STREAM_RECOVERY_MAX_RETRIES) {
+      reconnectInProgress = false;
+      controller.recovering = false;
+      controller.watchdogEligible = false;
+      setStreamStatus(statusEl, cameraId, 'offline');
+      addActivity(
+        'Stream recovery stopped',
+        `Camera ${cameraId} exceeded recovery limit after ${reason}.`,
+        'warning'
+      );
+      return;
     }
 
     const baseDelayMs = Math.min(maxRetryDelayMs, 2000 * 2 ** Math.min(retryCount, 4));
@@ -2138,7 +2172,9 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
       return;
     }
     reconnectInProgress = false;
+    controller.recovering = false;
     mediaRecoveryAttempts = 0;
+    controller.attachedAt = Date.now();
     setStreamStatus(statusEl, cameraId, retryCount > 0 ? 'reconnecting' : 'connecting');
     videoEl.pause();
     videoEl.removeAttribute('src');
@@ -2206,9 +2242,13 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
       return;
     }
     retryCount = 0;
+    recoveryAttemptCount = 0;
+    lastRecoveryReason = '';
+    consecutiveStuckSamples = 0;
     clearReconnectTimer(controllerKey);
     clearLocalWatchdog();
     reconnectInProgress = false;
+    controller.recovering = false;
     mediaRecoveryAttempts = 0;
     lastPlaybackAt = Date.now();
     lastCurrentTime = videoEl.currentTime || 0;
@@ -2227,6 +2267,7 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
     if (currentTime > lastCurrentTime + 0.01) {
       lastCurrentTime = currentTime;
       lastPlaybackAt = Date.now();
+      consecutiveStuckSamples = 0;
     }
   };
 
@@ -2237,7 +2278,7 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
     controller.watchdogEligible = false;
     clearLocalWatchdog();
     setStreamStatus(statusEl, cameraId, 'offline');
-    scheduleRetry();
+    scheduleRetry('media-error');
   };
 
   const controller = {
@@ -2247,6 +2288,8 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
     statusEl,
     watchdogEligible: false,
     destroyed: false,
+    recovering: false,
+    attachedAt: Date.now(),
     checkPlaybackHealth,
     destroy() {
       if (destroyed) {
@@ -2255,6 +2298,7 @@ const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
       destroyed = true;
       this.destroyed = true;
       this.watchdogEligible = false;
+      this.recovering = false;
       clearReconnectTimer(controllerKey);
       clearLocalWatchdog();
       videoEl.removeEventListener('playing', handlePlaying);
