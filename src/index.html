@@ -51,7 +51,15 @@
         <div class="map-panel__header">
           <h2 id="sidebarMapTitle">Peta CCTV</h2>
         </div>
-        <div id="sidebarMap" class="sidebar-map sidebar-section-hidden" aria-label="CCTV map"></div>
+        <div id="sidebarMap" class="sidebar-map sidebar-section-hidden" aria-label="CCTV map">
+          <div id="sidebarMapLoading" class="sidebar-map-loading sidebar-section-hidden" aria-live="polite">
+            <div class="sidebar-map-loading__pulse"></div>
+            <div class="sidebar-map-loading__text">
+              <strong>Memuat peta CCTV...</strong>
+              <span>Menyiapkan marker ruas terpilih</span>
+            </div>
+          </div>
+        </div>
         <div id="sidebarMapEmpty" class="sidebar-map-empty">
           Pilih ruas untuk memuat marker CCTV berdasarkan koordinat kamera.
         </div>

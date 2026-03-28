@@ -435,6 +435,7 @@ const createWindow = () => {
   });
 
   mainWindow.loadURL(`http://127.0.0.1:${PORT}/index.html`);
+  mainWindow.maximize();
 };
 
 const registerCloseShortcut = () => {

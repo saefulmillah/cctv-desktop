@@ -28,6 +28,7 @@ const onlineCountEl = document.getElementById('onlineCount');
 const offlineCountEl = document.getElementById('offlineCount');
 const selectedCountEl = document.getElementById('selectedCount');
 const sidebarMapEl = document.getElementById('sidebarMap');
+const sidebarMapLoadingEl = document.getElementById('sidebarMapLoading');
 const sidebarMapEmptyEl = document.getElementById('sidebarMapEmpty');
 const sidebarMapTitleEl = document.getElementById('sidebarMapTitle');
 const resetWorkspaceBtn = document.getElementById('resetWorkspaceBtn');
@@ -132,6 +133,7 @@ let sidebarMapRefreshTimer = null;
 let sidebarMapShouldAutoFit = true;
 let sidebarMapViewportLocked = false;
 let sidebarMapProjectionOverlay = null;
+let sidebarMapProjectionReadyPromise = null;
 let spiderfyLegs = [];
 let spiderfyTempMarkers = [];
 let spiderfiedMarkerIds = new Set();
@@ -256,6 +258,13 @@ const setUpdateStatusText = (message, state) => {
   setTextIfChanged(updateInfoMessageEl, String(message || '-'));
   setClassNameIfChanged(updateStatusBadgeEl, `status-pill ${getUpdateTone(state)}`);
   setTextIfChanged(updateStatusBadgeEl, String(message || 'Updater idle'));
+};
+
+const setSidebarMapLoadingVisible = (visible) => {
+  if (!sidebarMapLoadingEl) {
+    return;
+  }
+  sidebarMapLoadingEl.classList.toggle('sidebar-section-hidden', !visible);
 };
 
 const setApiCheckStatus = (message, tone = 'neutral') => {
@@ -966,7 +975,11 @@ const animateMapZoom = (map, targetZoom, center, stepDelay = 90) => {
 };
 
 const ensureSidebarClusterTooltip = () => {
-  if (sidebarClusterTooltipEl) {
+  if (sidebarClusterTooltipEl && sidebarClusterTooltipEl.isConnected) {
+    return sidebarClusterTooltipEl;
+  }
+  if (sidebarClusterTooltipEl && !sidebarClusterTooltipEl.isConnected) {
+    sidebarMapEl.appendChild(sidebarClusterTooltipEl);
     return sidebarClusterTooltipEl;
   }
   const tooltipEl = document.createElement('div');
@@ -991,11 +1004,44 @@ const hideSidebarClusterTooltip = () => {
   activeClusterTooltipKey = null;
 };
 
-const showSidebarClusterTooltip = (marker, summary, tooltipKey) => {
+const waitForSidebarMapProjectionReady = async () => {
+  if (!sidebarMapProjectionOverlay) {
+    return null;
+  }
+
+  const existingProjection = sidebarMapProjectionOverlay.getProjection();
+  if (existingProjection) {
+    return existingProjection;
+  }
+
+  if (!sidebarMapProjectionReadyPromise) {
+    sidebarMapProjectionReadyPromise = new Promise((resolve) => {
+      let attempts = 0;
+      const poll = () => {
+        const projection = sidebarMapProjectionOverlay && sidebarMapProjectionOverlay.getProjection
+          ? sidebarMapProjectionOverlay.getProjection()
+          : null;
+        if (projection || attempts >= 30) {
+          resolve(projection || null);
+          return;
+        }
+        attempts += 1;
+        window.setTimeout(poll, 50);
+      };
+      poll();
+    }).finally(() => {
+      sidebarMapProjectionReadyPromise = null;
+    });
+  }
+
+  return sidebarMapProjectionReadyPromise;
+};
+
+const showSidebarClusterTooltip = async (marker, summary, tooltipKey) => {
   if (!sidebarMapProjectionOverlay || !sidebarMapInstance || !marker || !summary) {
     return;
   }
-  const projection = sidebarMapProjectionOverlay.getProjection();
+  const projection = await waitForSidebarMapProjectionReady();
   const position = marker.getPosition();
   if (!projection || !position) {
     return;
@@ -1075,10 +1121,7 @@ const createSidebarMarkerCluster = async (map, markers) => {
         if (sidebarClusterHoverOpenTimer) {
           clearTimeout(sidebarClusterHoverOpenTimer);
         }
-        sidebarClusterHoverOpenTimer = window.setTimeout(() => {
-          sidebarClusterHoverOpenTimer = null;
-          showSidebarClusterTooltip(marker, summary, marker.__clusterTooltipKey);
-        }, 90);
+        showSidebarClusterTooltip(marker, summary, marker.__clusterTooltipKey);
       });
       marker.addListener('mouseout', () => {
         if (sidebarClusterHoverOpenTimer) {
@@ -1184,6 +1227,7 @@ const ensureSidebarMap = async () => {
   sidebarMapProjectionOverlay.draw = () => {};
   sidebarMapProjectionOverlay.onRemove = () => {};
   sidebarMapProjectionOverlay.setMap(sidebarMapInstance);
+  void waitForSidebarMapProjectionReady();
   sidebarMapInstance.addListener('dragstart', () => {
     sidebarMapShouldAutoFit = false;
     sidebarMapViewportLocked = true;
@@ -1244,6 +1288,7 @@ const focusCameraFromMap = async (camera) => {
 const updateSidebarMap = async () => {
   if (currentMode !== 'focus') {
     clearSidebarMapMarkers();
+    setSidebarMapLoadingVisible(false);
     sidebarMapEl.classList.add('sidebar-section-hidden');
     sidebarMapEmptyEl.classList.remove('sidebar-section-hidden');
     setTextIfChanged(
@@ -1263,6 +1308,7 @@ const updateSidebarMap = async () => {
 
   if (!camerasWithCoordinates.length) {
     clearSidebarMapMarkers();
+    setSidebarMapLoadingVisible(false);
     sidebarMapEl.classList.add('sidebar-section-hidden');
     sidebarMapEmptyEl.classList.remove('sidebar-section-hidden');
     setTextIfChanged(
@@ -1276,6 +1322,7 @@ const updateSidebarMap = async () => {
 
   sidebarMapEmptyEl.classList.add('sidebar-section-hidden');
   sidebarMapEl.classList.remove('sidebar-section-hidden');
+  setSidebarMapLoadingVisible(true);
 
   try {
     const map = await ensureSidebarMap();
@@ -1332,8 +1379,10 @@ const updateSidebarMap = async () => {
     } else if (sidebarMapShouldAutoFit) {
       map.fitBounds(bounds, 48);
     }
+    setSidebarMapLoadingVisible(false);
   } catch (error) {
     clearSidebarMapMarkers();
+    setSidebarMapLoadingVisible(false);
     sidebarMapEl.classList.add('sidebar-section-hidden');
     sidebarMapEmptyEl.classList.remove('sidebar-section-hidden');
     setTextIfChanged(sidebarMapEmptyEl, error.message || 'Failed to load Google Maps.');
@@ -2532,7 +2581,7 @@ const loadAllBranchCamerasForMap = async (branch) => {
   }
 
   try {
-    const response = await window.cameraService.getCameras({ branch_id: branch.id });
+    const response = await window.cameraService.getCameras({ branch_id: branch.id, limit: 500 });
     if (response.status >= 400) {
       throw new Error(response.message || 'Failed to load branch map cameras.');
     }

@@ -309,9 +309,52 @@ body.focus-mode .activity-panel {
     linear-gradient(180deg, rgba(37, 84, 146, 0.86), rgba(28, 67, 118, 0.88));
 }
 
+.sidebar-map-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background:
+    linear-gradient(180deg, rgba(10, 28, 56, 0.22), rgba(10, 28, 56, 0.44)),
+    repeating-linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.04) 0 12px,
+      rgba(255, 255, 255, 0.01) 12px 24px
+    );
+  backdrop-filter: blur(6px);
+}
+
+.sidebar-map-loading__pulse {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(65, 231, 93, 0.92);
+  box-shadow: 0 0 0 0 rgba(65, 231, 93, 0.42);
+  animation: mapPulse 1.25s ease-out infinite;
+}
+
+.sidebar-map-loading__text {
+  display: grid;
+  gap: 4px;
+  color: #eef8ff;
+}
+
+.sidebar-map-loading__text strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sidebar-map-loading__text span {
+  color: rgba(238, 248, 255, 0.8);
+  font-size: 11px;
+}
+
 .sidebar-cluster-tooltip {
   position: absolute;
-  z-index: 20;
+  z-index: 9999;
   left: 0;
   top: 0;
   min-width: 102px;
@@ -345,6 +388,21 @@ body.focus-mode .activity-panel {
   color: var(--muted);
   text-align: center;
   background: rgba(255, 255, 255, 0.05);
+}
+
+@keyframes mapPulse {
+  0% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgba(65, 231, 93, 0.42);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 16px rgba(65, 231, 93, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(65, 231, 93, 0);
+  }
 }
 
 .activity-panel__feed-head h2 {
