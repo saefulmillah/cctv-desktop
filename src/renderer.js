@@ -970,6 +970,11 @@ const loadGoogleMapsApi = () => {
   return googleMapsLoaderPromise;
 };
 
+const isSosModeActive = () =>
+  Boolean(document && document.body && document.body.classList.contains('sos-mode'));
+
+window.__HKTV_LOAD_GOOGLE_MAPS__ = loadGoogleMapsApi;
+
 const loadMarkerClustererLibrary = () => {
   if (window.markerClusterer && window.markerClusterer.MarkerClusterer) {
     return Promise.resolve(window.markerClusterer);
@@ -998,6 +1003,8 @@ const loadMarkerClustererLibrary = () => {
 
   return markerClustererLoaderPromise;
 };
+
+window.__HKTV_LOAD_MARKER_CLUSTERER__ = loadMarkerClustererLibrary;
 
 const getClusterTone = (onlineCount, offlineCount) => {
   const total = Math.max(1, Number(onlineCount || 0) + Number(offlineCount || 0));
@@ -3270,6 +3277,17 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  if (
+    isSosModeActive() &&
+    event.shiftKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.metaKey
+  ) {
+    event.preventDefault();
+    return;
+  }
+
   const typing = isTypingField(event.target);
   const pressedShiftK =
     event.shiftKey &&
@@ -3732,19 +3750,62 @@ window.appUpdater.onStatus((payload) => {
   setUpdateButtonState(false);
 });
 
-window.cameraService.onOpenBranchPicker(openBranchPicker);
-window.cameraService.onOpenApiBaseUrlConfig(openApiBaseUrlConfig);
-window.cameraService.onOpenUpdateFeedConfig(openUpdateFeedConfig);
-window.cameraService.onOpenHelp(showHelp);
+window.cameraService.onOpenBranchPicker(() => {
+  if (isSosModeActive()) {
+    return;
+  }
+  openBranchPicker();
+});
+window.cameraService.onOpenApiBaseUrlConfig(() => {
+  if (isSosModeActive()) {
+    return;
+  }
+  openApiBaseUrlConfig();
+});
+window.cameraService.onOpenUpdateFeedConfig(() => {
+  if (isSosModeActive()) {
+    return;
+  }
+  openUpdateFeedConfig();
+});
+window.cameraService.onOpenHelp(() => {
+  if (isSosModeActive()) {
+    return;
+  }
+  showHelp();
+});
 window.cameraService.onOpenCameraSearch(() => {
+  if (isSosModeActive()) {
+    return;
+  }
   openQuickSearch().catch((error) => {
     addActivity('Quick search failed', error.message || 'Unable to open quick search.', 'danger');
   });
 });
-window.cameraService.onOpenLayoutConfig(openLayoutConfig);
-window.cameraService.onEnterFocusMode(enterFocusMode);
-window.cameraService.onLeaveFocusMode(leaveFocusMode);
-window.cameraService.onReloadStreams(refreshCurrentStreams);
+window.cameraService.onOpenLayoutConfig(() => {
+  if (isSosModeActive()) {
+    return;
+  }
+  openLayoutConfig();
+});
+window.cameraService.onEnterFocusMode(() => {
+  if (isSosModeActive()) {
+    return;
+  }
+  enterFocusMode();
+});
+window.cameraService.onLeaveFocusMode(() => {
+  if (isSosModeActive()) {
+    return;
+  }
+  leaveFocusMode();
+});
+window.cameraService.onReloadStreams(() => {
+  if (isSosModeActive()) {
+    return;
+  }
+  refreshCurrentStreams();
+});
 
 
 

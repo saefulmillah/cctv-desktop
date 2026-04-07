@@ -20,6 +20,13 @@ contextBridge.exposeInMainWorld('cameraService', {
     ipcRenderer.invoke('camera-service:get-cameras-by-branch', branchId, page),
   getGates: (query) => ipcRenderer.invoke('camera-service:get-gates', query),
   getHealth: () => ipcRenderer.invoke('camera-service:get-health'),
+  getSosAlerts: () => ipcRenderer.invoke('camera-service:get-sos-alerts'),
+  getOpenSosTickets: () => ipcRenderer.invoke('camera-service:get-open-sos-tickets'),
+  getSosTicketDetail: (ticketNo) =>
+    ipcRenderer.invoke('camera-service:get-sos-ticket-detail', ticketNo),
+  dispatchSosTicket: (payload) => ipcRenderer.invoke('camera-service:dispatch-sos-ticket', payload),
+  completeSosTicket: (ticketNo, payload) =>
+    ipcRenderer.invoke('camera-service:complete-sos-ticket', ticketNo, payload),
   onOpenBranchPicker: (callback) => {
     const channel = 'shortcut:open-branch-picker';
     const listener = () => callback();

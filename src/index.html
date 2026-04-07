@@ -90,6 +90,7 @@
       <button id="openBranchBtn" class="toolbar-btn" type="button">Branches</button>
       <button id="quickSearchBtn" class="toolbar-btn" type="button">Search</button>
       <button id="layoutConfigBtn" class="toolbar-btn" type="button">Layout</button>
+      <button id="sosMonitorBtn" class="toolbar-btn" type="button">SOS</button>
       <button id="focusModeBtn" class="toolbar-btn" type="button" disabled>Focus</button>
       <button id="normalModeBtn" class="toolbar-btn" type="button">Normal</button>
       <button id="reloadStreamBtn" class="toolbar-btn icon-btn" type="button" disabled>
@@ -115,6 +116,83 @@
     </section>
 
     <main id="cameraGrid" class="grid loading" aria-live="polite"></main>
+
+    <section id="sosDashboard" class="sos-dashboard hidden" aria-label="SOS monitoring dashboard">
+      <div class="sos-dashboard__topbar">
+        <div>
+          <p class="eyebrow">HK TOLL VISION</p>
+          <h2 id="sosRouteTitle">EMERGENCY MODE</h2>
+        </div>
+        <div class="sos-dashboard__actions">
+          <span id="sosConnectionBadge" class="status-pill neutral">Idle</span>
+          <button id="sosRefreshBtn" class="toolbar-btn" type="button">Refresh SOS</button>
+        </div>
+      </div>
+
+      <div class="sos-dashboard__layout">
+        <section class="sos-map-shell">
+          <div id="sosMap" class="sos-map" aria-label="SOS map"></div>
+          <div id="sosMapLoading" class="sidebar-map-loading sidebar-section-hidden" aria-live="polite">
+            <div class="sidebar-map-loading__pulse"></div>
+            <div class="sidebar-map-loading__text">
+              <strong>Memuat monitor SOS...</strong>
+              <span>Menyiapkan peta dan sinkronisasi kejadian</span>
+            </div>
+          </div>
+          <div id="sosMapEmpty" class="sos-map-empty">
+            Hubungkan API lalu buka mode SOS untuk memantau kejadian secara real-time.
+          </div>
+
+          <label class="sos-map-toggle" for="sosCctvToggle">
+            <input id="sosCctvToggle" type="checkbox" checked />
+            <span>Tampilkan CCTV</span>
+          </label>
+
+          <div id="sosNotificationPanel" class="sos-floating-notifications hidden">
+            <div id="sosNotificationList" class="sos-notification-list"></div>
+          </div>
+
+          <article id="sosDetailPanel" class="sos-detail-panel hidden">
+            <div class="sos-panel__header">
+              <div>
+                <p class="eyebrow">Detail Kejadian</p>
+                <h3 id="sosDetailTitle">Pilih kejadian</h3>
+              </div>
+              <div class="sos-detail-panel__header-actions">
+                <span id="sosDetailStatus" class="status-pill neutral">Status</span>
+                <button id="closeSosDetailBtn" class="sos-detail-close-btn" type="button" aria-label="Tutup detail kejadian" title="Tutup detail kejadian">×</button>
+              </div>
+            </div>
+            <div id="sosDetailMeta" class="sos-detail-meta"></div>
+            <div id="sosDetailBody" class="sos-detail-body"></div>
+            <div class="sos-detail-actions">
+              <button id="sosDispatchBtn" class="toolbar-btn" type="button">Dispatch</button>
+              <button id="sosCompleteBtn" class="toolbar-btn" type="button">Complete</button>
+            </div>
+          </article>
+        </section>
+
+        <aside class="sos-side-panel">
+          <section class="sos-side-panel__section">
+            <div class="sos-panel__header">
+              <div>
+                <p class="eyebrow">Open Ticket</p>
+                <h3>List Kejadian</h3>
+              </div>
+              <span id="sosOpenCountBadge" class="status-pill neutral">0 aktif</span>
+            </div>
+            <div id="sosIncidentListLoading" class="sidebar-map-loading sidebar-section-hidden sos-incident-list-loading" aria-live="polite">
+              <div class="sidebar-map-loading__pulse"></div>
+              <div class="sidebar-map-loading__text">
+                <strong>Memuat list kejadian...</strong>
+                <span>Menyiapkan ticket SOS yang masih aktif</span>
+              </div>
+            </div>
+            <div id="sosIncidentList" class="sos-incident-list"></div>
+          </section>
+        </aside>
+      </div>
+    </section>
 
     <section id="branchPicker" class="overlay-modal" aria-hidden="true">
       <div class="overlay-modal__content">
@@ -335,6 +413,93 @@
       </div>
     </section>
 
+    <section id="sosDispatchModal" class="overlay-modal" aria-hidden="true">
+      <div class="overlay-modal__content">
+        <div class="overlay-modal__header">
+          <div>
+            <p class="eyebrow">Dispatch SOS</p>
+            <h2>Buat Ticket Dispatch</h2>
+          </div>
+          <button id="closeSosDispatchBtn" type="button">Close</button>
+        </div>
+        <form id="sosDispatchForm" class="api-config-form">
+          <input id="sosDispatchSosId" type="hidden" />
+          <label class="config-field">
+            <span>Jenis Kejadian</span>
+            <input id="sosIncidentTypeInput" class="api-config-input" type="text" required />
+          </label>
+          <label class="config-field">
+            <span>Jenis Kendaraan</span>
+            <input id="sosVehicleTypeInput" class="api-config-input" type="text" required />
+          </label>
+          <label class="config-field">
+            <span>Kronologi Awal</span>
+            <textarea
+              id="sosChronologyInput"
+              class="api-config-input api-config-textarea"
+              rows="5"
+              required
+            ></textarea>
+          </label>
+          <div id="sosDispatchStatus" class="api-check-status neutral">
+            Pilih kejadian lalu isi form dispatch.
+          </div>
+          <div class="api-config-actions">
+            <button id="submitSosDispatchBtn" type="submit">Submit Dispatch</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="sosCompleteModal" class="overlay-modal" aria-hidden="true">
+      <div class="overlay-modal__content">
+        <div class="overlay-modal__header">
+          <div>
+            <p class="eyebrow">Complete SOS</p>
+            <h2>Selesaikan Ticket</h2>
+          </div>
+          <button id="closeSosCompleteBtn" type="button">Close</button>
+        </div>
+        <form id="sosCompleteForm" class="api-config-form">
+          <input id="sosCompleteTicketNo" type="hidden" />
+          <label class="config-field">
+            <span>Catatan Penyelesaian</span>
+            <textarea
+              id="sosCompletionNoteInput"
+              class="api-config-input api-config-textarea"
+              rows="5"
+              required
+            ></textarea>
+          </label>
+          <div id="sosCompleteStatus" class="api-check-status neutral">
+            Isi catatan penyelesaian untuk ticket terpilih.
+          </div>
+          <div class="api-config-actions">
+            <button id="submitSosCompleteBtn" type="submit">Submit Complete</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="sosCctvModal" class="overlay-modal" aria-hidden="true">
+      <div class="overlay-modal__content overlay-modal__content--camera">
+        <div class="overlay-modal__header">
+          <div>
+            <p class="eyebrow">CCTV Detail</p>
+            <h2 id="sosCctvModalTitle">Camera</h2>
+          </div>
+          <button id="closeSosCctvModalBtn" type="button">Close</button>
+        </div>
+        <div id="sosCctvModalBody" class="sos-cctv-modal-body">
+          <div class="sos-cctv-modal-stream">
+            <video id="sosCctvModalVideo" class="stream-video" autoplay muted controls playsinline></video>
+            <div id="sosCctvModalStreamEmpty" class="empty-state hidden">Stream CCTV belum tersedia.</div>
+          </div>
+          <div id="sosCctvModalMeta" class="sos-cctv-modal-grid hidden"></div>
+        </div>
+      </div>
+    </section>
+
     <aside id="healthMonitorPanel" class="health-monitor hidden" aria-hidden="true">
       <div class="health-monitor__header">
         <div>
@@ -348,5 +513,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <script src="./renderer.js"></script>
+    <script src="./sos-monitoring.js"></script>
   </body>
 </html>

@@ -116,6 +116,8 @@ const requestJson = async (pathname, options = {}) => {
   return response.json();
 };
 
+const encodePathSegment = (value) => encodeURIComponent(String(value || '').trim());
+
 const getHealth = () => requestJson('/health');
 
 const getApiDocsUrl = () => `${apiBaseUrl}/api-docs`;
@@ -199,6 +201,25 @@ const createCamera = (payload) =>
     body: JSON.stringify(payload || {}),
   });
 
+const getSosAlerts = () => requestJson('/api/sos-alerts');
+
+const getOpenSosTickets = () => requestJson('/api/sos-tickets/open');
+
+const getSosTicketDetail = (ticketNo) =>
+  requestJson(`/api/sos-tickets/${encodePathSegment(ticketNo)}`);
+
+const dispatchSosTicket = (payload) =>
+  requestJson('/api/sos-tickets/dispatch', {
+    method: 'POST',
+    body: JSON.stringify(payload || {}),
+  });
+
+const completeSosTicket = (ticketNo, payload) =>
+  requestJson(`/api/sos-tickets/${encodePathSegment(ticketNo)}/complete`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload || {}),
+  });
+
 module.exports = {
   getApiDocsUrl,
   getApiBaseUrl,
@@ -214,4 +235,9 @@ module.exports = {
   setApiAuthToken,
   setApiBaseUrl,
   createCamera,
+  getSosAlerts,
+  getOpenSosTickets,
+  getSosTicketDetail,
+  dispatchSosTicket,
+  completeSosTicket,
 };

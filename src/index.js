@@ -435,6 +435,12 @@ const createWindow = () => {
   });
 
   mainWindow.loadURL(`http://127.0.0.1:${PORT}/index.html`);
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const sourceLabel = sourceId ? `${sourceId}:${line}` : `renderer:${line}`;
+    const levelLabel =
+      level === 3 ? 'error' : level === 2 ? 'warn' : level === 1 ? 'info' : 'debug';
+    console.log(`[renderer:${levelLabel}] ${sourceLabel} ${message}`);
+  });
   mainWindow.maximize();
 };
 
@@ -630,6 +636,61 @@ const registerServiceHandlers = () => {
   ipcMain.handle('camera-service:get-health', async () => {
     try {
       return await cameraService.getHealth();
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-sos-alerts', async () => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.getSosAlerts(),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-open-sos-tickets', async () => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.getOpenSosTickets(),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-sos-ticket-detail', async (_event, ticketNo) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.getSosTicketDetail(ticketNo),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:dispatch-sos-ticket', async (_event, payload) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.dispatchSosTicket(payload),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:complete-sos-ticket', async (_event, ticketNo, payload) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.completeSosTicket(ticketNo, payload),
+      };
     } catch (error) {
       return toIpcError(error);
     }
