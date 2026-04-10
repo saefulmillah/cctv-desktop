@@ -634,7 +634,7 @@
   };
 
   const getGateMarkerIconUrl = (gate) =>
-    getGateMarkerTone(gate) === 'success' ? COLOR_ICON_URLS.gate_online : COLOR_ICON_URLS.gate_offline;
+    getGateMarkerTone(gate) === 'success' ? COLOR_ICON_URLS.gate_online : ONLY_ICON_URLS.gate;
 
   const getClusterTone = (onlineCount, offlineCount) => {
     const total = Math.max(1, Number(onlineCount || 0) + Number(offlineCount || 0));
