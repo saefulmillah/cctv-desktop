@@ -499,7 +499,7 @@
               <span class="status-pill ${getGateIssueStatusTone(entry.status)}">${escapeHtml(String(entry.status || '-').toUpperCase())}</span>
             </div>
             <span>${escapeHtml(entry.logDescription)}</span>
-            <small class="sos-gate-log-list__meta">${entry.severity ? `<span class="status-pill ${getSeverityTone(entry.severity)}">${escapeHtml(String(entry.severity).toUpperCase())}</span>` : ''}${entry.lastUpdateAt ? `<span>${escapeHtml(toDateTime(entry.lastUpdateAt))}</span>` : ''}</small>
+            <small class="sos-gate-log-list__meta">${entry.severity ? `<span class="severity-pill ${getSeverityTone(entry.severity)}">${escapeHtml(String(entry.severity).toUpperCase())}</span>` : ''}${entry.lastUpdateAt ? `<span>${escapeHtml(toDateTime(entry.lastUpdateAt))}</span>` : ''}</small>
           </div>
         `
       )
