@@ -694,12 +694,7 @@
     const problemCount = Number(offlineCount || 0) + Number(warningCount || 0);
     const tone = getClusterTone(onlineCount, problemCount);
     const typeMeta = getAssetClusterTypeMeta(assetType);
-    const normalizedAssetType = String(assetType || '').toLowerCase();
     const centerGraphic = buildOnlyIconClusterSvg(typeMeta, size);
-    const typeLabel =
-      normalizedAssetType === 'cctv' || typeMeta.iconKey === 'mixed'
-        ? ''
-        : `<text x="${size / 2}" y="${size - 6}" text-anchor="middle" fill="rgba(255,255,255,0.82)" font-family="Segoe UI, Arial, sans-serif" font-size="7" font-weight="700">${typeMeta.label}</text>`;
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
         <defs>
@@ -711,7 +706,6 @@
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
         ${centerGraphic}
-        ${typeLabel}
         ${buildClusterCountBadgeSvg(count, size)}
       </svg>
     `.trim();
