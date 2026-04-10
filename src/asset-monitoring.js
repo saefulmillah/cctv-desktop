@@ -2869,10 +2869,35 @@
     pushGateStatusNotification(normalized);
   };
 
-  const applyStandaloneAssetPatch = (payload) => {
-    const normalized = normalizeStandaloneAsset(payload);
+  const applyStandaloneAssetPatch = async (payload) => {
+    let normalized = normalizeStandaloneAsset(payload);
     if (!normalized) {
       return;
+    }
+    const shouldFetchDetail =
+      !normalized.branch_id ||
+      !normalized.latLng ||
+      !String(normalized.title || '').trim() ||
+      String(normalized.title || '').trim() === `${String(normalized.asset_type || '').toUpperCase()} ${String(normalized.id || '').trim()}`;
+    if (shouldFetchDetail && normalized.asset_type && normalized.id) {
+      try {
+        const response = await window.cameraService.getMapAssetDetail(normalized.asset_type, normalized.id);
+        if (response && response.status < 400) {
+          const detailed = normalizeStandaloneAsset(unwrapSingle(response));
+          if (detailed) {
+            normalized = {
+              ...normalized,
+              ...detailed,
+              lat: Number.isFinite(detailed.lat) ? detailed.lat : normalized.lat,
+              lng: Number.isFinite(detailed.lng) ? detailed.lng : normalized.lng,
+              latLng: detailed.latLng || normalized.latLng,
+              title: String(detailed.title || normalized.title || '').trim(),
+            };
+          }
+        }
+      } catch (_) {
+        // Keep partial realtime payload as fallback.
+      }
     }
     if (!isEntityInSelectedBranch(normalized.branch_id)) {
       return;
@@ -2907,8 +2932,9 @@
       state.cctvCacheByBranch.set(branchId, branchCache);
     }
     state.cctvMapBranchId = null;
-    pushAssetStatusNotification(normalized);
+    pushAssetStatusNotification(nextAsset);
     void updateDefaultCctvMarkers();
+    renderAll();
   };
 
   const parseSse = (buffer, onMessage) => {
@@ -2958,8 +2984,7 @@
       return;
     }
     if (eventName === 'asset_status_changed') {
-      applyStandaloneAssetPatch(payload);
-      renderAll();
+      void applyStandaloneAssetPatch(payload);
       return;
     }
     let latestAlert = null;
