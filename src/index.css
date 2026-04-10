@@ -2392,6 +2392,12 @@ body.sos-mode .asset-toolbar-control {
   inset: 10px;
 }
 
+.asset-map-marker.sos-map-marker .sos-map-marker__dot img {
+  inset: 5px;
+  width: calc(100% - 10px);
+  height: calc(100% - 10px);
+}
+
 .asset-map-marker.sos-map-marker.is-selected {
   width: 56px;
   height: 56px;
