@@ -2864,9 +2864,10 @@
       pushGateStatusNotification(normalized);
       return;
     }
-    state.gateAlerts.items.set(String(normalized.gate_id), { ...normalized, showInSummary: false });
+    state.gateAlerts.items.set(String(normalized.gate_id), { ...normalized, showInSummary: true });
     syncGateAlertMarkers();
     pushGateStatusNotification(normalized);
+    renderAll();
   };
 
   const applyStandaloneAssetPatch = async (payload) => {
