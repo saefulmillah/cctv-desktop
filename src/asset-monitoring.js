@@ -552,14 +552,18 @@
   const ONLINE_MARKER_URL = new URL('./assets/marker-map-online.svg', window.location.href).toString();
   const OFFLINE_MARKER_URL = new URL('./assets/marker-map-offline.svg', window.location.href).toString();
   const ONLY_ICON_URLS = {
-    cctv: new URL('./assets/ONLY3_CCTV.svg', window.location.href).toString(),
-    gate: new URL('./assets/ONLY3_GATE.svg', window.location.href).toString(),
-    mixed: new URL('./assets/ONLY3_MIXED.svg', window.location.href).toString(),
-    vms: new URL('./assets/ONLY4_VMS.svg', window.location.href).toString(),
+    cctv: new URL('./assets/MARKER/CLUSTER_CCTV.svg', window.location.href).toString(),
+    gate: new URL('./assets/MARKER/CLUSTER_GATE.svg', window.location.href).toString(),
+    mixed: new URL('./assets/MARKER/COLOR_MIXED.svg', window.location.href).toString(),
+    vms: new URL('./assets/MARKER/CLUSTER_VMS.svg', window.location.href).toString(),
   };
   const COLOR_ICON_URLS = {
-    cctv: new URL('./assets/COLOR_CCTV.svg', window.location.href).toString(),
-    vms: new URL('./assets/COLOR_VMS.svg', window.location.href).toString(),
+    cctv_online: new URL('./assets/MARKER/COLOR_CCTV_ONLINE.svg', window.location.href).toString(),
+    cctv_offline: new URL('./assets/MARKER/COLOR_CCTV_OFFLINE.svg', window.location.href).toString(),
+    vms_online: new URL('./assets/MARKER/COLOR_VMS_ONLINE.svg', window.location.href).toString(),
+    vms_offline: new URL('./assets/MARKER/COLOR_VMS_OFFLINE.svg', window.location.href).toString(),
+    gate_online: new URL('./assets/MARKER/COLOR_GATE_ONLINE.svg', window.location.href).toString(),
+    gate_offline: new URL('./assets/MARKER/COLOR_GATE_OFFLINE.svg', window.location.href).toString(),
   };
 
   const getCameraCoordinates = (camera) => {
@@ -590,18 +594,18 @@
 
   const getCctvMarkerIconUrl = (camera) => {
     const assetType = String(camera && camera.asset_type ? camera.asset_type : 'cctv').toLowerCase();
+    const operationalState = getCameraOperationalState(camera);
     if (assetType === 'vms') {
-      return buildStandaloneMarkerIconDataUrl(camera);
+      return operationalState === 'online' ? COLOR_ICON_URLS.vms_online : COLOR_ICON_URLS.vms_offline;
     }
     if (assetType === 'cctv') {
-      return buildStandaloneMarkerIconDataUrl(camera);
+      return operationalState === 'online' ? COLOR_ICON_URLS.cctv_online : COLOR_ICON_URLS.cctv_offline;
     }
-    const operationalState = getCameraOperationalState(camera);
     return operationalState === 'online' ? ONLINE_MARKER_URL : OFFLINE_MARKER_URL;
   };
 
   const getCctvMarkerScaledSize = (camera) =>
-    String(camera && camera.id) === String(state.cctvSelectedCameraId) ? 40 : 32;
+    String(camera && camera.id) === String(state.cctvSelectedCameraId) ? 44 : 36;
 
   const svgTextToDataUri = (value) =>
     `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(String(value || '').trim())}`;
@@ -629,60 +633,8 @@
     return state.onlyIconLoaderPromise;
   };
 
-  const loadColorIconDataUris = () => {
-    if (state.colorIconLoaderPromise) {
-      return state.colorIconLoaderPromise;
-    }
-    state.colorIconLoaderPromise = Promise.all(
-      Object.entries(COLOR_ICON_URLS).map(async ([key, url]) => {
-        try {
-          const response = await fetch(url, { cache: 'force-cache' });
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-          const svgText = await response.text();
-          state.colorIconDataUris[key] = svgTextToDataUri(svgText);
-        } catch (_) {
-          state.colorIconDataUris[key] = url;
-        }
-      })
-    );
-    return state.colorIconLoaderPromise;
-  };
-
-  const getStandaloneMarkerTone = (camera) => {
-    const operationalState = getCameraOperationalState(camera);
-    if (operationalState === 'warning') {
-      return { fill: '#FFB703', glow: 'rgba(255,183,3,0.34)' };
-    }
-    if (operationalState === 'offline') {
-      return { fill: '#E63946', glow: 'rgba(230,57,70,0.38)' };
-    }
-    return { fill: '#2EC4B6', glow: 'rgba(46,196,182,0.34)' };
-  };
-
-  const buildStandaloneMarkerIconDataUrl = (camera) => {
-    const assetType = String(camera && camera.asset_type ? camera.asset_type : 'cctv').toLowerCase();
-    const iconUrl = state.colorIconDataUris[assetType] || COLOR_ICON_URLS[assetType];
-    if (!iconUrl) {
-      const operationalState = getCameraOperationalState(camera);
-      return operationalState === 'online' ? ONLINE_MARKER_URL : OFFLINE_MARKER_URL;
-    }
-    const tone = getStandaloneMarkerTone(camera);
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
-        <defs>
-          <filter id="markerGlow" x="-45%" y="-45%" width="190%" height="190%">
-            <feGaussianBlur stdDeviation="3.2" />
-          </filter>
-        </defs>
-        <circle cx="22" cy="22" r="19" fill="${tone.glow}" filter="url(#markerGlow)" />
-        <circle cx="22" cy="22" r="17.5" fill="${tone.fill}" opacity="0.22" />
-        <image href="${escapeHtml(iconUrl)}" x="4" y="4" width="36" height="36" preserveAspectRatio="xMidYMid meet" />
-      </svg>
-    `.trim();
-    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-  };
+  const getGateMarkerIconUrl = (gate) =>
+    getGateMarkerTone(gate) === 'success' ? COLOR_ICON_URLS.gate_online : COLOR_ICON_URLS.gate_offline;
 
   const getClusterTone = (onlineCount, offlineCount) => {
     const total = Math.max(1, Number(onlineCount || 0) + Number(offlineCount || 0));
@@ -1247,7 +1199,7 @@
         this.element.style.top = `${pixel.y}px`;
         this.element.title = this.gate.gate_name || this.gate.gate_code || 'Gate Alert';
         this.element.innerHTML =
-          `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><img src="${escapeHtml(ONLY_ICON_URLS.gate)}" alt="" aria-hidden="true" /></span>`;
+          `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><img src="${escapeHtml(getGateMarkerIconUrl(this.gate))}" alt="" aria-hidden="true" /></span>`;
       }
 
       onRemove() {
@@ -1305,8 +1257,7 @@
         gate &&
         gate.latLng &&
         state.gateAlerts.visible &&
-        isEntityInSelectedBranch(gate.branch_id) &&
-        (gate.status === 'error' || gate.status === 'warning')
+        isEntityInSelectedBranch(gate.branch_id)
     ) ||
     Array.from(state.standaloneAssets.items.values()).some(
       (item) =>
@@ -2164,7 +2115,6 @@
       return;
     }
     const response = await window.cameraService.getGateAlerts({
-      status: 'error,warning',
       include: 'affected_devices',
       ...(isAllBranchesSelected() ? {} : { branch_id: branch.id }),
     });
@@ -2174,7 +2124,10 @@
     unwrapCollection(response).forEach((item) => {
       const normalized = normalizeGateAlert(item);
       if (normalized) {
-        state.gateAlerts.items.set(String(normalized.gate_id), { ...normalized, showInSummary: true });
+        state.gateAlerts.items.set(String(normalized.gate_id), {
+          ...normalized,
+          showInSummary: normalized.status === 'error' || normalized.status === 'warning',
+        });
       }
     });
     if (
@@ -2340,7 +2293,6 @@
       let markerClustererLib = null;
       try {
         await loadOnlyIconDataUris();
-        await loadColorIconDataUris();
         markerClustererLib = await loadMarkerClustererLibrary();
       } catch (clusterError) {
         debugLog('updateDefaultCctvMarkers:cluster-library-error', {
@@ -2792,9 +2744,7 @@
     const hasAssetsPayload = Object.prototype.hasOwnProperty.call(payload, 'assets');
     const gateAlerts = toArray(payload.gate_alerts)
       .map(normalizeGateAlert)
-      .filter(
-        (gate) => gate && isEntityInSelectedBranch(gate.branch_id) && (gate.status === 'error' || gate.status === 'warning')
-      );
+      .filter((gate) => gate && isEntityInSelectedBranch(gate.branch_id));
     const assets = toArray(payload.assets)
       .map(normalizeStandaloneAsset)
       .filter((asset) => asset && isEntityInSelectedBranch(asset.branch_id))
@@ -2804,7 +2754,10 @@
     if (hasGateAlertsPayload) {
       state.gateAlerts.items.clear();
       gateAlerts.forEach((gate) => {
-        state.gateAlerts.items.set(String(gate.gate_id), { ...gate, showInSummary: true });
+        state.gateAlerts.items.set(String(gate.gate_id), {
+          ...gate,
+          showInSummary: gate.status === 'error' || gate.status === 'warning',
+        });
       });
     }
     if (hasAssetsPayload) {
@@ -2847,24 +2800,10 @@
     if (!isEntityInSelectedBranch(normalized.branch_id)) {
       return;
     }
-    if (normalized.status !== 'error' && normalized.status !== 'warning') {
-      state.gateAlerts.items.delete(String(normalized.gate_id));
-      if (String(state.gateAlerts.selectedGateId || '') === String(normalized.gate_id)) {
-        state.gateAlerts.selectedGateId = null;
-        if (state.ui.selectedEntityType === 'gate') {
-          state.ui.selectedEntityType = '';
-          state.ui.selectedEntityId = null;
-          state.detailRenderKey = '';
-          sosDetailPanelEl.classList.remove('is-visible');
-          sosDetailPanelEl.classList.add('hidden');
-        }
-      }
-      syncGateAlertMarkers();
-      renderAll();
-      pushGateStatusNotification(normalized);
-      return;
-    }
-    state.gateAlerts.items.set(String(normalized.gate_id), { ...normalized, showInSummary: true });
+    state.gateAlerts.items.set(String(normalized.gate_id), {
+      ...normalized,
+      showInSummary: normalized.status === 'error' || normalized.status === 'warning',
+    });
     syncGateAlertMarkers();
     pushGateStatusNotification(normalized);
     renderAll();
