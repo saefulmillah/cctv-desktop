@@ -508,10 +508,10 @@
   const ONLINE_MARKER_URL = new URL('./assets/marker-map-online.svg', window.location.href).toString();
   const OFFLINE_MARKER_URL = new URL('./assets/marker-map-offline.svg', window.location.href).toString();
   const ONLY_ICON_URLS = {
-    cctv: new URL('./assets/only2_CCTV.svg', window.location.href).toString(),
-    gate: new URL('./assets/only2_GATE.svg', window.location.href).toString(),
-    mixed: new URL('./assets/only2_MIXED.svg', window.location.href).toString(),
-    vms: new URL('./assets/only2_VMS.svg', window.location.href).toString(),
+    cctv: new URL('./assets/ONLY3_CCTV.svg', window.location.href).toString(),
+    gate: new URL('./assets/ONLY3_GATE.svg', window.location.href).toString(),
+    mixed: new URL('./assets/ONLY3_MIXED.svg', window.location.href).toString(),
+    vms: new URL('./assets/ONLY3_VMS.svg', window.location.href).toString(),
   };
 
   const getCameraCoordinates = (camera) => {
