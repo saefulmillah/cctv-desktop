@@ -511,7 +511,11 @@
     cctv: new URL('./assets/ONLY3_CCTV.svg', window.location.href).toString(),
     gate: new URL('./assets/ONLY3_GATE.svg', window.location.href).toString(),
     mixed: new URL('./assets/ONLY3_MIXED.svg', window.location.href).toString(),
-    vms: new URL('./assets/ONLY3_VMS.svg', window.location.href).toString(),
+    vms: new URL('./assets/ONLY4_VMS.svg', window.location.href).toString(),
+  };
+  const COLOR_ICON_URLS = {
+    cctv: new URL('./assets/COLOR_CCTV.svg', window.location.href).toString(),
+    vms: new URL('./assets/COLOR_VMS.svg', window.location.href).toString(),
   };
 
   const getCameraCoordinates = (camera) => {
@@ -541,6 +545,13 @@
   };
 
   const getCctvMarkerIconUrl = (camera) => {
+    const assetType = String(camera && camera.asset_type ? camera.asset_type : 'cctv').toLowerCase();
+    if (assetType === 'vms') {
+      return COLOR_ICON_URLS.vms;
+    }
+    if (assetType === 'cctv') {
+      return COLOR_ICON_URLS.cctv;
+    }
     const operationalState = getCameraOperationalState(camera);
     return operationalState === 'online' ? ONLINE_MARKER_URL : OFFLINE_MARKER_URL;
   };
