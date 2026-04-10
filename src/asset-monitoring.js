@@ -2788,6 +2788,8 @@
     if (!payload || typeof payload !== 'object') {
       return;
     }
+    const hasGateAlertsPayload = Object.prototype.hasOwnProperty.call(payload, 'gate_alerts');
+    const hasAssetsPayload = Object.prototype.hasOwnProperty.call(payload, 'assets');
     const gateAlerts = toArray(payload.gate_alerts)
       .map(normalizeGateAlert)
       .filter(
@@ -2798,23 +2800,35 @@
       .filter((asset) => asset && isEntityInSelectedBranch(asset.branch_id))
       .map((asset) => ({ ...asset, showInSummary: true }));
     const sosAlerts = toArray(payload.sos).filter(Boolean);
-    state.gateAlerts.items.clear();
-    gateAlerts.forEach((gate) => {
-      state.gateAlerts.items.set(String(gate.gate_id), { ...gate, showInSummary: true });
-    });
-    state.cctvCacheByBranch.clear();
     const branchId = getSelectedBranch() && getSelectedBranch().id ? String(getSelectedBranch().id) : '';
-    state.standaloneAssets.items.clear();
-    assets.forEach((asset) => {
-      state.standaloneAssets.items.set(makeAssetKey(asset.asset_type, asset.id), asset);
-    });
-    if (branchId || isAllBranchesSelected()) {
-      state.cctvCacheByBranch.set(
-        isAllBranchesSelected() ? ALL_BRANCHES_OPTION : branchId,
-        assets
-          .filter((asset) => isAllBranchesSelected() || String(asset.branch_id || '') === branchId)
-          .map((asset) => ({ ...asset, position: asset.latLng }))
-      );
+    if (hasGateAlertsPayload) {
+      state.gateAlerts.items.clear();
+      gateAlerts.forEach((gate) => {
+        state.gateAlerts.items.set(String(gate.gate_id), { ...gate, showInSummary: true });
+      });
+    }
+    if (hasAssetsPayload) {
+      assets.forEach((asset) => {
+        const assetKey = makeAssetKey(asset.asset_type, asset.id);
+        const currentAsset = state.standaloneAssets.items.get(assetKey) || null;
+        const resolvedLatLng = asset.latLng || (currentAsset && currentAsset.latLng) || null;
+        state.standaloneAssets.items.set(assetKey, {
+          ...(currentAsset || {}),
+          ...asset,
+          lat: resolvedLatLng ? resolvedLatLng.lat : (currentAsset && Number.isFinite(currentAsset.lat) ? currentAsset.lat : asset.lat),
+          lng: resolvedLatLng ? resolvedLatLng.lng : (currentAsset && Number.isFinite(currentAsset.lng) ? currentAsset.lng : asset.lng),
+          latLng: resolvedLatLng,
+          position: resolvedLatLng,
+          showInSummary: true,
+        });
+      });
+      if (branchId || isAllBranchesSelected()) {
+        const branchKey = isAllBranchesSelected() ? ALL_BRANCHES_OPTION : branchId;
+        const mergedAssets = Array.from(state.standaloneAssets.items.values())
+          .filter((asset) => asset && (isAllBranchesSelected() || String(asset.branch_id || '') === branchId))
+          .map((asset) => ({ ...asset, position: asset.latLng || asset.position || null }));
+        state.cctvCacheByBranch.set(branchKey, mergedAssets);
+      }
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'sos')) {
       state.alerts.clear();
