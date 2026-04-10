@@ -521,15 +521,16 @@
   };
 
   const normalizeStandaloneAsset = (item) => {
-    if (!item || typeof item !== 'object' || !item.id) {
+    if (!item || typeof item !== 'object' || !(item.id || item.asset_id)) {
       return null;
     }
     const lat = Number(item.lat ?? item.cctv_lat ?? item.latitude);
     const lng = Number(item.lng ?? item.cctv_lon ?? item.longitude);
     const assetType = String(item.asset_type || '').trim().toLowerCase();
+    const normalizedId = String(item.id || item.asset_id || '');
     return {
       ...item,
-      id: String(item.id),
+      id: normalizedId,
       asset_type: assetType,
       branch_id: String(item.branch_id || ''),
       gate_id: item.gate_id ? String(item.gate_id) : '',
@@ -544,7 +545,7 @@
       title:
         String(item.asset_name || '').trim() ||
         String(item.asset_code || '').trim() ||
-        `${assetType.toUpperCase()} ${item.id}`,
+        `${assetType.toUpperCase()} ${normalizedId}`,
     };
   };
 
@@ -2872,10 +2873,14 @@
     );
     const currentAsset =
       state.standaloneAssets.items.get(assetKey) || (cacheIndex >= 0 ? branchCache[cacheIndex] : null);
+    const resolvedLatLng = normalized.latLng || (currentAsset && currentAsset.latLng) || null;
     const nextAsset = {
       ...(currentAsset || {}),
       ...normalized,
-      position: normalized.latLng,
+      lat: resolvedLatLng ? resolvedLatLng.lat : (currentAsset && Number.isFinite(currentAsset.lat) ? currentAsset.lat : normalized.lat),
+      lng: resolvedLatLng ? resolvedLatLng.lng : (currentAsset && Number.isFinite(currentAsset.lng) ? currentAsset.lng : normalized.lng),
+      latLng: resolvedLatLng,
+      position: resolvedLatLng,
       showInSummary: true,
     };
     state.standaloneAssets.items.set(assetKey, nextAsset);
