@@ -2310,8 +2310,8 @@ body.sos-mode .asset-toolbar-control {
 
 .sos-map-marker {
   position: absolute;
-  width: 38px;
-  height: 38px;
+  width: 48px;
+  height: 48px;
   border: 0;
   background: transparent;
   transform: translate(-50%, -50%);
@@ -2330,7 +2330,7 @@ body.sos-mode .asset-toolbar-control {
 }
 
 .sos-map-marker__dot {
-  inset: 8px;
+  inset: 10px;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
 }
 
@@ -2345,7 +2345,7 @@ body.sos-mode .asset-toolbar-control {
 
 .sos-map-marker.is-critical .sos-map-marker__pulse,
 .sos-map-marker.is-critical .sos-map-marker__dot {
-  background: rgba(255, 63, 77, 0.92);
+  background: #ff006e;
 }
 
 .sos-map-marker.is-dispatched .sos-map-marker__pulse,
@@ -2365,7 +2365,7 @@ body.sos-mode .asset-toolbar-control {
 
 .asset-map-marker--danger .sos-map-marker__pulse,
 .asset-map-marker--danger .sos-map-marker__dot {
-  background: rgba(255, 63, 77, 0.92);
+  background: #ff006e;
 }
 
 .asset-map-marker:not(.asset-map-marker--pulse) .sos-map-marker__pulse {
@@ -2374,22 +2374,22 @@ body.sos-mode .asset-toolbar-control {
 }
 
 .sos-map-marker.is-selected {
-  width: 44px;
-  height: 44px;
+  width: 56px;
+  height: 56px;
 }
 
 .sos-map-marker.is-selected .sos-map-marker__dot {
-  inset: 9px;
+  inset: 11px;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.26);
 }
 
 .asset-map-marker.sos-map-marker {
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
 }
 
 .asset-map-marker.sos-map-marker .sos-map-marker__dot {
-  inset: 10px;
+  inset: 12px;
 }
 
 .asset-map-marker.sos-map-marker .sos-map-marker__dot img {
@@ -2399,12 +2399,12 @@ body.sos-mode .asset-toolbar-control {
 }
 
 .asset-map-marker.sos-map-marker.is-selected {
-  width: 56px;
-  height: 56px;
+  width: 64px;
+  height: 64px;
 }
 
 .asset-map-marker.sos-map-marker.is-selected .sos-map-marker__dot {
-  inset: 11px;
+  inset: 13px;
 }
 
 @keyframes sosPulse {

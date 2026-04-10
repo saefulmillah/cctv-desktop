@@ -591,19 +591,22 @@
     const offlineRatio = Number(offlineCount || 0) / total;
     if (onlineRatio >= 0.7) {
       return {
-        fill: 'rgba(65, 231, 93, 0.82)',
-        border: 'rgba(65, 231, 93, 0.22)',
+        fill: '#2EC4B6',
+        border: 'rgba(46,196,182,0.28)',
+        glow: 'rgba(46,196,182,0.3)',
       };
     }
     if (offlineRatio >= 0.7) {
       return {
-        fill: 'rgba(255, 63, 77, 0.82)',
-        border: 'rgba(255, 63, 77, 0.22)',
+        fill: '#E63946',
+        border: 'rgba(230,57,70,0.32)',
+        glow: 'rgba(230,57,70,0.4)',
       };
     }
     return {
-      fill: 'rgba(255, 156, 28, 0.82)',
-      border: 'rgba(255, 156, 28, 0.22)',
+      fill: '#FFB703',
+      border: 'rgba(255,183,3,0.3)',
+      glow: 'rgba(255,183,3,0.3)',
     };
   };
 
@@ -612,6 +615,12 @@
     const tone = getClusterTone(onlineCount, offlineCount);
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <defs>
+          <filter id="clusterGlow" x="-45%" y="-45%" width="190%" height="190%">
+            <feGaussianBlur stdDeviation="5" />
+          </filter>
+        </defs>
+        <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 6}" fill="${tone.glow}" filter="url(#clusterGlow)" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
       </svg>
@@ -662,7 +671,7 @@
     const x = size - badgeWidth - 1;
     const y = 1;
     return `
-      <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="#ff3f4d" />
+      <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="#E63946" />
       <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${displayCount.length >= 3 ? 9 : 10}" font-weight="800">${displayCount}</text>
     `;
   };
@@ -709,11 +718,15 @@
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
         <defs>
+          <filter id="clusterGlow" x="-45%" y="-45%" width="190%" height="190%">
+            <feGaussianBlur stdDeviation="5" />
+          </filter>
           <linearGradient id="cctvMarkerGradient" x1="0" y1="0" x2="728" y2="728" gradientUnits="userSpaceOnUse">
             <stop offset="0" stop-color="#ff3131" />
             <stop offset="1" stop-color="#ff914d" />
           </linearGradient>
         </defs>
+        <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 6}" fill="${tone.glow}" filter="url(#clusterGlow)" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
         ${centerGraphic}
