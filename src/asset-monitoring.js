@@ -697,7 +697,7 @@
     const normalizedAssetType = String(assetType || '').toLowerCase();
     const centerGraphic = buildOnlyIconClusterSvg(typeMeta, size);
     const typeLabel =
-      normalizedAssetType === 'cctv'
+      normalizedAssetType === 'cctv' || typeMeta.iconKey === 'mixed'
         ? ''
         : `<text x="${size / 2}" y="${size - 6}" text-anchor="middle" fill="rgba(255,255,255,0.82)" font-family="Segoe UI, Arial, sans-serif" font-size="7" font-weight="700">${typeMeta.label}</text>`;
     const svg = `
