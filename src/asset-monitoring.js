@@ -24,8 +24,6 @@
   const sosMapEl = $('sosMap');
   const sosMapLoadingEl = $('sosMapLoading');
   const sosMapEmptyEl = $('sosMapEmpty');
-  const assetMapCameraControlsEl = $('assetMapCameraControls');
-  const assetMapCameraStatusEl = $('assetMapCameraStatus');
   const sosBranchSelectEl = $('sosBranchSelect');
   const sosMapThemeSelectEl = $('sosMapThemeSelect');
   const sosCctvToggleEl = $('sosCctvToggle');
@@ -172,7 +170,6 @@
     colorIconLoaderPromise: null,
     markers: new Map(),
     markerClass: null,
-    mapCameraControlsBound: false,
     streamAbortController: null,
     streamRetryTimer: null,
     ticketRefreshTimer: null,
@@ -1233,65 +1230,6 @@
     if (state.map) {
       state.map.setOptions({ styles: MAP_THEME_PRESETS[normalized] });
     }
-  };
-
-  const normalizeHeading = (value) => {
-    const numeric = Number(value || 0);
-    if (!Number.isFinite(numeric)) {
-      return 0;
-    }
-    const normalized = numeric % 360;
-    return normalized < 0 ? normalized + 360 : normalized;
-  };
-
-  const updateMapCameraControls = () => {
-    if (!assetMapCameraControlsEl || !assetMapCameraStatusEl) {
-      return;
-    }
-    const hasMap = Boolean(state.map);
-    assetMapCameraControlsEl.classList.toggle('hidden', !hasMap);
-    if (!hasMap) {
-      return;
-    }
-    const tilt = Number((state.map.getTilt && state.map.getTilt()) || 0);
-    const heading = normalizeHeading(state.map.getHeading && state.map.getHeading());
-    assetMapCameraControlsEl
-      .querySelectorAll('[data-map-camera-action="tilt-0"], [data-map-camera-action="tilt-45"]')
-      .forEach((button) => {
-        const is3d = button.getAttribute('data-map-camera-action') === 'tilt-45';
-        button.classList.toggle('is-active', is3d ? tilt >= 45 : tilt < 45);
-      });
-    assetMapCameraStatusEl.textContent = tilt >= 45 ? `${Math.round(heading)}°` : '2D';
-  };
-
-  const ensureMapCameraControlsBound = () => {
-    if (!assetMapCameraControlsEl || state.mapCameraControlsBound) {
-      return;
-    }
-    assetMapCameraControlsEl.addEventListener('click', (event) => {
-      const target = event.target instanceof HTMLElement ? event.target.closest('[data-map-camera-action]') : null;
-      if (!target || !state.map) {
-        return;
-      }
-      const action = String(target.getAttribute('data-map-camera-action') || '');
-      if (action === 'tilt-0') {
-        state.map.setTilt(0);
-        state.map.setHeading(0);
-      } else if (action === 'tilt-45') {
-        state.map.setTilt(45);
-        if (!Number.isFinite(Number(state.map.getHeading && state.map.getHeading()))) {
-          state.map.setHeading(0);
-        }
-      } else if (action === 'rotate-left') {
-        state.map.setTilt(Math.max(45, Number((state.map.getTilt && state.map.getTilt()) || 0)));
-        state.map.setHeading(normalizeHeading((state.map.getHeading && state.map.getHeading()) || 0) - 45);
-      } else if (action === 'rotate-right') {
-        state.map.setTilt(Math.max(45, Number((state.map.getTilt && state.map.getTilt()) || 0)));
-        state.map.setHeading(normalizeHeading((state.map.getHeading && state.map.getHeading()) || 0) + 45);
-      }
-      updateMapCameraControls();
-    });
-    state.mapCameraControlsBound = true;
   };
 
   const isAllBranchesSelected = () => String((state.mapContext.selectedBranch && state.mapContext.selectedBranch.id) || '') === ALL_BRANCHES_OPTION;
@@ -3097,15 +3035,11 @@
       state.map = new google.maps.Map(sosMapEl, {
         center: { lat: -6.2, lng: 106.8 },
         zoom: 12,
-        zoomControl: true,
-        scaleControl: true,
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
         styles: MAP_THEME_PRESETS[state.mapContext.themePreset],
       });
-      ensureMapCameraControlsBound();
-      updateMapCameraControls();
       state.trafficLayer = new google.maps.TrafficLayer();
       state.trafficLayer.setMap(state.map);
       state.cctvProjectionOverlay = new google.maps.OverlayView();
@@ -3119,9 +3053,6 @@
       state.map.addListener('zoom_changed', () => {
         collapseCctvSpiderfy();
       });
-      state.map.addListener('idle', updateMapCameraControls);
-      state.map.addListener('heading_changed', updateMapCameraControls);
-      state.map.addListener('tilt_changed', updateMapCameraControls);
       state.map.addListener('click', () => {
         if (Date.now() < state.cctvSuppressMapClickUntil) {
           return;
@@ -3130,7 +3061,6 @@
       });
     }
     applyMapTheme(state.mapContext.themePreset);
-    updateMapCameraControls();
     return state.map;
   };
 
