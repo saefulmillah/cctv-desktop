@@ -4,21 +4,31 @@
   const SOS_TICKET_REFRESH_MS = 30000;
   const SOS_ALERT_SYNC_MS = 5000;
   const SOS_NOTIFICATION_LIMIT = 5;
+  const TRANSIENT_NOTIFICATION_MS = 5000;
+  const ALL_BRANCHES_OPTION = '__all__';
+  const MAP_ZOOM_BRANCH = 11;
+  const MAP_ZOOM_GATE = 11;
+  const MAP_ZOOM_ASSET = 11;
+  const MAP_ZOOM_SOS = 14;
 
   const $ = (id) => document.getElementById(id);
   const sosMonitorBtn = $('sosMonitorBtn');
   const sosDashboardEl = $('sosDashboard');
   const cameraGridEl = $('cameraGrid');
   const pagingControlEl = $('pagingControl');
-  const currentBranchEl = $('currentBranch');
   const sosRefreshBtn = $('sosRefreshBtn');
   const sosConnectionBadgeEl = $('sosConnectionBadge');
   const sosOpenCountBadgeEl = $('sosOpenCountBadge');
   const sosRouteTitleEl = $('sosRouteTitle');
+  const assetMapSubtitleEl = $('assetMapSubtitle');
   const sosMapEl = $('sosMap');
   const sosMapLoadingEl = $('sosMapLoading');
   const sosMapEmptyEl = $('sosMapEmpty');
+  const sosBranchSelectEl = $('sosBranchSelect');
+  const sosMapThemeSelectEl = $('sosMapThemeSelect');
   const sosCctvToggleEl = $('sosCctvToggle');
+  const sosVmsToggleEl = $('sosVmsToggle');
+  const sosGateToggleEl = $('sosGateToggle');
   const sosNotificationPanelEl = $('sosNotificationPanel');
   const sosNotificationListEl = $('sosNotificationList');
   const sosIncidentListEl = $('sosIncidentList');
@@ -65,22 +75,84 @@
     return;
   }
 
+  const MAP_THEME_PRESETS = {
+    default: null,
+    'dark-ops': [
+      { elementType: 'geometry', stylers: [{ color: '#1f4c85' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#e7f6ff' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#1c3f6e' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#10396a' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#27558c' }] },
+      { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+      { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+    ],
+    'minimal-light': [
+      { elementType: 'geometry', stylers: [{ color: '#eef3f7' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#36566f' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#f7fbfe' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#bfd5ec' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+      { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+      { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+      { featureType: 'administrative.land_parcel', stylers: [{ visibility: 'off' }] },
+    ],
+  };
+
   const state = {
     isActive: false,
+    mapContext: {
+      selectedBranch: null,
+      availableBranches: [],
+      themePreset: 'dark-ops',
+      streamStatus: 'idle',
+    },
+    gateAlerts: {
+      items: new Map(),
+      markers: new Map(),
+      details: new Map(),
+      selectedGateId: null,
+      markerClass: null,
+      visible: true,
+    },
+    standaloneAssets: {
+      items: new Map(),
+      details: new Map(),
+      selectedAssetKey: null,
+    },
+    incidents: {
+      alerts: new Map(),
+      ticketsBySosId: new Map(),
+      selectedSosId: null,
+      notifications: [],
+    },
+    ui: {
+      topbarFloating: true,
+      mapLoading: false,
+      mapEmptyMessage: 'Hubungkan API lalu buka asset monitoring untuk memantau asset dan kejadian secara real-time.',
+      selectedEntityType: 'sos',
+      selectedEntityId: null,
+    },
     alerts: new Map(),
     ticketsBySosId: new Map(),
     selectedSosId: null,
     notifications: [],
+    notificationTimers: new Map(),
+    notificationLeavingIds: new Set(),
+    notificationCounter: 0,
     mapsLoaderPromise: null,
     map: null,
     trafficLayer: null,
+    gateProjectionOverlay: null,
     cctvMarkers: [],
     cctvCluster: null,
     cctvClusterRenderMarkers: [],
     cctvMapBranchId: null,
     cctvMapBranchLabel: '',
+    cctvMapLayerKey: '',
     cctvVisible: true,
+    vmsVisible: true,
     cctvCacheByBranch: new Map(),
+    cctvMarkerLoadSeq: 0,
     markerClustererLoaderPromise: null,
     cctvProjectionOverlay: null,
     cctvProjectionReadyPromise: null,
@@ -98,13 +170,12 @@
     streamRetryTimer: null,
     ticketRefreshTimer: null,
     alertRefreshTimer: null,
-    previousBranchLabel: '',
     isInitialSnapshotLoaded: false,
     activeWorkspaceBranch: null,
   };
 
   const debugLog = (...args) => {
-    console.info('[sos-monitoring]', ...args);
+    console.info('[asset-monitoring]', ...args);
   };
 
   const setText = (element, value) => {
@@ -120,10 +191,11 @@
   };
 
   const setMapLoadingVisible = (visible) => {
-    if (!sosMapLoadingEl) {
-      return;
+    state.ui.mapLoading = Boolean(visible);
+    if (state.ui.mapLoading && sosMapEmptyEl) {
+      sosMapEmptyEl.classList.add('hidden');
     }
-    sosMapLoadingEl.classList.toggle('sidebar-section-hidden', !visible);
+    updateMapEmptyState();
   };
 
   const setIncidentListLoadingVisible = (visible) => {
@@ -274,6 +346,163 @@
     return normalizedPhone ? `https://wa.me/${normalizedPhone}` : '';
   };
 
+  const makeAssetKey = (assetType, id) => `${String(assetType || '').trim()}:${String(id || '').trim()}`;
+  const GATE_ISSUE_STATUSES = new Set(['error', 'offline', 'warning']);
+  const isGateIssueStatus = (status) => GATE_ISSUE_STATUSES.has(String(status || '').trim().toLowerCase());
+  const getGateIssueStatusTone = (status) => {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'warning') {
+      return 'warning';
+    }
+    if (normalized === 'error' || normalized === 'offline') {
+      return 'danger';
+    }
+    return 'neutral';
+  };
+  const nextNotificationId = (prefix) => {
+    state.notificationCounter += 1;
+    return `${String(prefix || 'notif')}:${Date.now()}:${state.notificationCounter}`;
+  };
+
+  const normalizeMapBranch = (item) => {
+    if (!item || typeof item !== 'object' || !item.id) {
+      return null;
+    }
+    return {
+      id: String(item.id),
+      branch_code: String(item.branch_code || '').trim(),
+      branch_name: String(item.branch_name || '').trim(),
+      center_lat: Number(item.center_lat),
+      center_lng: Number(item.center_lng),
+    };
+  };
+
+  const normalizeGateAlert = (item) => {
+    if (!item || typeof item !== 'object' || !item.gate_id) {
+      return null;
+    }
+    const lat = Number(item.lat);
+    const lng = Number(item.lng);
+    return {
+      ...item,
+      gate_id: String(item.gate_id),
+      branch_id: String(item.branch_id || ''),
+      lat,
+      lng,
+      latLng: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null,
+      pulse: Boolean(item.pulse),
+      status: String(item.status || 'normal').toLowerCase(),
+      severity: String(item.severity || 'none').toLowerCase(),
+      affected_devices: toArray(item.affected_devices),
+    };
+  };
+
+  const getGateLogEntries = (gate) => {
+    const entries = [];
+    const addEntry = (device, event) => {
+      const source = event && typeof event === 'object' ? event : device;
+      if (!source || typeof source !== 'object') {
+        return;
+      }
+      const logDescription = String(source.log_description || '').trim();
+      const status = String(source.status || (device && device.status) || '').trim().toLowerCase();
+      if (!logDescription) {
+        return;
+      }
+      if (!isGateIssueStatus(status)) {
+        return;
+      }
+      const deviceName =
+        String((device && (device.device_name || device.device_type)) || '').trim() ||
+        String((source && (source.device_name || source.device_type)) || '').trim() ||
+        'Device';
+      entries.push({
+        deviceName,
+        logDescription,
+        status,
+        severity: String(source.severity || (device && device.severity) || '').trim(),
+        lastUpdateAt: source.last_update_at || source.event_at || (device && device.last_update_at) || '',
+      });
+    };
+    toArray(gate && gate.affected_devices).forEach((device) => addEntry(device));
+    toArray(gate && gate.devices).forEach((device) => {
+      addEntry(device);
+      toArray(device && device.recent_events).forEach((event) => addEntry(device, event));
+    });
+    const seen = new Set();
+    return entries.filter((entry) => {
+      const key = `${entry.deviceName}:${entry.logDescription}:${entry.lastUpdateAt}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const getGateLogSummaryText = (gate, fallback = 'Perubahan status perangkat gerbang terdeteksi') => {
+    const entries = getGateLogEntries(gate);
+    if (!entries.length) {
+      return fallback;
+    }
+    const firstEntries = entries
+      .slice(0, 2)
+      .map((entry) => `${entry.deviceName}: ${entry.logDescription}`);
+    if (entries.length > 2) {
+      firstEntries.push(`+${entries.length - 2} log lain`);
+    }
+    return firstEntries.join(' | ');
+  };
+
+  const renderGateLogList = (gate) => {
+    const entries = getGateLogEntries(gate);
+    if (!entries.length) {
+      return '<div class="sos-gate-log-list__empty">Belum ada log device terbaru.</div>';
+    }
+    return entries
+      .map(
+        (entry) => `
+          <div class="sos-gate-log-list__item">
+            <div class="sos-gate-log-list__head">
+              <strong>${escapeHtml(entry.deviceName)}</strong>
+              <span class="status-pill ${getGateIssueStatusTone(entry.status)}">${escapeHtml(String(entry.status || '-').toUpperCase())}</span>
+            </div>
+            <span>${escapeHtml(entry.logDescription)}</span>
+            <small>${escapeHtml([entry.severity, entry.lastUpdateAt ? toDateTime(entry.lastUpdateAt) : ''].filter(Boolean).join(' | '))}</small>
+          </div>
+        `
+      )
+      .join('');
+  };
+
+  const normalizeStandaloneAsset = (item) => {
+    if (!item || typeof item !== 'object' || !item.id) {
+      return null;
+    }
+    const lat = Number(item.lat ?? item.cctv_lat ?? item.latitude);
+    const lng = Number(item.lng ?? item.cctv_lon ?? item.longitude);
+    const assetType = String(item.asset_type || '').trim().toLowerCase();
+    return {
+      ...item,
+      id: String(item.id),
+      asset_type: assetType,
+      branch_id: String(item.branch_id || ''),
+      gate_id: item.gate_id ? String(item.gate_id) : '',
+      lat,
+      lng,
+      latLng: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null,
+      pulse: Boolean(item.pulse),
+      status: String(item.status || 'normal').toLowerCase(),
+      severity: String(item.severity || 'none').toLowerCase(),
+      is_online: Boolean(item.is_online),
+      has_live_stream: Boolean(item.has_live_stream),
+      title:
+        String(item.asset_name || '').trim() ||
+        String(item.asset_code || '').trim() ||
+        `${assetType.toUpperCase()} ${item.id}`,
+    };
+  };
+
   const ONLINE_MARKER_URL = new URL('./assets/marker-map-online.svg', window.location.href).toString();
   const OFFLINE_MARKER_URL = new URL('./assets/marker-map-offline.svg', window.location.href).toString();
 
@@ -281,19 +510,32 @@
     if (!camera || typeof camera !== 'object') {
       return null;
     }
-    const lat = Number(camera.cctv_lat || camera.latitude);
-    const lng = Number(camera.cctv_lon || camera.longitude);
+    const lat = Number(camera.lat ?? camera.cctv_lat ?? camera.latitude);
+    const lng = Number(camera.lng ?? camera.cctv_lon ?? camera.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return null;
     }
     return { lat, lng };
   };
 
-  const getCameraOperationalState = (camera) =>
-    Number(camera && camera.is_active) === 1 ? 'online' : 'offline';
+  const getCameraOperationalState = (camera) => {
+    const status = String(camera && camera.status ? camera.status : '').toLowerCase();
+    if (status === 'error' || status === 'offline') {
+      return 'offline';
+    }
+    if (status === 'warning') {
+      return 'warning';
+    }
+    if (typeof (camera && camera.is_online) === 'boolean') {
+      return camera.is_online ? 'online' : 'offline';
+    }
+    return Number(camera && camera.is_active) === 1 ? 'online' : 'offline';
+  };
 
-  const getCctvMarkerIconUrl = (camera) =>
-    getCameraOperationalState(camera) === 'online' ? ONLINE_MARKER_URL : OFFLINE_MARKER_URL;
+  const getCctvMarkerIconUrl = (camera) => {
+    const operationalState = getCameraOperationalState(camera);
+    return operationalState === 'online' ? ONLINE_MARKER_URL : OFFLINE_MARKER_URL;
+  };
 
   const getCctvMarkerScaledSize = (camera) =>
     String(camera && camera.id) === String(state.cctvSelectedCameraId) ? 40 : 32;
@@ -660,14 +902,121 @@
     return state.markerClass;
   };
 
+  const getGateMarkerTone = (gate) => {
+    const status = String(gate && gate.status ? gate.status : 'normal').toLowerCase();
+    if (status === 'error' || status === 'offline') {
+      return 'danger';
+    }
+    if (status === 'warning') {
+      return 'warning';
+    }
+    return 'success';
+  };
+
+  const getGateMarkerClass = () => {
+    if (state.gateAlerts.markerClass) {
+      return state.gateAlerts.markerClass;
+    }
+    state.gateAlerts.markerClass = class GateAlertMarker extends window.google.maps.OverlayView {
+      constructor({ map, gate, onSelect }) {
+        super();
+        this.map = map;
+        this.gate = gate;
+        this.onSelect = onSelect;
+        this.element = null;
+        this.setMap(map);
+      }
+
+      onAdd() {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'sos-map-marker';
+        button.addEventListener('click', () => this.onSelect(this.gate.gate_id));
+        this.element = button;
+        this.getPanes().overlayMouseTarget.appendChild(button);
+        this.draw();
+      }
+
+      draw() {
+        if (!this.element || !this.gate || !this.gate.latLng) {
+          return;
+        }
+        const pixel = this.getProjection().fromLatLngToDivPixel(
+          new window.google.maps.LatLng(this.gate.latLng.lat, this.gate.latLng.lng)
+        );
+        if (!pixel) {
+          return;
+        }
+        const tone = getGateMarkerTone(this.gate);
+        this.element.className = `sos-map-marker asset-map-marker asset-map-marker--${tone} ${
+          this.gate.pulse ? 'asset-map-marker--pulse' : ''
+        } ${String(state.gateAlerts.selectedGateId || '') === String(this.gate.gate_id) ? 'is-selected' : ''}`;
+        this.element.style.left = `${pixel.x}px`;
+        this.element.style.top = `${pixel.y}px`;
+        this.element.title = this.gate.gate_name || this.gate.gate_code || 'Gate Alert';
+        this.element.innerHTML =
+          '<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"></span>';
+      }
+
+      onRemove() {
+        if (this.element && this.element.parentNode) {
+          this.element.parentNode.removeChild(this.element);
+        }
+        this.element = null;
+      }
+
+      update(gate) {
+        this.gate = gate;
+        this.draw();
+      }
+    };
+    return state.gateAlerts.markerClass;
+  };
+
+  const applyMapTheme = (preset) => {
+    const normalized = MAP_THEME_PRESETS[preset] !== undefined ? preset : 'dark-ops';
+    state.mapContext.themePreset = normalized;
+    if (sosMapThemeSelectEl) {
+      sosMapThemeSelectEl.value = normalized;
+    }
+    if (state.map) {
+      state.map.setOptions({ styles: MAP_THEME_PRESETS[normalized] });
+    }
+  };
+
+  const isAllBranchesSelected = () => String((state.mapContext.selectedBranch && state.mapContext.selectedBranch.id) || '') === ALL_BRANCHES_OPTION;
+  const isEntityInSelectedBranch = (branchId) => {
+    const selectedBranch = getSelectedBranch();
+    if (!selectedBranch || !selectedBranch.id || isAllBranchesSelected()) {
+      return true;
+    }
+    return String(branchId || '') === String(selectedBranch.id);
+  };
+
   const getVisibleAlerts = () =>
-    Array.from(state.alerts.values())
-      .filter((alert) => alert && Number(alert.status) !== 2)
+    Array.from(state.incidents.alerts.values())
+      .filter((alert) => alert && Number(alert.status) !== 2 && isEntityInSelectedBranch(alert.branch_id))
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-  const getSelectedAlert = () => state.alerts.get(Number(state.selectedSosId)) || null;
+  const getSelectedAlert = () => state.incidents.alerts.get(Number(state.selectedSosId)) || null;
+  const getSelectedBranch = () => state.mapContext.selectedBranch || state.activeWorkspaceBranch || null;
+  const isStandaloneAssetTypeVisible = (asset) => {
+    const assetType = String(asset && asset.asset_type ? asset.asset_type : 'cctv').toLowerCase();
+    return assetType === 'vms' ? state.vmsVisible : state.cctvVisible;
+  };
+  const getStandaloneLayerKey = (branchKey) =>
+    `${branchKey}:${state.cctvVisible ? 'cctv' : ''}:${state.vmsVisible ? 'vms' : ''}`;
+  const hasRenderableMapData = () =>
+    getVisibleAlerts().length > 0 ||
+    Array.from(state.gateAlerts.items.values()).some(
+      (gate) => gate && (gate.status === 'error' || gate.status === 'warning')
+    ) ||
+    Array.from(state.standaloneAssets.items.values()).some(
+      (item) => item && item.status === 'offline' && isStandaloneAssetTypeVisible(item)
+    );
 
   const setConnectionBadge = (label, tone = 'neutral') => {
+    state.mapContext.streamStatus = tone;
     setClass(sosConnectionBadgeEl, `status-pill ${tone}`);
     setText(sosConnectionBadgeEl, label);
   };
@@ -676,20 +1025,19 @@
     if (!state.notifications.length) {
       sosNotificationPanelEl.classList.add('hidden');
       sosNotificationListEl.innerHTML = '';
-      return;
     }
     sosNotificationPanelEl.classList.remove('hidden');
     sosNotificationListEl.innerHTML = state.notifications
       .map(
         (entry) => `
-          <article class="sos-notification-card" data-sos-id="${entry.sosId}">
+          <article class="sos-notification-card ${state.notificationLeavingIds.has(String(entry.id)) ? 'is-leaving' : ''}" data-notification-id="${escapeHtml(entry.id)}">
             <div class="sos-incident-item__row">
               <strong>${escapeHtml(entry.title)}</strong>
-              <button class="sos-notification-close-btn" type="button" data-notification-close="${entry.sosId}" aria-label="Tutup notifikasi" title="Tutup notifikasi">
+              <button class="sos-notification-close-btn" type="button" data-notification-close="${escapeHtml(entry.id)}" aria-label="Tutup notifikasi" title="Tutup notifikasi">
                 <span class="sos-notification-close-btn__icon" aria-hidden="true">&times;</span>
               </button>
             </div>
-            <button class="sos-notification-card__open" type="button" data-sos-id="${entry.sosId}">
+            <button class="sos-notification-card__open" type="button" data-notification-open="${escapeHtml(entry.id)}">
               <span>${escapeHtml(entry.subtitle)}</span>
             </button>
           </article>
@@ -698,45 +1046,217 @@
       .join('');
   };
 
-  const removeNotification = (sosId) => {
-    const normalizedId = Number(sosId);
-    state.notifications = state.notifications.filter((entry) => Number(entry.sosId) !== normalizedId);
+  const clearNotificationTimer = (notificationId) => {
+    const timer = state.notificationTimers.get(String(notificationId));
+    if (timer) {
+      window.clearTimeout(timer);
+      state.notificationTimers.delete(String(notificationId));
+    }
+  };
+
+  const removeNotificationImmediately = (notificationId) => {
+    const normalizedId = String(notificationId || '').trim();
+    clearNotificationTimer(normalizedId);
+    state.notificationLeavingIds.delete(normalizedId);
+    state.notifications = state.notifications.filter((entry) => String(entry.id) !== normalizedId);
+    state.incidents.notifications = state.notifications;
     renderNotifications();
+  };
+
+  const removeNotification = (notificationId) => {
+    const normalizedId = String(notificationId || '').trim();
+    if (!normalizedId) {
+    }
+    if (state.notificationLeavingIds.has(normalizedId)) {
+    }
+    const exists = state.notifications.some((entry) => String(entry.id) === normalizedId);
+    if (!exists) {
+      return;
+    }
+    clearNotificationTimer(normalizedId);
+    state.notificationLeavingIds.add(normalizedId);
+    renderNotifications();
+    window.setTimeout(() => {
+      removeNotificationImmediately(normalizedId);
+    }, 220);
+  };
+
+  const removeNotificationsByTarget = (targetType, matcher) => {
+    state.notifications
+      .filter((entry) => entry && entry.target && entry.target.type === targetType && matcher(entry.target))
+      .forEach((entry) => {
+        clearNotificationTimer(entry.id);
+        state.notificationLeavingIds.delete(String(entry.id));
+      });
+    state.notifications = state.notifications.filter(
+      (entry) => !(entry && entry.target && entry.target.type === targetType && matcher(entry.target))
+    );
+    state.incidents.notifications = state.notifications;
+    renderNotifications();
+  };
+
+  const scheduleNotificationRemoval = (notificationId, durationMs = TRANSIENT_NOTIFICATION_MS) => {
+    const normalizedId = String(notificationId || '').trim();
+    if (!normalizedId) {
+      return;
+    }
+    clearNotificationTimer(normalizedId);
+    const timer = window.setTimeout(() => {
+      removeNotification(normalizedId);
+    }, durationMs);
+    state.notificationTimers.set(normalizedId, timer);
+  };
+
+  const pushNotificationEntry = (entry, options = {}) => {
+    const normalized = entry && typeof entry === 'object' ? entry : null;
+    if (!normalized) {
+      return;
+    }
+    const notificationId = normalized.id || nextNotificationId(normalized.kind || 'notif');
+    const payload = {
+      ...normalized,
+      id: notificationId,
+    };
+    const nextNotifications = [
+      payload,
+      ...state.notifications,
+    ];
+    const droppedNotifications = nextNotifications.slice(SOS_NOTIFICATION_LIMIT);
+    droppedNotifications.forEach((item) => {
+      clearNotificationTimer(item.id);
+      state.notificationLeavingIds.delete(String(item.id));
+    });
+    state.notifications = nextNotifications.slice(0, SOS_NOTIFICATION_LIMIT);
+    state.incidents.notifications = state.notifications;
+    renderNotifications();
+    if (options.autoDismiss !== false) {
+      scheduleNotificationRemoval(notificationId, options.durationMs);
+    }
   };
 
   const pushNotification = (alert, title) => {
     const branchName = String(alert && alert.branch_name ? alert.branch_name : '-').trim() || '-';
     const fullName = getAlertName(alert);
-    state.notifications = [
-      {
-        sosId: alert.sos_id,
-        title: title || `SOS dilaporkan oleh ${fullName} di ruas tol ${branchName}`,
-        subtitle: `Waktu lapor ${toDateTime(alert.created_at)}`,
-      },
-      ...state.notifications.filter((entry) => entry.sosId !== alert.sos_id),
-    ].slice(0, SOS_NOTIFICATION_LIMIT);
-    renderNotifications();
+    pushNotificationEntry({
+      kind: 'sos',
+      title: title || `SOS dilaporkan oleh ${fullName} di ruas tol ${branchName}`,
+      subtitle: `Waktu lapor ${toDateTime(alert.created_at)}`,
+      target: { type: 'sos', sosId: alert.sos_id },
+    });
+  };
+
+  const pushGateStatusNotification = (gate) => {
+    if (!gate || !gate.gate_id) {
+      return;
+    }
+    pushNotificationEntry({
+      kind: 'gate',
+      title: `${String(gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`)} ${String(gate.status || 'normal').toUpperCase()}`,
+      subtitle: getGateLogSummaryText(gate),
+      target: { type: 'gate', gateId: gate.gate_id },
+    });
+  };
+
+  const pushAssetStatusNotification = (asset) => {
+    if (!asset || !asset.asset_type || !asset.id) {
+      return;
+    }
+    pushNotificationEntry({
+      kind: 'asset',
+      title: `${String(asset.title || asset.asset_name || 'Asset')} ${String(asset.status || '').toUpperCase()}`,
+      subtitle: `${String(asset.asset_type || '-').toUpperCase()} ${toDateTime(asset.last_update_at || '-')}`,
+      target: { type: 'asset', assetType: asset.asset_type, assetId: asset.id },
+    });
   };
 
   const renderSummary = () => {
-    setText(sosOpenCountBadgeEl, `${getVisibleAlerts().length} aktif`);
+    const gateAlertCount = Array.from(state.gateAlerts.items.values()).filter(
+      (gate) => gate && gate.showInSummary !== false && (gate.status === 'error' || gate.status === 'warning')
+    ).length;
+    const totalItems =
+      getVisibleAlerts().length +
+      gateAlertCount +
+      Array.from(state.standaloneAssets.items.values()).filter(
+        (item) =>
+          item &&
+          item.showInSummary !== false &&
+          item.status === 'offline' &&
+          isStandaloneAssetTypeVisible(item)
+      ).length;
+    setText(sosOpenCountBadgeEl, `${totalItems} item`);
+  };
+
+  const renderBranchOptions = () => {
+    if (!sosBranchSelectEl) {
+      return;
+    }
+    const branches = Array.isArray(state.mapContext.availableBranches) ? state.mapContext.availableBranches : [];
+    const selectedBranch = getSelectedBranch();
+    const selectedId = selectedBranch && selectedBranch.id ? String(selectedBranch.id) : '';
+    sosBranchSelectEl.innerHTML = [
+      '<option value="">Pilih branch</option>',
+      `<option value="${ALL_BRANCHES_OPTION}" ${selectedId === ALL_BRANCHES_OPTION ? 'selected' : ''}>Semua Branch</option>`,
+      ...branches.map(
+        (branch) =>
+          `<option value="${escapeHtml(branch.id)}" ${
+            String(branch.id) === selectedId ? 'selected' : ''
+          }>${escapeHtml(branch.branch_name || branch.branch_code || branch.id)}</option>`
+      ),
+    ].join('');
+  };
+
+  const renderAssetToolbar = () => {
+    if (!state.isActive) {
+      return;
+    }
+    const selectedBranch = getSelectedBranch();
+    const branchLabel = isAllBranchesSelected()
+      ? 'Semua Branch'
+      : selectedBranch
+        ? selectedBranch.branch_name || selectedBranch.branch_code || selectedBranch.id
+        : 'Tanpa branch';
+    if (assetMapSubtitleEl) {
+      setText(assetMapSubtitleEl, `Branch aktif: ${branchLabel}`);
+    }
+  };
+
+  const replayDetailPanelAnimation = () => {
+    if (!sosDetailPanelEl) {
+      return;
+    }
+    sosDetailPanelEl.classList.remove('is-revealing');
+    void sosDetailPanelEl.offsetWidth;
+    sosDetailPanelEl.classList.add('is-revealing');
   };
 
   const renderIncidentList = () => {
     const alerts = getVisibleAlerts();
-    if (!alerts.length) {
+    const gateAlerts = Array.from(state.gateAlerts.items.values())
+      .filter((gate) => gate && gate.showInSummary !== false && (gate.status === 'error' || gate.status === 'warning'))
+      .sort((a, b) => String(a.gate_name || a.gate_code || '').localeCompare(String(b.gate_name || b.gate_code || '')));
+    const offlineAssets = Array.from(state.standaloneAssets.items.values())
+      .filter(
+        (item) =>
+          item &&
+          item.showInSummary !== false &&
+          item.status === 'offline' &&
+          isStandaloneAssetTypeVisible(item)
+      )
+      .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+
+    if (!alerts.length && !gateAlerts.length && !offlineAssets.length) {
       sosIncidentListEl.innerHTML =
-        '<div class="sos-incident-item sos-incident-item--empty">Belum ada kejadian SOS aktif.</div>';
+        '<div class="sos-incident-item sos-incident-item--empty">Belum ada ringkasan monitoring untuk branch ini.</div>';
       return;
     }
-    sosIncidentListEl.innerHTML = alerts
+    const sosMarkup = alerts
       .map((alert) => {
         const statusMeta = getStatusMeta(alert.status);
         const rawPhoneNumber = alert.user && alert.user.phone ? String(alert.user.phone) : '';
         const displayPhoneNumber = getDisplayPhoneNumber(rawPhoneNumber);
         const whatsAppLink = getWhatsAppLink(rawPhoneNumber);
         return `
-          <article class="sos-incident-item ${alert.sos_id === state.selectedSosId ? 'is-selected' : ''}" data-sos-id="${alert.sos_id}" tabindex="0" role="button" aria-label="Pilih kejadian SOS ${alert.sos_id}">
+          <article class="sos-incident-item ${alert.sos_id === state.selectedSosId ? 'is-selected' : ''}" data-entity-type="sos" data-sos-id="${alert.sos_id}" tabindex="0" role="button" aria-label="Pilih kejadian SOS ${alert.sos_id}">
             <div class="sos-incident-item__head">
               <strong>${escapeHtml(alert.ticket && alert.ticket.ticket_no ? alert.ticket.ticket_no : `SOS-${alert.sos_id}`)}</strong>
               <span class="status-pill ${statusMeta.tone}">${statusMeta.label}</span>
@@ -773,9 +1293,75 @@
         `;
       })
       .join('');
+    const gateMarkup = gateAlerts
+      .map((gate) => {
+        const tone = getGateMarkerTone(gate);
+        return `
+          <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'gate' && String(state.ui.selectedEntityId) === String(gate.gate_id) ? 'is-selected' : ''}" data-entity-type="gate" data-gate-id="${gate.gate_id}" tabindex="0" role="button" aria-label="Pilih gate alert ${escapeHtml(gate.gate_name || gate.gate_code || gate.gate_id)}">
+            <div class="sos-incident-item__head">
+              <strong>${escapeHtml(gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`)}</strong>
+              <span class="status-pill ${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'success'}">${escapeHtml(String(gate.status || 'normal').toUpperCase())}</span>
+            </div>
+            <div class="sos-incident-item__meta">
+              <div>
+                <span class="sos-incident-item__label">Issue</span>
+                <div class="sos-incident-item__value">${escapeHtml(getGateLogSummaryText(gate, 'Perangkat bermasalah'))}</div>
+              </div>
+              <div class="sos-incident-item__row">
+                <div>
+                  <span class="sos-incident-item__label">Affected</span>
+                  <div class="sos-incident-item__phone">${escapeHtml(`${(gate.device_summary && gate.device_summary.error) || 0} error / ${(gate.device_summary && gate.device_summary.warning) || 0} warning`)}</div>
+                </div>
+                <div>
+                  <span class="sos-incident-item__label">Update</span>
+                  <div class="sos-incident-item__phone">${escapeHtml(toDateTime(gate.last_event_at || '-'))}</div>
+                </div>
+              </div>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+    const assetMarkup = offlineAssets
+      .map((asset) => {
+        const assetKey = makeAssetKey(asset.asset_type, asset.id);
+        return `
+          <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'asset' && String(state.ui.selectedEntityId) === assetKey ? 'is-selected' : ''}" data-entity-type="asset" data-asset-type="${escapeHtml(asset.asset_type)}" data-asset-id="${escapeHtml(asset.id)}" tabindex="0" role="button" aria-label="Pilih asset ${escapeHtml(asset.title)}">
+            <div class="sos-incident-item__head">
+              <strong>${escapeHtml(asset.title)}</strong>
+              <span class="status-pill danger">${escapeHtml(String(asset.status || 'offline').toUpperCase())}</span>
+            </div>
+            <div class="sos-incident-item__meta">
+              <div class="sos-incident-item__row">
+                <span class="sos-incident-item__branch">${escapeHtml((asset.asset_type || '-').toUpperCase())}</span>
+                <span>${escapeHtml(toDateTime(asset.last_update_at || '-'))}</span>
+              </div>
+              <div>
+                <span class="sos-incident-item__label">Stream</span>
+                <div class="sos-incident-item__value">${escapeHtml(asset.has_live_stream ? 'Tersedia' : 'Tidak tersedia')}</div>
+              </div>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+
+    sosIncidentListEl.innerHTML = `
+      ${sosMarkup ? `<section class="sos-incident-group"><div class="sos-incident-group__title">SOS</div>${sosMarkup}</section>` : ''}
+      ${gateMarkup ? `<section class="sos-incident-group"><div class="sos-incident-group__title">Gate Alert Summary</div>${gateMarkup}</section>` : ''}
+      ${assetMarkup ? `<section class="sos-incident-group"><div class="sos-incident-group__title">Asset Offline Summary</div>${assetMarkup}</section>` : ''}
+    `;
   };
 
   const renderDetailPanel = () => {
+    if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
+      const gateDetail = state.gateAlerts.details.get(String(state.gateAlerts.selectedGateId));
+      if (gateDetail) {
+        sosDispatchBtn.disabled = true;
+        sosCompleteBtn.disabled = true;
+        return;
+      }
+    }
     const alert = getSelectedAlert();
     if (!alert) {
       state.detailRenderKey = '';
@@ -804,6 +1390,7 @@
     setText(sosDetailTitleEl, alert.ticket && alert.ticket.ticket_no ? alert.ticket.ticket_no : `SOS-${alert.sos_id}`);
     setClass(sosDetailStatusEl, `status-pill ${statusMeta.tone}`);
     setText(sosDetailStatusEl, statusMeta.label);
+    sosDetailMetaEl.classList.remove('hidden');
     const sexCode = String(alert.user && alert.user.sex ? alert.user.sex : '')
       .toUpperCase()
       .trim();
@@ -818,7 +1405,6 @@
         <div class="sos-detail-hero__name">${escapeHtml(getAlertName(alert))}</div>
         <div class="sos-detail-hero__support">
           <span class="meta-pill">${escapeHtml(sexLabel)}</span>
-          <span class="meta-pill">${escapeHtml(alert.branch_name || '-')}</span>
           <span class="meta-pill">Waktu Lapor : ${escapeHtml(toDateTime(alert.created_at))}</span>
         </div>
       </div>
@@ -835,14 +1421,31 @@
     sosCompleteBtn.disabled = !(alert.ticket && alert.ticket.ticket_no && Number(alert.status) === 1);
     sosDetailPanelEl.classList.remove('hidden');
     sosDetailPanelEl.classList.add('is-visible');
+    replayDetailPanelAnimation();
   };
 
   const updateMapEmptyState = (message) => {
-    const hasCctvMarkers = Array.isArray(state.cctvMarkers) && state.cctvMarkers.length > 0;
-    const shouldHide = Boolean(state.map) && (getVisibleAlerts().length > 0 || hasCctvMarkers);
-    sosMapEmptyEl.classList.toggle('hidden', shouldHide);
-    if (message) {
-      setText(sosMapEmptyEl, message);
+    if (typeof message === 'string' && message.trim()) {
+      state.ui.mapEmptyMessage = message;
+    }
+    if (sosMapLoadingEl) {
+      sosMapLoadingEl.classList.toggle('sidebar-section-hidden', !state.ui.mapLoading);
+    }
+    if (!sosMapEmptyEl) {
+      return;
+    }
+    if (state.ui.mapLoading) {
+      sosMapEmptyEl.classList.add('hidden');
+      return;
+    }
+    const shouldShowEmpty = !hasRenderableMapData();
+    sosMapEmptyEl.classList.toggle('hidden', !shouldShowEmpty);
+    if (shouldShowEmpty) {
+      setText(
+        sosMapEmptyEl,
+        state.ui.mapEmptyMessage ||
+          'Belum ada marker gate alert, asset offline, atau SOS aktif untuk ditampilkan.'
+      );
     }
   };
 
@@ -856,12 +1459,25 @@
         if (!state.map) {
           return;
         }
-        state.map.setZoom(Math.max(Number(state.map.getZoom()) || 12, 16));
+        state.map.setZoom(Math.max(Number(state.map.getZoom()) || 12, MAP_ZOOM_SOS));
       }, 180);
     }
   };
 
+  const focusEntityOnMap = (latLng, targetZoom) => {
+    if (!state.map || !latLng) {
+      return;
+    }
+    animateMapZoom(state.map, Math.max(Number(targetZoom) || MAP_ZOOM_BRANCH, Number(state.map.getZoom()) || 0), latLng);
+    if (Number(state.map.getZoom() || 0) >= Number(targetZoom || MAP_ZOOM_BRANCH)) {
+      state.map.panTo(latLng);
+    }
+  };
+
   const getContextBranch = () => {
+    if (state.mapContext.selectedBranch && state.mapContext.selectedBranch.id) {
+      return state.mapContext.selectedBranch;
+    }
     const selectedAlert = getSelectedAlert();
     if (selectedAlert && selectedAlert.branch_id) {
       return {
@@ -970,11 +1586,30 @@
     });
   };
 
-  const openCctvModal = (camera) => {
+  const openCctvModal = async (camera) => {
     if (!camera) {
       return;
     }
-    state.cctvSelectedCameraId = String(camera.id || '');
+    const assetType = String(camera.asset_type || 'cctv').toLowerCase();
+    let detail = camera;
+    try {
+      const response = await window.cameraService.getMapAssetDetail(assetType, camera.id);
+      if (response && response.status < 400) {
+        detail = {
+          ...camera,
+          ...(unwrapSingle(response) || {}),
+        };
+      }
+    } catch (_) {
+      detail = camera;
+    }
+    if (detail.latLng || camera.latLng) {
+      focusEntityOnMap(detail.latLng || camera.latLng, MAP_ZOOM_ASSET);
+    }
+    state.standaloneAssets.selectedAssetKey = makeAssetKey(assetType, detail.id || camera.id);
+    state.ui.selectedEntityType = 'asset';
+    state.ui.selectedEntityId = state.standaloneAssets.selectedAssetKey;
+    state.cctvSelectedCameraId = String(detail.id || camera.id || '');
     state.cctvMarkers.forEach((entry) => {
       if (!entry || !entry.marker || !entry.camera) {
         return;
@@ -990,10 +1625,46 @@
         String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId) ? 1000 : undefined
       );
     });
-    setText(sosCctvModalTitleEl, camera.cctv_name || `Camera ${camera.id || '-'}`);
-    sosCctvModalMetaEl.innerHTML = '';
-    sosCctvModalMetaEl.classList.add('hidden');
-    attachSosCctvModalStream(camera);
+    setText(
+      sosCctvModalTitleEl,
+      detail.asset_name || detail.cctv_name || detail.asset_code || `Asset ${detail.id || '-'}`
+    );
+    const metadataEntries = Object.entries(detail.metadata || {}).filter(
+      ([, value]) => value !== null && value !== undefined && String(value).trim() !== ''
+    );
+    const activeAlarms = toArray(detail.active_alarms);
+    if (assetType === 'cctv' && detail.stream_play_url) {
+      sosCctvModalMetaEl.innerHTML = '';
+      sosCctvModalMetaEl.classList.add('hidden');
+      attachSosCctvModalStream(detail);
+    } else {
+      destroySosCctvModalStream();
+      sosCctvModalVideoEl.classList.add('hidden');
+      sosCctvModalStreamEmptyEl.classList.remove('hidden');
+      sosCctvModalStreamEmptyEl.textContent =
+        assetType === 'vms' ? 'VMS tidak memiliki live player pada tahap ini.' : 'Detail stream tidak tersedia.';
+      sosCctvModalMetaEl.innerHTML = [
+        `<div class="sos-cctv-modal-card"><span>Tipe Asset</span><strong>${escapeHtml(
+          assetType.toUpperCase()
+        )}</strong></div>`,
+        `<div class="sos-cctv-modal-card"><span>Status</span><strong>${escapeHtml(
+          String(detail.status || 'normal').toUpperCase()
+        )}</strong></div>`,
+        ...metadataEntries.map(
+          ([key, value]) =>
+            `<div class="sos-cctv-modal-card"><span>${escapeHtml(
+              key.replace(/_/g, ' ')
+            )}</span><strong>${escapeHtml(value)}</strong></div>`
+        ),
+        ...activeAlarms.map(
+          (alarm) =>
+            `<div class="sos-cctv-modal-card"><span>${escapeHtml(
+              alarm.alarm_name || alarm.alarm_code || 'Alarm'
+            )}</span><strong>${escapeHtml(alarm.opened_at || '-')}</strong></div>`
+        ),
+      ].join('');
+      sosCctvModalMetaEl.classList.remove('hidden');
+    }
     showModal(sosCctvModalEl);
   };
 
@@ -1087,7 +1758,10 @@
     return true;
   };
 
-  const clearCctvMarkers = () => {
+  const clearCctvMarkers = (options = {}) => {
+    if (options.invalidate !== false) {
+      state.cctvMarkerLoadSeq += 1;
+    }
     closeCctvModal();
     collapseCctvSpiderfy();
     state.cctvSelectedCameraId = null;
@@ -1098,7 +1772,7 @@
     });
     state.cctvClusterRenderMarkers = [];
     if (state.cctvCluster && typeof state.cctvCluster.clearMarkers === 'function') {
-      state.cctvCluster.clearMarkers();
+      state.cctvCluster.clearMarkers(true);
     }
     if (state.cctvCluster && typeof state.cctvCluster.setMap === 'function') {
       state.cctvCluster.setMap(null);
@@ -1112,52 +1786,237 @@
     state.cctvMarkers = [];
   };
 
-  const updateDefaultCctvMarkers = async () => {
-    const branch = getContextBranch();
+  const clearGateMarkers = () => {
+    state.gateAlerts.markers.forEach((marker) => {
+      if (marker && typeof marker.setMap === 'function') {
+        marker.setMap(null);
+      }
+    });
+    state.gateAlerts.markers.clear();
+  };
+
+  const syncGateAlertMarkers = () => {
     if (!state.map) {
       return;
     }
-    if (!state.cctvVisible) {
-      clearCctvMarkers();
-      updateMapEmptyState(getVisibleAlerts().length ? '' : 'Cluster CCTV sedang disembunyikan.');
+    if (!state.gateAlerts.visible) {
+      clearGateMarkers();
+      return;
+    }
+    const MarkerCtor = getGateMarkerClass();
+    const activeIds = new Set();
+    Array.from(state.gateAlerts.items.values()).forEach((gate) => {
+      if (!gate || !gate.latLng) {
+        return;
+      }
+      activeIds.add(String(gate.gate_id));
+      const existing = state.gateAlerts.markers.get(String(gate.gate_id));
+      if (existing) {
+        existing.update(gate);
+        return;
+      }
+      const marker = new MarkerCtor({
+        map: state.map,
+        gate,
+        onSelect: (gateId) => void openGateAlertDetail(gateId),
+      });
+      state.gateAlerts.markers.set(String(gate.gate_id), marker);
+    });
+    Array.from(state.gateAlerts.markers.entries()).forEach(([gateId, marker]) => {
+      if (activeIds.has(gateId)) {
+        return;
+      }
+      marker.setMap(null);
+      state.gateAlerts.markers.delete(gateId);
+    });
+  };
+
+  const loadMapBranches = async () => {
+    const response = await window.cameraService.getMapBranches();
+    if (!response || response.status >= 400) {
+      throw new Error((response && response.message) || 'Gagal memuat branch peta.');
+    }
+    const rows = unwrapCollection(response);
+    state.mapContext.availableBranches = rows.map(normalizeMapBranch).filter(Boolean);
+    const preferredBranchId = String(
+      (state.mapContext.selectedBranch && state.mapContext.selectedBranch.id) ||
+        (state.activeWorkspaceBranch && state.activeWorkspaceBranch.id) ||
+        ''
+    );
+    state.mapContext.selectedBranch =
+      (preferredBranchId === ALL_BRANCHES_OPTION
+        ? { id: ALL_BRANCHES_OPTION, branch_name: 'Semua Branch', branch_code: 'ALL' }
+        : null) ||
+      state.mapContext.availableBranches.find((branch) => String(branch.id) === preferredBranchId) ||
+      state.mapContext.availableBranches[0] ||
+      state.activeWorkspaceBranch ||
+      null;
+    renderBranchOptions();
+  };
+
+  const loadGateAlerts = async () => {
+    const branch = getSelectedBranch();
+    state.gateAlerts.items.clear();
+    clearGateMarkers();
+    if (!(branch && branch.id)) {
+      state.gateAlerts.selectedGateId = null;
+      return;
+    }
+    const response = await window.cameraService.getGateAlerts({
+      status: 'error,warning',
+      include: 'affected_devices',
+      ...(isAllBranchesSelected() ? {} : { branch_id: branch.id }),
+    });
+    if (!response || response.status >= 400) {
+      throw new Error((response && response.message) || 'Gagal memuat gate alerts.');
+    }
+    unwrapCollection(response).forEach((item) => {
+      const normalized = normalizeGateAlert(item);
+      if (normalized) {
+        state.gateAlerts.items.set(String(normalized.gate_id), { ...normalized, showInSummary: true });
+      }
+    });
+    if (
+      state.gateAlerts.selectedGateId &&
+      !state.gateAlerts.items.has(String(state.gateAlerts.selectedGateId))
+    ) {
+      state.gateAlerts.selectedGateId = null;
+      if (state.ui.selectedEntityType === 'gate') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+      }
+    }
+    syncGateAlertMarkers();
+  };
+
+  const openGateAlertDetail = async (gateId) => {
+    const response = await window.cameraService.getGateAlertDetail(gateId);
+    if (!response || response.status >= 400) {
+      throw new Error((response && response.message) || 'Gagal memuat detail gate alert.');
+    }
+    const detail = normalizeGateAlert(unwrapSingle(response));
+    if (!detail) {
+      return;
+    }
+    const rawDetail = unwrapSingle(response);
+    detail.devices = toArray((rawDetail && rawDetail.devices) || []);
+    detail.affected_devices = toArray((rawDetail && rawDetail.affected_devices) || detail.affected_devices);
+    state.gateAlerts.details.set(String(detail.gate_id), detail);
+    state.gateAlerts.selectedGateId = String(detail.gate_id);
+    state.ui.selectedEntityType = 'gate';
+    state.ui.selectedEntityId = String(detail.gate_id);
+    state.selectedSosId = null;
+    Array.from(state.gateAlerts.markers.values()).forEach((marker) => {
+      if (marker && typeof marker.update === 'function') {
+        marker.update(marker.gate);
+      }
+    });
+    sosDispatchBtn.disabled = true;
+    sosCompleteBtn.disabled = true;
+    setText(sosDetailTitleEl, detail.gate_name || detail.gate_code || `Gate ${detail.gate_id}`);
+    setClass(sosDetailStatusEl, `status-pill ${getGateMarkerTone(detail) === 'danger' ? 'danger' : getGateMarkerTone(detail) === 'warning' ? 'warning' : 'success'}`);
+    setText(sosDetailStatusEl, String(detail.status || 'normal').toUpperCase());
+    sosDetailMetaEl.innerHTML = '';
+    sosDetailMetaEl.classList.add('hidden');
+    const deviceSummary = detail.device_summary || {};
+    const summaryLine = [
+      `${Number(deviceSummary.total || 0)} total`,
+      `${Number(deviceSummary.error || 0)} error`,
+      `${Number(deviceSummary.warning || 0)} warning`,
+      `${Number(deviceSummary.offline || 0)} offline`,
+    ].join(' | ');
+    const affectedDevices = (detail.affected_devices.length ? detail.affected_devices : detail.devices)
+      .filter((device) => isGateIssueStatus(device && device.status))
+      .map((device) => device.device_name || device.device_type || '-')
+      .filter(Boolean)
+      .join(', ');
+    sosDetailBodyEl.innerHTML = `
+      <div class="sos-detail-body__grid">
+        <div><span class="sos-detail-label">Koordinat</span><strong>${escapeHtml(detail.lat || '-')} / ${escapeHtml(detail.lng || '-')}</strong></div>
+        <div><span class="sos-detail-label">Ringkasan Device</span><strong>${escapeHtml(summaryLine)}</strong></div>
+        <div><span class="sos-detail-label">Status Device</span><strong>${escapeHtml(String(detail.status || 'normal').toUpperCase())}</strong></div>
+        <div><span class="sos-detail-label">Device Terdampak</span><strong>${escapeHtml(affectedDevices || '-')}</strong></div>
+      </div>
+      <div class="sos-gate-log-list">
+        <span class="sos-detail-label">Log Device</span>
+        ${renderGateLogList(detail)}
+      </div>
+    `;
+    sosDetailPanelEl.classList.remove('hidden');
+    sosDetailPanelEl.classList.add('is-visible');
+    replayDetailPanelAnimation();
+    focusEntityOnMap(detail.latLng, MAP_ZOOM_GATE);
+  };
+
+  const updateDefaultCctvMarkers = async () => {
+    const loadSeq = (state.cctvMarkerLoadSeq += 1);
+    const isCurrentCctvLoad = () =>
+      loadSeq === state.cctvMarkerLoadSeq && (state.cctvVisible || state.vmsVisible);
+    const branch = getSelectedBranch();
+    const branchKey = isAllBranchesSelected() ? ALL_BRANCHES_OPTION : String((branch && branch.id) || '');
+    const layerKey = getStandaloneLayerKey(branchKey);
+    if (!state.map) {
+      return;
+    }
+    if (!state.cctvVisible && !state.vmsVisible) {
+      clearCctvMarkers({ invalidate: false });
+      state.cctvMapLayerKey = '';
+      updateMapEmptyState(getVisibleAlerts().length ? '' : 'Marker CCTV dan VMS sedang disembunyikan.');
       return;
     }
     if (!branch || !branch.id) {
-      clearCctvMarkers();
+      clearCctvMarkers({ invalidate: false });
       state.cctvMapBranchId = null;
       state.cctvMapBranchLabel = '';
       updateMapEmptyState('Pilih ruas aktif operator untuk menampilkan cluster CCTV.');
       return;
     }
-    if (String(state.cctvMapBranchId) === String(branch.id) && state.cctvMarkers.length) {
+    if (String(state.cctvMapBranchId) === branchKey && state.cctvMapLayerKey === layerKey && state.cctvMarkers.length) {
       updateMapEmptyState('');
       return;
     }
-    clearCctvMarkers();
-    state.cctvMapBranchId = String(branch.id);
-    state.cctvMapBranchLabel = branch.branch_name || branch.branch_code || '';
+    clearCctvMarkers({ invalidate: false });
+    state.cctvMapBranchId = branchKey;
+    state.cctvMapLayerKey = layerKey;
+    state.cctvMapBranchLabel = isAllBranchesSelected() ? 'Semua Branch' : branch.branch_name || branch.branch_code || '';
     try {
       state.cctvClusterRenderMarkers = [];
-      let cameras = state.cctvCacheByBranch.get(String(branch.id));
+      let cameras = state.cctvCacheByBranch.get(branchKey);
       if (!cameras) {
-        const response = await window.cameraService.getCameras({ branch_id: branch.id, limit: 500 });
+        const response = await window.cameraService.getMapAssets({
+          type: 'cctv,vms',
+          ...(isAllBranchesSelected() ? {} : { branch_id: branch.id }),
+        });
         if (!response || response.status >= 400) {
-          throw new Error((response && response.message) || 'Gagal memuat CCTV branch.');
+          throw new Error((response && response.message) || 'Gagal memuat asset branch.');
         }
-        cameras = (Array.isArray(response.data) ? response.data : [])
+        cameras = unwrapCollection(response)
+          .map(normalizeStandaloneAsset)
+          .filter((camera) => camera && camera.latLng)
           .map((camera) => ({
             ...camera,
-            position: getCameraCoordinates(camera),
-          }))
-          .filter((camera) => camera.position);
-        state.cctvCacheByBranch.set(String(branch.id), cameras);
+            position: camera.latLng,
+            showInSummary: true,
+          }));
+        state.cctvCacheByBranch.set(branchKey, cameras);
+        state.standaloneAssets.items.clear();
+        cameras.forEach((camera) => {
+          state.standaloneAssets.items.set(makeAssetKey(camera.asset_type, camera.id), camera);
+        });
       }
-      const markerClustererLib = await loadMarkerClustererLibrary();
-      state.cctvMarkers = cameras.map((camera) => {
+      state.standaloneAssets.items.clear();
+      cameras.forEach((camera) => {
+        state.standaloneAssets.items.set(makeAssetKey(camera.asset_type, camera.id), camera);
+      });
+      if (!isCurrentCctvLoad()) {
+        return;
+      }
+      const visibleCameras = cameras.filter(isStandaloneAssetTypeVisible);
+      state.cctvMarkers = visibleCameras.map((camera) => {
         const marker = new window.google.maps.Marker({
-            map: state.map,
+            map: null,
             position: camera.position,
-            title: camera.cctv_name || 'CCTV',
+            title: camera.title || camera.cctv_name || 'Asset',
             icon: {
               url: getCctvMarkerIconUrl(camera),
               scaledSize: new window.google.maps.Size(
@@ -1169,7 +2028,7 @@
           });
         marker.addListener('click', () => {
           state.cctvSuppressMapClickUntil = Date.now() + 250;
-          openCctvModal(camera);
+          void openCctvModal(camera);
         });
         return {
           marker,
@@ -1177,6 +2036,18 @@
           originalPosition: camera.position,
         };
       });
+      let markerClustererLib = null;
+      try {
+        markerClustererLib = await loadMarkerClustererLibrary();
+      } catch (clusterError) {
+        debugLog('updateDefaultCctvMarkers:cluster-library-error', {
+          message:
+            clusterError && clusterError.message ? clusterError.message : String(clusterError),
+        });
+      }
+      if (!isCurrentCctvLoad()) {
+        return;
+      }
       const MarkerClustererCtor = markerClustererLib && markerClustererLib.MarkerClusterer;
       const SuperClusterAlgorithmCtor =
         markerClustererLib && markerClustererLib.SuperClusterAlgorithm;
@@ -1196,13 +2067,19 @@
                 onlineCount: 0,
                 offlineCount: 0,
               };
+              let warningCount = 0;
               (Array.isArray(clusterMarkers) ? clusterMarkers : []).forEach((clusterMarker) => {
                 const entry = state.cctvMarkers.find((item) => item && item.marker === clusterMarker);
                 if (!entry || !entry.camera) {
                   return;
                 }
-                if (getCameraOperationalState(entry.camera) === 'online') {
+                const operationalState = getCameraOperationalState(entry.camera);
+                if (operationalState === 'online') {
                   summary.onlineCount += 1;
+                  return;
+                }
+                if (operationalState === 'warning') {
+                  warningCount += 1;
                   return;
                 }
                 summary.offlineCount += 1;
@@ -1211,7 +2088,11 @@
               const marker = new window.google.maps.Marker({
                 position,
                 icon: {
-                  url: buildSosClusterSvgDataUrl(count, summary.onlineCount, summary.offlineCount),
+                  url: buildSosClusterSvgDataUrl(
+                    count,
+                    summary.onlineCount,
+                    summary.offlineCount + warningCount
+                  ),
                   scaledSize: new window.google.maps.Size(size, size),
                 },
                 label: {
@@ -1240,7 +2121,7 @@
             if (entries.length <= 1) {
               const singleCamera = entries[0] && entries[0].camera;
               if (singleCamera) {
-                openCctvModal(singleCamera);
+                void openCctvModal(singleCamera);
               }
               return;
             }
@@ -1266,10 +2147,16 @@
             spiderfyCctvMarkerGroup(entries[0], entries, clusterCenter);
           },
         });
+      } else {
+        state.cctvMarkers.forEach((entry) => {
+          if (entry && entry.marker && typeof entry.marker.setMap === 'function') {
+            entry.marker.setMap(state.map);
+          }
+        });
       }
-      if (!getVisibleAlerts().length && cameras.length) {
+      if (!getVisibleAlerts().length && visibleCameras.length) {
         const bounds = new google.maps.LatLngBounds();
-        cameras.forEach((camera) => bounds.extend(camera.position));
+        visibleCameras.forEach((camera) => bounds.extend(camera.position));
         state.map.fitBounds(bounds, 56);
       }
       updateMapEmptyState('');
@@ -1297,6 +2184,39 @@
     const bounds = new google.maps.LatLngBounds();
     alerts.forEach((alert) => bounds.extend(alert.latLng));
     state.map.fitBounds(bounds, 80);
+  };
+
+  const focusSelectedBranchOnMap = () => {
+    if (!state.map) {
+      return;
+    }
+    const branch = getSelectedBranch();
+    if (isAllBranchesSelected()) {
+      const bounds = new window.google.maps.LatLngBounds();
+      let hasBounds = false;
+      (Array.isArray(state.mapContext.availableBranches) ? state.mapContext.availableBranches : []).forEach((entry) => {
+        const lat = Number(entry.center_lat);
+        const lng = Number(entry.center_lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          bounds.extend({ lat, lng });
+          hasBounds = true;
+        }
+      });
+      if (hasBounds) {
+        state.map.fitBounds(bounds, 80);
+      }
+      return;
+    }
+    if (
+      branch &&
+      Number.isFinite(Number(branch.center_lat)) &&
+      Number.isFinite(Number(branch.center_lng))
+    ) {
+      state.map.panTo({ lat: Number(branch.center_lat), lng: Number(branch.center_lng) });
+      if (Number(state.map.getZoom() || 0) < MAP_ZOOM_BRANCH) {
+        state.map.setZoom(MAP_ZOOM_BRANCH);
+      }
+    }
   };
 
   const syncMapMarkers = () => {
@@ -1344,9 +2264,12 @@
 
   const renderAll = () => {
     renderSummary();
+    renderBranchOptions();
+    renderAssetToolbar();
     renderIncidentList();
     renderDetailPanel();
     renderNotifications();
+    syncGateAlertMarkers();
     syncMapMarkers();
     void updateDefaultCctvMarkers();
   };
@@ -1382,6 +2305,7 @@
       latLng: normalized.latLng || (previous && previous.latLng) || null,
     });
     state.alerts.set(merged.sos_id, merged);
+    state.incidents.alerts = state.alerts;
     if (!previous && Number(merged.status) !== 2 && state.isInitialSnapshotLoaded) {
       pushNotification(merged, 'Kejadian SOS baru masuk');
     } else if (
@@ -1404,17 +2328,53 @@
   const selectAlert = (sosId, focusOnMap, options = {}) => {
     const shouldRemoveNotification = options.removeNotification !== false;
     state.selectedSosId = Number(sosId);
+    state.incidents.selectedSosId = state.selectedSosId;
+    state.ui.selectedEntityType = 'sos';
+    state.ui.selectedEntityId = String(sosId);
+    state.gateAlerts.selectedGateId = null;
     if (shouldRemoveNotification) {
-      removeNotification(sosId);
+      removeNotificationsByTarget('sos', (target) => String(target.sosId) === String(sosId));
     }
     renderAll();
-    if (focusOnMap) {
+    if (focusOnMap && options.forceFocus !== false) {
       focusAlertOnMap(getSelectedAlert(), true);
     }
   };
 
+  const selectGateAlertOptimistic = (gateId) => {
+    state.selectedSosId = null;
+    state.incidents.selectedSosId = null;
+    state.gateAlerts.selectedGateId = String(gateId);
+    state.ui.selectedEntityType = 'gate';
+    state.ui.selectedEntityId = String(gateId);
+    state.standaloneAssets.selectedAssetKey = null;
+    state.detailRenderKey = '';
+    renderIncidentList();
+    syncGateAlertMarkers();
+  };
+
+  const selectStandaloneAssetOptimistic = (asset) => {
+    if (!asset) {
+      return;
+    }
+    const assetKey = makeAssetKey(asset.asset_type, asset.id);
+    state.selectedSosId = null;
+    state.incidents.selectedSosId = null;
+    state.gateAlerts.selectedGateId = null;
+    state.standaloneAssets.selectedAssetKey = assetKey;
+    state.ui.selectedEntityType = 'asset';
+    state.ui.selectedEntityId = assetKey;
+    state.cctvSelectedCameraId = String(asset.id || '');
+    state.detailRenderKey = '';
+    renderIncidentList();
+  };
+
   const clearSelectedAlert = () => {
     state.selectedSosId = null;
+    state.incidents.selectedSosId = null;
+    state.gateAlerts.selectedGateId = null;
+    state.ui.selectedEntityType = '';
+    state.ui.selectedEntityId = null;
     state.detailRenderKey = '';
     renderAll();
   };
@@ -1433,6 +2393,7 @@
           : [],
     });
     state.ticketsBySosId.clear();
+    state.incidents.ticketsBySosId = state.ticketsBySosId;
     unwrapCollection(response.data).forEach((ticket) => {
       const normalized = normalizeTicket(ticket);
       if (normalized) {
@@ -1477,21 +2438,32 @@
   };
 
   const refreshDashboard = async () => {
+    state.ui.mapEmptyMessage =
+      'Belum ada marker gate alert, asset offline, atau SOS aktif untuk ditampilkan.';
     setMapLoadingVisible(true);
     setIncidentListLoadingVisible(true);
     setConnectionBadge('Loading...', 'warning');
     debugLog('refreshDashboard:start');
     try {
-      await Promise.all([loadSnapshot(), loadOpenTickets()]);
+      await loadMapBranches();
+      const branch = getSelectedBranch();
+      if (
+        state.map &&
+        branch &&
+        Number.isFinite(Number(branch.center_lat)) &&
+        Number.isFinite(Number(branch.center_lng))
+      ) {
+        state.map.setCenter({ lat: Number(branch.center_lat), lng: Number(branch.center_lng) });
+        if (Number(state.map.getZoom() || 0) < 11) {
+          state.map.setZoom(11);
+        }
+      }
+      await Promise.all([loadGateAlerts(), updateDefaultCctvMarkers(), loadSnapshot(), loadOpenTickets()]);
       state.isInitialSnapshotLoaded = true;
       renderAll();
-      const visibleAlerts = getVisibleAlerts();
-      setText(sosRouteTitleEl, 'TRAFFIC MONITORING');
-      if (!state.selectedSosId && visibleAlerts.length) {
-        state.selectedSosId = visibleAlerts[0].sos_id;
-      }
+      setText(sosRouteTitleEl, 'ASSET MONITORING');
       renderAll();
-      fitVisibleAlerts();
+      focusSelectedBranchOnMap();
       setConnectionBadge('Live', 'success');
       debugLog('refreshDashboard:done', {
         alertCount: state.alerts.size,
@@ -1502,6 +2474,119 @@
       setMapLoadingVisible(false);
       setIncidentListLoadingVisible(false);
     }
+  };
+
+  const applyMapSnapshot = (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      return;
+    }
+    const gateAlerts = toArray(payload.gate_alerts)
+      .map(normalizeGateAlert)
+      .filter(
+        (gate) => gate && isEntityInSelectedBranch(gate.branch_id) && (gate.status === 'error' || gate.status === 'warning')
+      );
+    const assets = toArray(payload.assets)
+      .map(normalizeStandaloneAsset)
+      .filter((asset) => asset && isEntityInSelectedBranch(asset.branch_id))
+      .map((asset) => ({ ...asset, showInSummary: true }));
+    const sosAlerts = toArray(payload.sos).filter(Boolean);
+    state.gateAlerts.items.clear();
+    gateAlerts.forEach((gate) => {
+      state.gateAlerts.items.set(String(gate.gate_id), { ...gate, showInSummary: true });
+    });
+    state.cctvCacheByBranch.clear();
+    const branchId = getSelectedBranch() && getSelectedBranch().id ? String(getSelectedBranch().id) : '';
+    state.standaloneAssets.items.clear();
+    assets.forEach((asset) => {
+      state.standaloneAssets.items.set(makeAssetKey(asset.asset_type, asset.id), asset);
+    });
+    if (branchId || isAllBranchesSelected()) {
+      state.cctvCacheByBranch.set(
+        isAllBranchesSelected() ? ALL_BRANCHES_OPTION : branchId,
+        assets
+          .filter((asset) => isAllBranchesSelected() || String(asset.branch_id || '') === branchId)
+          .map((asset) => ({ ...asset, position: asset.latLng }))
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'sos')) {
+      state.alerts.clear();
+      state.incidents.alerts = state.alerts;
+    }
+    if (sosAlerts.length) {
+      sosAlerts.forEach((item) => upsertAlert(item, false));
+    }
+  };
+
+  const applyGateAlertPatch = (payload) => {
+    const normalized = normalizeGateAlert(payload);
+    if (!normalized) {
+      return;
+    }
+    if (!isEntityInSelectedBranch(normalized.branch_id)) {
+      return;
+    }
+    if (normalized.status !== 'error' && normalized.status !== 'warning') {
+      state.gateAlerts.items.delete(String(normalized.gate_id));
+      if (String(state.gateAlerts.selectedGateId || '') === String(normalized.gate_id)) {
+        state.gateAlerts.selectedGateId = null;
+        if (state.ui.selectedEntityType === 'gate') {
+          state.ui.selectedEntityType = '';
+          state.ui.selectedEntityId = null;
+          state.detailRenderKey = '';
+          sosDetailPanelEl.classList.remove('is-visible');
+          sosDetailPanelEl.classList.add('hidden');
+        }
+      }
+      syncGateAlertMarkers();
+      renderAll();
+      pushGateStatusNotification(normalized);
+      return;
+    }
+    state.gateAlerts.items.set(String(normalized.gate_id), { ...normalized, showInSummary: false });
+    syncGateAlertMarkers();
+    pushGateStatusNotification(normalized);
+  };
+
+  const applyStandaloneAssetPatch = (payload) => {
+    const normalized = normalizeStandaloneAsset(payload);
+    if (!normalized) {
+      return;
+    }
+    if (!isEntityInSelectedBranch(normalized.branch_id)) {
+      return;
+    }
+    const assetKey = makeAssetKey(normalized.asset_type, normalized.id);
+    const branchId = isAllBranchesSelected() ? ALL_BRANCHES_OPTION : String(normalized.branch_id || '');
+    const branchCache = Array.isArray(state.cctvCacheByBranch.get(branchId))
+      ? state.cctvCacheByBranch.get(branchId).slice()
+      : [];
+    const cacheIndex = branchCache.findIndex(
+      (item) => makeAssetKey(item.asset_type, item.id) === assetKey
+    );
+    if (normalized.status !== 'offline') {
+      state.standaloneAssets.items.delete(assetKey);
+      if (cacheIndex >= 0) {
+        branchCache.splice(cacheIndex, 1);
+      }
+    } else {
+      const nextAsset = {
+        ...normalized,
+        position: normalized.latLng,
+        showInSummary: false,
+      };
+      state.standaloneAssets.items.set(assetKey, nextAsset);
+      if (cacheIndex >= 0) {
+        branchCache.splice(cacheIndex, 1, nextAsset);
+      } else {
+        branchCache.push(nextAsset);
+      }
+    }
+    if (branchId) {
+      state.cctvCacheByBranch.set(branchId, branchCache);
+    }
+    state.cctvMapBranchId = null;
+    pushAssetStatusNotification(normalized);
+    void updateDefaultCctvMarkers();
   };
 
   const parseSse = (buffer, onMessage) => {
@@ -1537,6 +2622,24 @@
       payloadKeys:
         payload && !Array.isArray(payload) && typeof payload === 'object' ? Object.keys(payload) : [],
     });
+    if (eventName === 'snapshot') {
+      applyMapSnapshot(payload);
+      renderAll();
+      return;
+    }
+    if (eventName === 'connected' || eventName === 'heartbeat') {
+      return;
+    }
+    if (eventName === 'gate_status_changed') {
+      applyGateAlertPatch(payload);
+      renderAll();
+      return;
+    }
+    if (eventName === 'asset_status_changed') {
+      applyStandaloneAssetPatch(payload);
+      renderAll();
+      return;
+    }
     let latestAlert = null;
     unwrapStreamPayload(payload).forEach((item) => {
       const updated = upsertAlert(item, true);
@@ -1546,9 +2649,9 @@
     });
     renderAll();
     if (latestAlert && Number(latestAlert.status) !== 2) {
-      selectAlert(latestAlert.sos_id, true, { removeNotification: false });
+      selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true });
     }
-    if (eventName === 'complete' && latestAlert) {
+    if ((eventName === 'complete' || eventName === 'sos_completed') && latestAlert) {
       pushNotification(latestAlert, 'Kejadian SOS selesai');
     }
   };
@@ -1594,12 +2697,12 @@
       if (apiAuthToken) {
         headers.Authorization = `Bearer ${apiAuthToken}`;
       }
-      const response = await fetch(`${apiBaseUrl}/api/sos-alerts/stream`, {
+      const response = await fetch(`${apiBaseUrl}/api/map-events/stream`, {
         headers,
         signal: state.streamAbortController.signal,
       });
       if (!response.ok || !response.body) {
-        throw new Error(`SSE SOS gagal dengan status ${response.status}`);
+        throw new Error(`SSE asset monitoring gagal dengan status ${response.status}`);
       }
       debugLog('connectStream:connected', {
         status: response.status,
@@ -1639,15 +2742,7 @@
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
-        styles: [
-          { elementType: 'geometry', stylers: [{ color: '#1f4c85' }] },
-          { elementType: 'labels.text.fill', stylers: [{ color: '#e7f6ff' }] },
-          { elementType: 'labels.text.stroke', stylers: [{ color: '#1c3f6e' }] },
-          { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#10396a' }] },
-          { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#27558c' }] },
-          { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-          { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-        ],
+        styles: MAP_THEME_PRESETS[state.mapContext.themePreset],
       });
       state.trafficLayer = new google.maps.TrafficLayer();
       state.trafficLayer.setMap(state.map);
@@ -1669,6 +2764,7 @@
         collapseCctvSpiderfy();
       });
     }
+    applyMapTheme(state.mapContext.themePreset);
     return state.map;
   };
 
@@ -1680,12 +2776,6 @@
     });
     if (pagingControlEl) {
       pagingControlEl.classList.toggle('hidden', state.isActive);
-    }
-    if (state.isActive) {
-      state.previousBranchLabel = currentBranchEl ? currentBranchEl.textContent : state.previousBranchLabel;
-      setText(currentBranchEl, 'Active mode: SOS Monitoring');
-    } else if (state.previousBranchLabel) {
-      setText(currentBranchEl, state.previousBranchLabel);
     }
     sosMonitorBtn.classList.toggle('is-active', state.isActive);
   };
@@ -1723,7 +2813,7 @@
             ? newAlerts.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0]
             : null;
           if (latestAlert) {
-            selectAlert(latestAlert.sos_id, true, { removeNotification: false });
+            selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true });
           }
         })
         .catch(() => {});
@@ -1792,6 +2882,20 @@
         workspaceState && workspaceState.activeBranch && workspaceState.activeBranch.id
           ? workspaceState.activeBranch
           : null;
+      const assetMonitoringPrefs =
+        workspaceState && workspaceState.assetMonitoring && typeof workspaceState.assetMonitoring === 'object'
+          ? workspaceState.assetMonitoring
+          : null;
+      if (assetMonitoringPrefs && assetMonitoringPrefs.mapThemePreset) {
+        state.mapContext.themePreset = String(assetMonitoringPrefs.mapThemePreset);
+      }
+      if (assetMonitoringPrefs && assetMonitoringPrefs.selectedBranchId && !state.mapContext.selectedBranch) {
+        state.mapContext.selectedBranch = {
+          id: String(assetMonitoringPrefs.selectedBranchId),
+          branch_code: '',
+          branch_name: '',
+        };
+      }
       debugLog('loadWorkspaceBranchContext', {
         branchId: state.activeWorkspaceBranch && state.activeWorkspaceBranch.id,
       });
@@ -1800,43 +2904,82 @@
     }
   };
 
-  const enterSosMode = async () => {
+  const persistAssetMonitoringPrefs = async () => {
+    if (!window.appState || typeof window.appState.getWorkspaceState !== 'function' || typeof window.appState.saveWorkspaceState !== 'function') {
+      return;
+    }
+    try {
+      const current = await window.appState.getWorkspaceState();
+      const workspaceState = (current && current.data) || {};
+      const nextState = {
+        ...workspaceState,
+        assetMonitoring: {
+          ...(workspaceState.assetMonitoring || {}),
+          selectedBranchId:
+            state.mapContext.selectedBranch && state.mapContext.selectedBranch.id
+              ? String(state.mapContext.selectedBranch.id)
+              : '',
+          mapThemePreset: state.mapContext.themePreset,
+        },
+      };
+      await window.appState.saveWorkspaceState(nextState);
+    } catch (_) {
+      // Ignore workspace persistence failure for monitoring preferences.
+    }
+  };
+
+  const enterAssetMonitoringMode = async () => {
     if (state.isActive) {
       return;
     }
-    debugLog('enterSosMode');
+    debugLog('enterAssetMonitoringMode');
     state.isActive = true;
     document.body.classList.add('sos-mode');
     sosDashboardEl.classList.remove('hidden');
     cameraGridEl.classList.add('hidden');
+    state.notificationTimers.forEach((timer) => window.clearTimeout(timer));
+    state.notificationTimers.clear();
+    state.notificationLeavingIds.clear();
     state.notifications = [];
+    state.incidents.notifications = state.notifications;
     state.selectedSosId = null;
+    state.incidents.selectedSosId = null;
     state.isInitialSnapshotLoaded = false;
     state.cctvVisible = sosCctvToggleEl ? Boolean(sosCctvToggleEl.checked) : true;
+    state.vmsVisible = sosVmsToggleEl ? Boolean(sosVmsToggleEl.checked) : true;
+    state.gateAlerts.visible = sosGateToggleEl ? Boolean(sosGateToggleEl.checked) : true;
+    if (sosMapThemeSelectEl) {
+      sosMapThemeSelectEl.value = state.mapContext.themePreset;
+    }
     renderNotifications();
     setToolbarState();
-    updateMapEmptyState('Memuat data SOS...');
+    state.ui.mapEmptyMessage =
+      'Belum ada marker gate alert, asset offline, atau SOS aktif untuk ditampilkan.';
+    setMapLoadingVisible(true);
     await loadWorkspaceBranchContext();
     await ensureMap();
     await refreshDashboard();
     startTicketRefreshLoop();
-    startAlertRefreshLoop();
     void connectStream();
   };
 
-  const leaveSosMode = () => {
-    debugLog('leaveSosMode');
+  const leaveAssetMonitoringMode = () => {
+    debugLog('leaveAssetMonitoringMode');
     state.isActive = false;
     document.body.classList.remove('sos-mode');
     sosDashboardEl.classList.add('hidden');
     cameraGridEl.classList.remove('hidden');
+    state.notificationLeavingIds.clear();
     hideModal(sosDispatchModalEl);
     hideModal(sosCompleteModalEl);
     closeCctvModal();
+    state.gateAlerts.selectedGateId = null;
+    state.ui.selectedEntityType = '';
+    state.ui.selectedEntityId = null;
+    clearGateMarkers();
     clearCctvMarkers();
     stopStream();
     stopTicketRefreshLoop();
-    stopAlertRefreshLoop();
     setConnectionBadge('Idle', 'neutral');
     setToolbarState();
   };
@@ -1894,30 +3037,87 @@
 
   sosMonitorBtn.addEventListener('click', () => {
     if (state.isActive) {
-      leaveSosMode();
+      leaveAssetMonitoringMode();
       return;
     }
-    void enterSosMode().catch((error) => {
-      setConnectionBadge(error.message || 'Gagal membuka SOS monitor.', 'danger');
+    void enterAssetMonitoringMode().catch((error) => {
+      setConnectionBadge(error.message || 'Gagal membuka asset monitoring.', 'danger');
     });
   });
 
   sosRefreshBtn.addEventListener('click', () => {
     void refreshDashboard().catch((error) => {
-      setConnectionBadge(error.message || 'Refresh SOS gagal.', 'danger');
+      setConnectionBadge(error.message || 'Refresh asset monitoring gagal.', 'danger');
     });
   });
 
-  sosCctvToggleEl.addEventListener('change', () => {
-    state.cctvVisible = Boolean(sosCctvToggleEl.checked);
-    if (!state.cctvVisible) {
-      closeCctvModal();
-      clearCctvMarkers();
-      updateMapEmptyState(getVisibleAlerts().length ? '' : 'Cluster CCTV sedang disembunyikan.');
-      return;
-    }
-    void updateDefaultCctvMarkers();
-  });
+  if (sosBranchSelectEl) {
+    sosBranchSelectEl.addEventListener('change', () => {
+      const nextBranchId = String(sosBranchSelectEl.value || '');
+      state.mapContext.selectedBranch =
+        nextBranchId === ALL_BRANCHES_OPTION
+          ? {
+              id: ALL_BRANCHES_OPTION,
+              branch_name: 'Semua Branch',
+              branch_code: 'ALL',
+            }
+          : state.mapContext.availableBranches.find((branch) => String(branch.id) === nextBranchId) || null;
+      void persistAssetMonitoringPrefs();
+      void refreshDashboard().catch((error) => {
+        setConnectionBadge(error.message || 'Gagal mengganti branch monitoring.', 'danger');
+      });
+    });
+  }
+
+  if (sosMapThemeSelectEl) {
+    sosMapThemeSelectEl.addEventListener('change', () => {
+      applyMapTheme(String(sosMapThemeSelectEl.value || 'dark-ops'));
+      void persistAssetMonitoringPrefs();
+    });
+  }
+
+  if (sosCctvToggleEl) {
+    sosCctvToggleEl.addEventListener('change', () => {
+      state.cctvVisible = Boolean(sosCctvToggleEl.checked);
+      renderSummary();
+      renderIncidentList();
+      if (!state.cctvVisible && !state.vmsVisible) {
+        closeCctvModal();
+        clearCctvMarkers();
+        updateMapEmptyState(getVisibleAlerts().length ? '' : 'Marker CCTV dan VMS sedang disembunyikan.');
+        return;
+      }
+      void updateDefaultCctvMarkers();
+    });
+  }
+
+  if (sosVmsToggleEl) {
+    sosVmsToggleEl.addEventListener('change', () => {
+      state.vmsVisible = Boolean(sosVmsToggleEl.checked);
+      renderSummary();
+      renderIncidentList();
+      if (!state.cctvVisible && !state.vmsVisible) {
+        closeCctvModal();
+        clearCctvMarkers();
+        updateMapEmptyState(getVisibleAlerts().length ? '' : 'Marker CCTV dan VMS sedang disembunyikan.');
+        return;
+      }
+      void updateDefaultCctvMarkers();
+    });
+  }
+
+  if (sosGateToggleEl) {
+    sosGateToggleEl.addEventListener('change', () => {
+      state.gateAlerts.visible = Boolean(sosGateToggleEl.checked);
+      if (!state.gateAlerts.visible) {
+        clearGateMarkers();
+        updateMapEmptyState(getVisibleAlerts().length ? '' : 'Marker gerbang sedang disembunyikan.');
+        return;
+      }
+      syncGateAlertMarkers();
+      updateMapEmptyState('');
+    });
+  }
 
   sosNotificationListEl.addEventListener('click', (event) => {
     const closeButton =
@@ -1928,9 +3128,37 @@
       removeNotification(closeButton.getAttribute('data-notification-close'));
       return;
     }
-    const target = event.target instanceof HTMLElement ? event.target.closest('[data-sos-id]') : null;
+    const target =
+      event.target instanceof HTMLElement ? event.target.closest('[data-notification-open]') : null;
     if (target) {
-      selectAlert(target.dataset.sosId, true);
+      const notificationId = target.getAttribute('data-notification-open') || '';
+      const entry = state.notifications.find((item) => String(item.id) === String(notificationId));
+      if (!entry || !entry.target) {
+        return;
+      }
+      if (entry.target.type === 'sos') {
+        selectAlert(entry.target.sosId, true);
+        return;
+      }
+      if (entry.target.type === 'gate') {
+        selectGateAlertOptimistic(entry.target.gateId);
+        void openGateAlertDetail(entry.target.gateId);
+        return;
+      }
+      if (entry.target.type === 'asset') {
+        const asset = state.standaloneAssets.items.get(makeAssetKey(entry.target.assetType, entry.target.assetId));
+        selectStandaloneAssetOptimistic(asset || {
+          asset_type: entry.target.assetType,
+          id: entry.target.assetId,
+        });
+        void openCctvModal(asset || {
+          asset_type: entry.target.assetType,
+          id: entry.target.assetId,
+        });
+        if (asset && asset.latLng) {
+          focusEntityOnMap(asset.latLng, MAP_ZOOM_ASSET);
+        }
+      }
     }
   });
 
@@ -1946,20 +3174,39 @@
       }
       return;
     }
-    const target = event.target instanceof HTMLElement ? event.target.closest('[data-sos-id]') : null;
-    if (target) {
-      selectAlert(target.dataset.sosId, true);
+    const target = event.target instanceof HTMLElement ? event.target.closest('[data-entity-type]') : null;
+    if (!target) {
+      return;
+    }
+    const entityType = target.getAttribute('data-entity-type') || '';
+    if (entityType === 'sos' && target.dataset.sosId) {
+      selectAlert(target.dataset.sosId, true, { forceFocus: true });
+      return;
+    }
+    if (entityType === 'gate' && target.dataset.gateId) {
+      selectGateAlertOptimistic(target.dataset.gateId);
+      void openGateAlertDetail(target.dataset.gateId);
+      return;
+    }
+    if (entityType === 'asset' && target.dataset.assetType && target.dataset.assetId) {
+      const assetKey = makeAssetKey(target.dataset.assetType, target.dataset.assetId);
+      const asset = state.standaloneAssets.items.get(assetKey);
+      if (asset) {
+        selectStandaloneAssetOptimistic(asset);
+        focusEntityOnMap(asset.latLng, MAP_ZOOM_ASSET);
+        void openCctvModal(asset);
+      }
     }
   });
 
   sosIncidentListEl.addEventListener('keydown', (event) => {
-    const target = event.target instanceof HTMLElement ? event.target.closest('[data-sos-id]') : null;
+    const target = event.target instanceof HTMLElement ? event.target.closest('[data-entity-type]') : null;
     if (!target) {
       return;
     }
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      selectAlert(target.dataset.sosId, true);
+      target.click();
     }
   });
 
@@ -2039,3 +3286,5 @@
   renderNotifications();
   renderSummary();
 })();
+
+

@@ -749,9 +749,33 @@ const registerServiceHandlers = () => {
     }
   });
 
+  ipcMain.handle('camera-service:get-map-branches', async () => {
+    try {
+      return await cameraService.getMapBranches();
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
   ipcMain.handle('camera-service:get-gates', async (_event, query) => {
     try {
       return await cameraService.getGates(query);
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-gate-alerts', async (_event, query) => {
+    try {
+      return await cameraService.getGateAlerts(query);
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-gate-alert-detail', async (_event, gateId) => {
+    try {
+      return await cameraService.getGateAlertDetail(gateId);
     } catch (error) {
       return toIpcError(error);
     }
@@ -779,6 +803,22 @@ const registerServiceHandlers = () => {
   ipcMain.handle('camera-service:get-cameras', async (_event, query) => {
     try {
       return await cameraService.getCameras(query);
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-map-assets', async (_event, query) => {
+    try {
+      return await cameraService.getMapAssets(query);
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-map-asset-detail', async (_event, assetType, id) => {
+    try {
+      return await cameraService.getMapAssetDetail(assetType, id);
     } catch (error) {
       return toIpcError(error);
     }

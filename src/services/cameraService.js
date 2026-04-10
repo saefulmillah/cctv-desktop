@@ -181,8 +181,16 @@ const checkApiBaseUrl = async (candidateApiBaseUrl, candidateApiAuthToken = '') 
 const getBranches = (query = {}) =>
   requestJson(toPathAndSearch(buildUrl('/api/cameras/branches', query)));
 
+const getMapBranches = () => requestJson('/api/map/branches');
+
 const getGates = (query = {}) =>
   requestJson(toPathAndSearch(buildUrl('/api/cameras/gates', query)));
+
+const getGateAlerts = (query = {}) =>
+  requestJson(toPathAndSearch(buildUrl('/api/map/gate-alerts', query)));
+
+const getGateAlertDetail = (gateId) =>
+  requestJson(`/api/map/gate-alerts/${encodePathSegment(gateId)}`);
 
 const getBranchPages = (branchId) => requestJson(`/api/cameras/branch/${branchId}/pages`);
 
@@ -191,6 +199,12 @@ const getCamerasByBranch = (branchId, page = 1) =>
 
 const getCameras = (query = {}) =>
   requestJson(toPathAndSearch(buildUrl('/api/cameras', query)));
+
+const getMapAssets = (query = {}) =>
+  requestJson(toPathAndSearch(buildUrl('/api/map-assets', query)));
+
+const getMapAssetDetail = (assetType, id) =>
+  requestJson(`/api/map-assets/${encodePathSegment(assetType)}/${encodePathSegment(id)}`);
 
 const searchCameras = (query = {}) =>
   requestJson(toPathAndSearch(buildUrl('/api/cameras/search', query)));
@@ -225,11 +239,16 @@ module.exports = {
   getApiBaseUrl,
   getApiAuthToken,
   getBranches,
+  getMapBranches,
   getBranchPages,
   getCameras,
+  getMapAssets,
+  getMapAssetDetail,
   searchCameras,
   getCamerasByBranch,
   getGates,
+  getGateAlerts,
+  getGateAlertDetail,
   getHealth,
   checkApiBaseUrl,
   setApiAuthToken,

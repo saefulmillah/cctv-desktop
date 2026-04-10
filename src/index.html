@@ -84,13 +84,34 @@
 
     <section id="toolbar" class="toolbar collapsed">
       <div class="toolbar-primary">
-        <span id="currentBranch" class="current-branch">Active branch: -</span>
+        <button id="sosMonitorBtn" class="toolbar-btn" type="button">Assets</button>
+        <label class="sos-map-toggle asset-toolbar-control" for="sosCctvToggle">
+          <input id="sosCctvToggle" type="checkbox" checked />
+          <span>CCTV</span>
+        </label>
+        <label class="sos-map-toggle asset-toolbar-control" for="sosVmsToggle">
+          <input id="sosVmsToggle" type="checkbox" checked />
+          <span>VMS</span>
+        </label>
+        <label class="sos-map-toggle asset-toolbar-control" for="sosGateToggle">
+          <input id="sosGateToggle" type="checkbox" checked />
+          <span>Gerbang</span>
+        </label>
+        <div class="toolbar-menu-wrap">
+          <button id="toolbarMenuBtn" class="toolbar-btn" type="button" aria-haspopup="true">
+            Menu
+          </button>
+          <div id="toolbarMenuPanel" class="toolbar-menu-panel hidden">
+            <button id="menuApiConfigBtn" class="toolbar-menu-item" type="button">Config API</button>
+            <button id="menuUpdateInfoBtn" class="toolbar-menu-item" type="button">Update Info</button>
+            <button id="menuHelpBtn" class="toolbar-menu-item" type="button">Help</button>
+          </div>
+        </div>
       </div>
 
       <button id="openBranchBtn" class="toolbar-btn" type="button">Branches</button>
       <button id="quickSearchBtn" class="toolbar-btn" type="button">Search</button>
       <button id="layoutConfigBtn" class="toolbar-btn" type="button">Layout</button>
-      <button id="sosMonitorBtn" class="toolbar-btn" type="button">SOS</button>
       <button id="focusModeBtn" class="toolbar-btn" type="button" disabled>Focus</button>
       <button id="normalModeBtn" class="toolbar-btn" type="button">Normal</button>
       <button id="reloadStreamBtn" class="toolbar-btn icon-btn" type="button" disabled>
@@ -102,51 +123,43 @@
         <span id="pageInfo">Page 1 / 1</span>
         <button id="nextPageBtn" type="button">Next</button>
       </div>
-
-      <div class="toolbar-menu-wrap">
-        <button id="toolbarMenuBtn" class="toolbar-btn" type="button" aria-haspopup="true">
-          Menu
-        </button>
-        <div id="toolbarMenuPanel" class="toolbar-menu-panel hidden">
-          <button id="menuApiConfigBtn" class="toolbar-menu-item" type="button">Config API</button>
-          <button id="menuUpdateInfoBtn" class="toolbar-menu-item" type="button">Update Info</button>
-          <button id="menuHelpBtn" class="toolbar-menu-item" type="button">Help</button>
-        </div>
-      </div>
     </section>
 
     <main id="cameraGrid" class="grid loading" aria-live="polite"></main>
 
-    <section id="sosDashboard" class="sos-dashboard hidden" aria-label="SOS monitoring dashboard">
-      <div class="sos-dashboard__topbar">
-        <div>
-          <p class="eyebrow">HK TOLL VISION</p>
-          <h2 id="sosRouteTitle">EMERGENCY MODE</h2>
-        </div>
-        <div class="sos-dashboard__actions">
-          <span id="sosConnectionBadge" class="status-pill neutral">Idle</span>
-          <button id="sosRefreshBtn" class="toolbar-btn" type="button">Refresh SOS</button>
-        </div>
-      </div>
-
+    <section id="sosDashboard" class="sos-dashboard hidden" aria-label="Asset monitoring dashboard">
       <div class="sos-dashboard__layout">
         <section class="sos-map-shell">
-          <div id="sosMap" class="sos-map" aria-label="SOS map"></div>
+          <div id="sosMap" class="sos-map" aria-label="Asset monitoring map"></div>
+          <div class="asset-map-topbar">
+            <div class="asset-map-topbar__title">
+              <p class="eyebrow">HK TOLL VISION</p>
+              <h2 id="sosRouteTitle">ASSET MONITORING</h2>
+              <p id="assetMapSubtitle" class="asset-map-topbar__subtitle">Pantau gate alert, CCTV, VMS, dan insiden dari satu peta.</p>
+            </div>
+            <div class="asset-map-topbar__controls">
+              <select id="sosBranchSelect" class="asset-map-topbar__select toolbar-btn">
+                <option value="">Pilih branch</option>
+              </select>
+              <select id="sosMapThemeSelect" class="asset-map-topbar__select toolbar-btn">
+                <option value="dark-ops">Dark Ops</option>
+                <option value="default">Default</option>
+                <option value="minimal-light">Minimal Light</option>
+              </select>
+              <span id="sosConnectionBadge" class="status-pill neutral">Idle</span>
+              <button id="sosRefreshBtn" class="toolbar-btn" type="button">Refresh Monitor</button>
+            </div>
+          </div>
           <div id="sosMapLoading" class="sidebar-map-loading sidebar-section-hidden" aria-live="polite">
             <div class="sidebar-map-loading__pulse"></div>
             <div class="sidebar-map-loading__text">
-              <strong>Memuat monitor SOS...</strong>
-              <span>Menyiapkan peta dan sinkronisasi kejadian</span>
+              <strong>Memuat asset monitoring...</strong>
+              <span>Menyiapkan peta, asset layer, dan sinkronisasi kejadian</span>
             </div>
           </div>
           <div id="sosMapEmpty" class="sos-map-empty">
-            Hubungkan API lalu buka mode SOS untuk memantau kejadian secara real-time.
+            Hubungkan API lalu buka asset monitoring untuk memantau asset dan kejadian secara real-time.
           </div>
-
-          <label class="sos-map-toggle" for="sosCctvToggle">
-            <input id="sosCctvToggle" type="checkbox" checked />
-            <span>Tampilkan CCTV</span>
-          </label>
 
           <div id="sosNotificationPanel" class="sos-floating-notifications hidden">
             <div id="sosNotificationList" class="sos-notification-list"></div>
@@ -155,8 +168,8 @@
           <article id="sosDetailPanel" class="sos-detail-panel hidden">
             <div class="sos-panel__header">
               <div>
-                <p class="eyebrow">Detail Kejadian</p>
-                <h3 id="sosDetailTitle">Pilih kejadian</h3>
+                <p class="eyebrow">Detail Insiden</p>
+                <h3 id="sosDetailTitle">Pilih insiden</h3>
               </div>
               <div class="sos-detail-panel__header-actions">
                 <span id="sosDetailStatus" class="status-pill neutral">Status</span>
@@ -177,7 +190,7 @@
             <div class="sos-panel__header">
               <div>
                 <p class="eyebrow">Open Ticket</p>
-                <h3>List Kejadian</h3>
+                <h3>List Insiden</h3>
               </div>
               <span id="sosOpenCountBadge" class="status-pill neutral">0 aktif</span>
             </div>
@@ -513,6 +526,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <script src="./renderer.js"></script>
-    <script src="./sos-monitoring.js"></script>
+    <script src="./asset-monitoring.js"></script>
   </body>
 </html>
+
