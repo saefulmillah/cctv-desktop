@@ -2310,8 +2310,8 @@ body.sos-mode .asset-toolbar-control {
 
 .sos-map-marker {
   position: absolute;
-  width: 30px;
-  height: 30px;
+  width: 38px;
+  height: 38px;
   border: 0;
   background: transparent;
   transform: translate(-50%, -50%);
@@ -2330,15 +2330,15 @@ body.sos-mode .asset-toolbar-control {
 }
 
 .sos-map-marker__dot {
-  inset: 7px;
+  inset: 8px;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
 }
 
 .sos-map-marker__dot img {
   position: absolute;
-  inset: 3px;
-  width: calc(100% - 6px);
-  height: calc(100% - 6px);
+  inset: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
   object-fit: contain;
   pointer-events: none;
 }
@@ -2374,12 +2374,12 @@ body.sos-mode .asset-toolbar-control {
 }
 
 .sos-map-marker.is-selected {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
 }
 
 .sos-map-marker.is-selected .sos-map-marker__dot {
-  inset: 8px;
+  inset: 9px;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.26);
 }
 

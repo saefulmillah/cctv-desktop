@@ -651,7 +651,7 @@
     const x = size - badgeWidth - 1;
     const y = 1;
     return `
-      <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="#ff3f4d" stroke="#ffffff" stroke-width="2" />
+      <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="#ff3f4d" />
       <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${displayCount.length >= 3 ? 9 : 10}" font-weight="800">${displayCount}</text>
     `;
   };
@@ -677,7 +677,7 @@
     if (!dataUri) {
       return typeMeta.iconType === 'cctv-marker' ? buildCctvClusterMarkerSvg(size) : typeMeta.icon;
     }
-    const imageSize = Math.round(size * 0.58);
+    const imageSize = Math.round(size * 0.78);
     const imageOffset = Math.round((size - imageSize) / 2);
     return `<image href="${escapeHtml(dataUri)}" x="${imageOffset}" y="${imageOffset}" width="${imageSize}" height="${imageSize}" preserveAspectRatio="xMidYMid meet" />`;
   };
