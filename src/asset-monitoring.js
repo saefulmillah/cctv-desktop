@@ -581,14 +581,16 @@
         label: 'CCTV',
         accent: '#56c1ff',
         icon: `
-          <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="17" y="13" width="17" height="10" rx="2.5" />
-            <path d="M34 16.5h4l-2.4 4H34z" />
-            <circle cx="24" cy="18" r="2.4" />
-            <path d="M24 23v4M20 27h8" />
+          <g transform="translate(16 12) scale(0.028)">
+            <circle cx="364" cy="364" r="340" fill="url(#cctvMarkerGradient)" stroke="#ffffff" stroke-width="38" />
+            <path fill="#ffffff" d="M247.6 233.8 515.6 359.5 536.8 389.1 478.2 514.1 181.4 374.9z" />
+            <path fill="#ffffff" d="M533 409.9 553.4 419.5 519.6 491.3 499.3 481.8z" />
+            <path fill="#ffffff" d="M577.5 421.1 600.9 432.1 559.7 519.8 533.1 507.3 527.7 493.7 560.2 424.3z" />
+            <path fill="#ffffff" d="M282.9 222.8 498 323.7 490.4 339.8 275.4 238.9z" />
+            <path fill="#ffffff" d="M313.7 444.1 337.3 455.1 313.8 505.2 290.2 494.1z" />
+            <path fill="#ffffff" d="M230.4 497.7 250 486.7 260.1 504.5 305.6 478.4 313.8 505.2 272.9 527.4 286 550.7 266.4 561.7z" />
           </g>
         `,
-        imageHref: ONLINE_MARKER_URL,
       };
     }
     if (normalized === 'vms') {
@@ -627,18 +629,6 @@
     `;
   };
 
-  const buildAssetClusterCenterSvg = (typeMeta, size) => {
-    if (typeMeta.imageHref) {
-      const imageSize = Math.round(size * 0.54);
-      const imageOffset = Math.round((size - imageSize) / 2);
-      return `
-        ${typeMeta.icon}
-        <image href="${escapeHtml(typeMeta.imageHref)}" x="${imageOffset}" y="${imageOffset}" width="${imageSize}" height="${imageSize}" preserveAspectRatio="xMidYMid meet" />
-      `;
-    }
-    return typeMeta.icon;
-  };
-
   const buildTypedAssetClusterSvgDataUrl = ({
     assetType,
     count,
@@ -650,7 +640,6 @@
     const problemCount = Number(offlineCount || 0) + Number(warningCount || 0);
     const tone = getClusterTone(onlineCount, problemCount);
     const typeMeta = getAssetClusterTypeMeta(assetType);
-    const centerGraphic = buildAssetClusterCenterSvg(typeMeta, size);
     const normalizedAssetType = String(assetType || '').toLowerCase();
     const typeLabel =
       normalizedAssetType === 'cctv'
@@ -658,9 +647,15 @@
         : `<text x="${size / 2}" y="${size - 6}" text-anchor="middle" fill="rgba(255,255,255,0.82)" font-family="Segoe UI, Arial, sans-serif" font-size="7" font-weight="700">${typeMeta.label}</text>`;
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <defs>
+          <linearGradient id="cctvMarkerGradient" x1="0" y1="0" x2="728" y2="728" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#ff3131" />
+            <stop offset="1" stop-color="#ff914d" />
+          </linearGradient>
+        </defs>
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
-        ${centerGraphic}
+        ${typeMeta.icon}
         ${typeLabel}
         ${buildClusterCountBadgeSvg(count, size)}
       </svg>
