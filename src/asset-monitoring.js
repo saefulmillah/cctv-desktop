@@ -580,17 +580,7 @@
       return {
         label: 'CCTV',
         accent: '#56c1ff',
-        icon: `
-          <g transform="translate(16 12) scale(0.028)">
-            <circle cx="364" cy="364" r="340" fill="url(#cctvMarkerGradient)" stroke="#ffffff" stroke-width="38" />
-            <path fill="#ffffff" d="M247.6 233.8 515.6 359.5 536.8 389.1 478.2 514.1 181.4 374.9z" />
-            <path fill="#ffffff" d="M533 409.9 553.4 419.5 519.6 491.3 499.3 481.8z" />
-            <path fill="#ffffff" d="M577.5 421.1 600.9 432.1 559.7 519.8 533.1 507.3 527.7 493.7 560.2 424.3z" />
-            <path fill="#ffffff" d="M282.9 222.8 498 323.7 490.4 339.8 275.4 238.9z" />
-            <path fill="#ffffff" d="M313.7 444.1 337.3 455.1 313.8 505.2 290.2 494.1z" />
-            <path fill="#ffffff" d="M230.4 497.7 250 486.7 260.1 504.5 305.6 478.4 313.8 505.2 272.9 527.4 286 550.7 266.4 561.7z" />
-          </g>
-        `,
+        iconType: 'cctv-marker',
       };
     }
     if (normalized === 'vms') {
@@ -629,6 +619,22 @@
     `;
   };
 
+  const buildCctvClusterMarkerSvg = (size) => {
+    const scale = size * 0.00084;
+    const offset = (size / 2) - (364 * scale);
+    return `
+      <g transform="translate(${offset.toFixed(2)} ${offset.toFixed(2)}) scale(${scale.toFixed(5)})">
+        <circle cx="364" cy="364" r="340" fill="url(#cctvMarkerGradient)" stroke="#ffffff" stroke-width="38" />
+        <path fill="#ffffff" d="M247.6 233.8 515.6 359.5 536.8 389.1 478.2 514.1 181.4 374.9z" />
+        <path fill="#ffffff" d="M533 409.9 553.4 419.5 519.6 491.3 499.3 481.8z" />
+        <path fill="#ffffff" d="M577.5 421.1 600.9 432.1 559.7 519.8 533.1 507.3 527.7 493.7 560.2 424.3z" />
+        <path fill="#ffffff" d="M282.9 222.8 498 323.7 490.4 339.8 275.4 238.9z" />
+        <path fill="#ffffff" d="M313.7 444.1 337.3 455.1 313.8 505.2 290.2 494.1z" />
+        <path fill="#ffffff" d="M230.4 497.7 250 486.7 260.1 504.5 305.6 478.4 313.8 505.2 272.9 527.4 286 550.7 266.4 561.7z" />
+      </g>
+    `;
+  };
+
   const buildTypedAssetClusterSvgDataUrl = ({
     assetType,
     count,
@@ -641,6 +647,8 @@
     const tone = getClusterTone(onlineCount, problemCount);
     const typeMeta = getAssetClusterTypeMeta(assetType);
     const normalizedAssetType = String(assetType || '').toLowerCase();
+    const centerGraphic =
+      typeMeta.iconType === 'cctv-marker' ? buildCctvClusterMarkerSvg(size) : typeMeta.icon;
     const typeLabel =
       normalizedAssetType === 'cctv'
         ? ''
@@ -655,7 +663,7 @@
         </defs>
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
-        ${typeMeta.icon}
+        ${centerGraphic}
         ${typeLabel}
         ${buildClusterCountBadgeSvg(count, size)}
       </svg>
