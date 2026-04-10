@@ -166,6 +166,8 @@
     cctvModalController: null,
     onlyIconDataUris: {},
     onlyIconLoaderPromise: null,
+    colorIconDataUris: {},
+    colorIconLoaderPromise: null,
     markers: new Map(),
     markerClass: null,
     streamAbortController: null,
@@ -369,7 +371,9 @@
 
   const makeAssetKey = (assetType, id) => `${String(assetType || '').trim()}:${String(id || '').trim()}`;
   const GATE_ISSUE_STATUSES = new Set(['error', 'offline', 'warning']);
+  const ASSET_ISSUE_STATUSES = new Set(['error', 'offline', 'warning']);
   const isGateIssueStatus = (status) => GATE_ISSUE_STATUSES.has(String(status || '').trim().toLowerCase());
+  const isAssetIssueStatus = (status) => ASSET_ISSUE_STATUSES.has(String(status || '').trim().toLowerCase());
   const getGateIssueStatusTone = (status) => {
     const normalized = String(status || '').trim().toLowerCase();
     if (normalized === 'warning') {
@@ -387,6 +391,16 @@
     }
     if (normalized === 'warning') {
       return 'warning';
+    }
+    return 'neutral';
+  };
+  const getAssetIssueTone = (status) => {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'warning') {
+      return 'warning';
+    }
+    if (normalized === 'error' || normalized === 'offline') {
+      return 'danger';
     }
     return 'neutral';
   };
@@ -576,10 +590,10 @@
   const getCctvMarkerIconUrl = (camera) => {
     const assetType = String(camera && camera.asset_type ? camera.asset_type : 'cctv').toLowerCase();
     if (assetType === 'vms') {
-      return COLOR_ICON_URLS.vms;
+      return buildStandaloneMarkerIconDataUrl(camera);
     }
     if (assetType === 'cctv') {
-      return COLOR_ICON_URLS.cctv;
+      return buildStandaloneMarkerIconDataUrl(camera);
     }
     const operationalState = getCameraOperationalState(camera);
     return operationalState === 'online' ? ONLINE_MARKER_URL : OFFLINE_MARKER_URL;
@@ -612,6 +626,61 @@
       })
     );
     return state.onlyIconLoaderPromise;
+  };
+
+  const loadColorIconDataUris = () => {
+    if (state.colorIconLoaderPromise) {
+      return state.colorIconLoaderPromise;
+    }
+    state.colorIconLoaderPromise = Promise.all(
+      Object.entries(COLOR_ICON_URLS).map(async ([key, url]) => {
+        try {
+          const response = await fetch(url, { cache: 'force-cache' });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const svgText = await response.text();
+          state.colorIconDataUris[key] = svgTextToDataUri(svgText);
+        } catch (_) {
+          state.colorIconDataUris[key] = url;
+        }
+      })
+    );
+    return state.colorIconLoaderPromise;
+  };
+
+  const getStandaloneMarkerTone = (camera) => {
+    const operationalState = getCameraOperationalState(camera);
+    if (operationalState === 'warning') {
+      return { fill: '#FFB703', glow: 'rgba(255,183,3,0.34)' };
+    }
+    if (operationalState === 'offline') {
+      return { fill: '#E63946', glow: 'rgba(230,57,70,0.38)' };
+    }
+    return { fill: '#2EC4B6', glow: 'rgba(46,196,182,0.34)' };
+  };
+
+  const buildStandaloneMarkerIconDataUrl = (camera) => {
+    const assetType = String(camera && camera.asset_type ? camera.asset_type : 'cctv').toLowerCase();
+    const iconUrl = state.colorIconDataUris[assetType] || COLOR_ICON_URLS[assetType];
+    if (!iconUrl) {
+      const operationalState = getCameraOperationalState(camera);
+      return operationalState === 'online' ? ONLINE_MARKER_URL : OFFLINE_MARKER_URL;
+    }
+    const tone = getStandaloneMarkerTone(camera);
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+        <defs>
+          <filter id="markerGlow" x="-45%" y="-45%" width="190%" height="190%">
+            <feGaussianBlur stdDeviation="3.2" />
+          </filter>
+        </defs>
+        <circle cx="22" cy="22" r="19" fill="${tone.glow}" filter="url(#markerGlow)" />
+        <circle cx="22" cy="22" r="17.5" fill="${tone.fill}" opacity="0.22" />
+        <image href="${escapeHtml(iconUrl)}" x="4" y="4" width="36" height="36" preserveAspectRatio="xMidYMid meet" />
+      </svg>
+    `.trim();
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
   };
 
   const getClusterTone = (onlineCount, offlineCount) => {
@@ -1411,7 +1480,7 @@
         (item) =>
           item &&
           item.showInSummary !== false &&
-          item.status === 'offline' &&
+          isAssetIssueStatus(item.status) &&
           isStandaloneAssetTypeVisible(item)
       ).length;
     setText(sosOpenCountBadgeEl, `${totalItems} item`);
@@ -1465,17 +1534,17 @@
     const gateAlerts = Array.from(state.gateAlerts.items.values())
       .filter((gate) => gate && gate.showInSummary !== false && (gate.status === 'error' || gate.status === 'warning'))
       .sort((a, b) => String(a.gate_name || a.gate_code || '').localeCompare(String(b.gate_name || b.gate_code || '')));
-    const offlineAssets = Array.from(state.standaloneAssets.items.values())
+    const issueAssets = Array.from(state.standaloneAssets.items.values())
       .filter(
         (item) =>
           item &&
           item.showInSummary !== false &&
-          item.status === 'offline' &&
+          isAssetIssueStatus(item.status) &&
           isStandaloneAssetTypeVisible(item)
       )
       .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
 
-    if (!alerts.length && !gateAlerts.length && !offlineAssets.length) {
+    if (!alerts.length && !gateAlerts.length && !issueAssets.length) {
       sosIncidentListEl.innerHTML =
         '<div class="sos-incident-item sos-incident-item--empty">Belum ada ringkasan monitoring untuk branch ini.</div>';
       return;
@@ -1553,14 +1622,14 @@
         `;
       })
       .join('');
-    const assetMarkup = offlineAssets
+    const assetMarkup = issueAssets
       .map((asset) => {
         const assetKey = makeAssetKey(asset.asset_type, asset.id);
         return `
           <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'asset' && String(state.ui.selectedEntityId) === assetKey ? 'is-selected' : ''}" data-entity-type="asset" data-asset-type="${escapeHtml(asset.asset_type)}" data-asset-id="${escapeHtml(asset.id)}" tabindex="0" role="button" aria-label="Pilih asset ${escapeHtml(asset.title)}">
             <div class="sos-incident-item__head">
               <strong>${escapeHtml(asset.title)}</strong>
-              <span class="status-pill danger">${escapeHtml(String(asset.status || 'offline').toUpperCase())}</span>
+              <span class="status-pill ${getAssetIssueTone(asset.status)}">${escapeHtml(String(asset.status || 'offline').toUpperCase())}</span>
             </div>
             <div class="sos-incident-item__meta">
               <div class="sos-incident-item__row">
@@ -2270,6 +2339,7 @@
       let markerClustererLib = null;
       try {
         await loadOnlyIconDataUris();
+        await loadColorIconDataUris();
         markerClustererLib = await loadMarkerClustererLibrary();
       } catch (clusterError) {
         debugLog('updateDefaultCctvMarkers:cluster-library-error', {
@@ -2800,23 +2870,19 @@
     const cacheIndex = branchCache.findIndex(
       (item) => makeAssetKey(item.asset_type, item.id) === assetKey
     );
-    if (normalized.status !== 'offline') {
-      state.standaloneAssets.items.delete(assetKey);
-      if (cacheIndex >= 0) {
-        branchCache.splice(cacheIndex, 1);
-      }
+    const currentAsset =
+      state.standaloneAssets.items.get(assetKey) || (cacheIndex >= 0 ? branchCache[cacheIndex] : null);
+    const nextAsset = {
+      ...(currentAsset || {}),
+      ...normalized,
+      position: normalized.latLng,
+      showInSummary: true,
+    };
+    state.standaloneAssets.items.set(assetKey, nextAsset);
+    if (cacheIndex >= 0) {
+      branchCache.splice(cacheIndex, 1, nextAsset);
     } else {
-      const nextAsset = {
-        ...normalized,
-        position: normalized.latLng,
-        showInSummary: false,
-      };
-      state.standaloneAssets.items.set(assetKey, nextAsset);
-      if (cacheIndex >= 0) {
-        branchCache.splice(cacheIndex, 1, nextAsset);
-      } else {
-        branchCache.push(nextAsset);
-      }
+      branchCache.push(nextAsset);
     }
     if (branchId) {
       state.cctvCacheByBranch.set(branchId, branchCache);
