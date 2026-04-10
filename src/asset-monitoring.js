@@ -574,6 +574,100 @@
     return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
   };
 
+  const getAssetClusterTypeMeta = (assetType) => {
+    const normalized = String(assetType || '').toLowerCase();
+    if (normalized === 'cctv') {
+      return {
+        label: 'CCTV',
+        accent: '#56c1ff',
+        icon: `
+          <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="17" y="13" width="17" height="10" rx="2.5" />
+            <path d="M34 16.5h4l-2.4 4H34z" />
+            <circle cx="24" cy="18" r="2.4" />
+            <path d="M24 23v4M20 27h8" />
+          </g>
+        `,
+      };
+    }
+    if (normalized === 'vms') {
+      return {
+        label: 'VMS',
+        accent: '#a9ff24',
+        icon: `
+          <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="16" y="12" width="20" height="13" rx="2.5" />
+            <path d="M20 17h12M20 21h8M22 25v5M30 25v5M19 30h14" />
+          </g>
+        `,
+      };
+    }
+    return {
+      label: 'ASSET',
+      accent: '#ffcf66',
+      icon: `
+        <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M26 12l10 5.5v11L26 34l-10-5.5v-11z" />
+          <path d="M26 12v11M16 17.5l10 5.5 10-5.5M26 23v11" />
+        </g>
+      `,
+    };
+  };
+
+  const buildTypedAssetClusterSvgDataUrl = ({
+    assetType,
+    count,
+    onlineCount,
+    warningCount,
+    offlineCount,
+  }) => {
+    const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
+    const problemCount = Number(offlineCount || 0) + Number(warningCount || 0);
+    const tone = getClusterTone(onlineCount, problemCount);
+    const typeMeta = getAssetClusterTypeMeta(assetType);
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
+        <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
+        <circle cx="${size - 13}" cy="13" r="7" fill="${typeMeta.accent}" stroke="rgba(255,255,255,0.62)" stroke-width="1.5" />
+        ${typeMeta.icon}
+        <text x="${size / 2}" y="${size - 15}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${count >= 100 ? 13 : 15}" font-weight="700">${count}</text>
+        <text x="${size / 2}" y="${size - 6}" text-anchor="middle" fill="rgba(255,255,255,0.82)" font-family="Segoe UI, Arial, sans-serif" font-size="7" font-weight="700">${typeMeta.label}</text>
+      </svg>
+    `.trim();
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  };
+
+  const getClusterAssetType = (clusterMarkers) => {
+    const typeCounts = {
+      cctv: 0,
+      vms: 0,
+      other: 0,
+    };
+    (Array.isArray(clusterMarkers) ? clusterMarkers : []).forEach((clusterMarker) => {
+      const entry = state.cctvMarkers.find((item) => item && item.marker === clusterMarker);
+      const assetType = String(entry && entry.camera && entry.camera.asset_type ? entry.camera.asset_type : '').toLowerCase();
+      if (assetType === 'cctv') {
+        typeCounts.cctv += 1;
+      } else if (assetType === 'vms') {
+        typeCounts.vms += 1;
+      } else {
+        typeCounts.other += 1;
+      }
+    });
+    const activeTypes = [typeCounts.cctv, typeCounts.vms, typeCounts.other].filter((value) => value > 0).length;
+    if (activeTypes !== 1) {
+      return 'mixed';
+    }
+    if (typeCounts.cctv > 0) {
+      return 'cctv';
+    }
+    if (typeCounts.vms > 0) {
+      return 'vms';
+    }
+    return 'mixed';
+  };
+
   const animateMapZoom = (map, targetZoom, center, stepDelay = 90) => {
     if (!map || !Number.isFinite(targetZoom)) {
       return;
@@ -2084,29 +2178,28 @@
                 }
                 summary.offlineCount += 1;
               });
+              const assetType = getClusterAssetType(clusterMarkers);
               const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
               const marker = new window.google.maps.Marker({
                 position,
                 icon: {
-                  url: buildSosClusterSvgDataUrl(
+                  url: buildTypedAssetClusterSvgDataUrl({
+                    assetType,
                     count,
-                    summary.onlineCount,
-                    summary.offlineCount + warningCount
-                  ),
+                    onlineCount: summary.onlineCount,
+                    warningCount,
+                    offlineCount: summary.offlineCount,
+                  }),
                   scaledSize: new window.google.maps.Size(size, size),
-                },
-                label: {
-                  text: String(count),
-                  color: '#ffffff',
-                  fontSize: count >= 100 ? '13px' : '12px',
-                  fontWeight: '600',
                 },
                 zIndex: 900,
               });
               marker.__clusterSummary = {
                 count,
                 onlineCount: summary.onlineCount,
+                warningCount,
                 offlineCount: summary.offlineCount,
+                assetType,
               };
               state.cctvClusterRenderMarkers.push(marker);
               return marker;
