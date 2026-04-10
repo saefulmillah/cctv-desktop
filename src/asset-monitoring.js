@@ -1231,10 +1231,19 @@
   const hasRenderableMapData = () =>
     getVisibleAlerts().length > 0 ||
     Array.from(state.gateAlerts.items.values()).some(
-      (gate) => gate && (gate.status === 'error' || gate.status === 'warning')
+      (gate) =>
+        gate &&
+        gate.latLng &&
+        state.gateAlerts.visible &&
+        isEntityInSelectedBranch(gate.branch_id) &&
+        (gate.status === 'error' || gate.status === 'warning')
     ) ||
     Array.from(state.standaloneAssets.items.values()).some(
-      (item) => item && item.status === 'offline' && isStandaloneAssetTypeVisible(item)
+      (item) =>
+        item &&
+        item.latLng &&
+        isEntityInSelectedBranch(item.branch_id) &&
+        isStandaloneAssetTypeVisible(item)
     );
 
   const setConnectionBadge = (label, tone = 'neutral') => {
@@ -2481,7 +2490,13 @@
       markerCount: state.markers.size,
       activeIds: Array.from(activeIds),
     });
-    updateMapEmptyState(getVisibleAlerts().length ? '' : 'Belum ada marker SOS aktif.');
+    updateMapEmptyState(
+      getVisibleAlerts().length
+        ? ''
+        : hasRenderableMapData()
+          ? ''
+          : 'Belum ada marker aktif pada branch ini.'
+    );
   };
 
   const renderAll = () => {
