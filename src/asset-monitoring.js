@@ -2931,6 +2931,8 @@
     if (branchId) {
       state.cctvCacheByBranch.set(branchId, branchCache);
     }
+    state.cctvCacheByBranch.delete(String(normalized.branch_id || ''));
+    state.cctvCacheByBranch.delete(ALL_BRANCHES_OPTION);
     state.cctvMapBranchId = null;
     pushAssetStatusNotification(nextAsset);
     void updateDefaultCctvMarkers();
@@ -2972,6 +2974,9 @@
     });
     if (eventName === 'snapshot') {
       applyMapSnapshot(payload);
+      syncGateAlertMarkers();
+      syncMapMarkers();
+      void updateDefaultCctvMarkers();
       renderAll();
       return;
     }
