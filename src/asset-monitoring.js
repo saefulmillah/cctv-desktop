@@ -588,6 +588,7 @@
             <path d="M24 23v4M20 27h8" />
           </g>
         `,
+        imageHref: ONLINE_MARKER_URL,
       };
     }
     if (normalized === 'vms') {
@@ -614,6 +615,30 @@
     };
   };
 
+  const buildClusterCountBadgeSvg = (count, size) => {
+    const displayCount = Number(count || 0) > 99 ? '99+' : String(count || 0);
+    const badgeWidth = displayCount.length >= 3 ? 28 : displayCount.length === 2 ? 22 : 18;
+    const badgeHeight = 18;
+    const x = size - badgeWidth - 1;
+    const y = 1;
+    return `
+      <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="#ff3f4d" stroke="#ffffff" stroke-width="2" />
+      <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${displayCount.length >= 3 ? 9 : 10}" font-weight="800">${displayCount}</text>
+    `;
+  };
+
+  const buildAssetClusterCenterSvg = (typeMeta, size) => {
+    if (typeMeta.imageHref) {
+      const imageSize = Math.round(size * 0.54);
+      const imageOffset = Math.round((size - imageSize) / 2);
+      return `
+        ${typeMeta.icon}
+        <image href="${escapeHtml(typeMeta.imageHref)}" x="${imageOffset}" y="${imageOffset}" width="${imageSize}" height="${imageSize}" preserveAspectRatio="xMidYMid meet" />
+      `;
+    }
+    return typeMeta.icon;
+  };
+
   const buildTypedAssetClusterSvgDataUrl = ({
     assetType,
     count,
@@ -625,14 +650,19 @@
     const problemCount = Number(offlineCount || 0) + Number(warningCount || 0);
     const tone = getClusterTone(onlineCount, problemCount);
     const typeMeta = getAssetClusterTypeMeta(assetType);
+    const centerGraphic = buildAssetClusterCenterSvg(typeMeta, size);
+    const normalizedAssetType = String(assetType || '').toLowerCase();
+    const typeLabel =
+      normalizedAssetType === 'cctv'
+        ? ''
+        : `<text x="${size / 2}" y="${size - 6}" text-anchor="middle" fill="rgba(255,255,255,0.82)" font-family="Segoe UI, Arial, sans-serif" font-size="7" font-weight="700">${typeMeta.label}</text>`;
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
-        <circle cx="${size - 13}" cy="13" r="7" fill="${typeMeta.accent}" stroke="rgba(255,255,255,0.62)" stroke-width="1.5" />
-        ${typeMeta.icon}
-        <text x="${size / 2}" y="${size - 15}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${count >= 100 ? 13 : 15}" font-weight="700">${count}</text>
-        <text x="${size / 2}" y="${size - 6}" text-anchor="middle" fill="rgba(255,255,255,0.82)" font-family="Segoe UI, Arial, sans-serif" font-size="7" font-weight="700">${typeMeta.label}</text>
+        ${centerGraphic}
+        ${typeLabel}
+        ${buildClusterCountBadgeSvg(count, size)}
       </svg>
     `.trim();
     return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
