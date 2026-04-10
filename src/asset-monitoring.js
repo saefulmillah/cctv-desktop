@@ -164,6 +164,8 @@
     cctvSuppressMapClickUntil: 0,
     detailRenderKey: '',
     cctvModalController: null,
+    onlyIconDataUris: {},
+    onlyIconLoaderPromise: null,
     markers: new Map(),
     markerClass: null,
     streamAbortController: null,
@@ -505,6 +507,12 @@
 
   const ONLINE_MARKER_URL = new URL('./assets/marker-map-online.svg', window.location.href).toString();
   const OFFLINE_MARKER_URL = new URL('./assets/marker-map-offline.svg', window.location.href).toString();
+  const ONLY_ICON_URLS = {
+    cctv: new URL('./assets/only_CCTV.svg', window.location.href).toString(),
+    gate: new URL('./assets/only_GATE.svg', window.location.href).toString(),
+    mixed: new URL('./assets/only_MIXED.svg', window.location.href).toString(),
+    vms: new URL('./assets/only_VMS.svg', window.location.href).toString(),
+  };
 
   const getCameraCoordinates = (camera) => {
     if (!camera || typeof camera !== 'object') {
@@ -539,6 +547,32 @@
 
   const getCctvMarkerScaledSize = (camera) =>
     String(camera && camera.id) === String(state.cctvSelectedCameraId) ? 40 : 32;
+
+  const svgTextToDataUri = (value) =>
+    `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(String(value || '').trim())}`;
+
+  const loadOnlyIconDataUris = () => {
+    if (state.onlyIconLoaderPromise) {
+      return state.onlyIconLoaderPromise;
+    }
+    state.onlyIconLoaderPromise = Promise.all(
+      Object.entries(ONLY_ICON_URLS).map(async ([key, url]) => {
+        try {
+          const response = await fetch(url);
+          if (!response || !response.ok) {
+            return;
+          }
+          state.onlyIconDataUris[key] = svgTextToDataUri(await response.text());
+        } catch (error) {
+          debugLog('loadOnlyIconDataUris:error', {
+            key,
+            message: error && error.message ? error.message : String(error),
+          });
+        }
+      })
+    );
+    return state.onlyIconLoaderPromise;
+  };
 
   const getClusterTone = (onlineCount, offlineCount) => {
     const total = Math.max(1, Number(onlineCount || 0) + Number(offlineCount || 0));
@@ -580,6 +614,7 @@
       return {
         label: 'CCTV',
         accent: '#56c1ff',
+        iconKey: 'cctv',
         iconType: 'cctv-marker',
       };
     }
@@ -587,6 +622,7 @@
       return {
         label: 'VMS',
         accent: '#a9ff24',
+        iconKey: 'vms',
         icon: `
           <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <rect x="16" y="12" width="20" height="13" rx="2.5" />
@@ -598,6 +634,7 @@
     return {
       label: 'ASSET',
       accent: '#ffcf66',
+      iconKey: 'mixed',
       icon: `
         <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M26 12l10 5.5v11L26 34l-10-5.5v-11z" />
@@ -635,6 +672,16 @@
     `;
   };
 
+  const buildOnlyIconClusterSvg = (typeMeta, size) => {
+    const dataUri = state.onlyIconDataUris[typeMeta.iconKey];
+    if (!dataUri) {
+      return typeMeta.iconType === 'cctv-marker' ? buildCctvClusterMarkerSvg(size) : typeMeta.icon;
+    }
+    const imageSize = Math.round(size * 0.58);
+    const imageOffset = Math.round((size - imageSize) / 2);
+    return `<image href="${escapeHtml(dataUri)}" x="${imageOffset}" y="${imageOffset}" width="${imageSize}" height="${imageSize}" preserveAspectRatio="xMidYMid meet" />`;
+  };
+
   const buildTypedAssetClusterSvgDataUrl = ({
     assetType,
     count,
@@ -647,8 +694,7 @@
     const tone = getClusterTone(onlineCount, problemCount);
     const typeMeta = getAssetClusterTypeMeta(assetType);
     const normalizedAssetType = String(assetType || '').toLowerCase();
-    const centerGraphic =
-      typeMeta.iconType === 'cctv-marker' ? buildCctvClusterMarkerSvg(size) : typeMeta.icon;
+    const centerGraphic = buildOnlyIconClusterSvg(typeMeta, size);
     const typeLabel =
       normalizedAssetType === 'cctv'
         ? ''
@@ -1082,7 +1128,7 @@
         this.element.style.top = `${pixel.y}px`;
         this.element.title = this.gate.gate_name || this.gate.gate_code || 'Gate Alert';
         this.element.innerHTML =
-          '<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"></span>';
+          `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><img src="${escapeHtml(ONLY_ICON_URLS.gate)}" alt="" aria-hidden="true" /></span>`;
       }
 
       onRemove() {
@@ -2165,6 +2211,7 @@
       });
       let markerClustererLib = null;
       try {
+        await loadOnlyIconDataUris();
         markerClustererLib = await loadMarkerClustererLibrary();
       } catch (clusterError) {
         debugLog('updateDefaultCctvMarkers:cluster-library-error', {
