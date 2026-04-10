@@ -311,7 +311,26 @@
     if (Number.isNaN(date.getTime())) {
       return String(value);
     }
-    return `${date.toLocaleDateString('id-ID')} ${date.toLocaleTimeString('id-ID')}`;
+    const monthNames = [
+      'januari',
+      'februari',
+      'maret',
+      'april',
+      'mei',
+      'juni',
+      'juli',
+      'agustus',
+      'september',
+      'oktober',
+      'november',
+      'desember',
+    ];
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = monthNames[date.getMonth()] || '';
+    const year = String(date.getFullYear());
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${day}-${month}-${year} ${hours}:${minutes}`;
   };
 
   const normalizePhoneNumber = (value) => {
@@ -358,6 +377,16 @@
     }
     if (normalized === 'error' || normalized === 'offline') {
       return 'danger';
+    }
+    return 'neutral';
+  };
+  const getSeverityTone = (severity) => {
+    const normalized = String(severity || '').trim().toLowerCase();
+    if (normalized === 'high') {
+      return 'danger';
+    }
+    if (normalized === 'warning') {
+      return 'warning';
     }
     return 'neutral';
   };
@@ -470,7 +499,7 @@
               <span class="status-pill ${getGateIssueStatusTone(entry.status)}">${escapeHtml(String(entry.status || '-').toUpperCase())}</span>
             </div>
             <span>${escapeHtml(entry.logDescription)}</span>
-            <small>${escapeHtml([entry.severity, entry.lastUpdateAt ? toDateTime(entry.lastUpdateAt) : ''].filter(Boolean).join(' | '))}</small>
+            <small class="sos-gate-log-list__meta">${entry.severity ? `<span class="status-pill ${getSeverityTone(entry.severity)}">${escapeHtml(String(entry.severity).toUpperCase())}</span>` : ''}${entry.lastUpdateAt ? `<span>${escapeHtml(toDateTime(entry.lastUpdateAt))}</span>` : ''}</small>
           </div>
         `
       )
