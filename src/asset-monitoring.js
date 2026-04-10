@@ -677,7 +677,7 @@
     if (!dataUri) {
       return typeMeta.iconType === 'cctv-marker' ? buildCctvClusterMarkerSvg(size) : typeMeta.icon;
     }
-    const imageSize = Math.round(size * 0.78);
+    const imageSize = Math.round(size * 0.64);
     const imageOffset = Math.round((size - imageSize) / 2);
     return `<image href="${escapeHtml(dataUri)}" x="${imageOffset}" y="${imageOffset}" width="${imageSize}" height="${imageSize}" preserveAspectRatio="xMidYMid meet" />`;
   };
