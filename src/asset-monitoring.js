@@ -665,14 +665,15 @@
   };
 
   const buildClusterCountBadgeSvg = (count, size) => {
-    const displayCount = Number(count || 0) > 99 ? '99+' : String(count || 0);
-    const badgeWidth = displayCount.length >= 3 ? 28 : displayCount.length === 2 ? 22 : 18;
+    const displayCount = String(Number(count || 0));
+    const badgeWidth = Math.min(size - 2, Math.max(18, displayCount.length * 7 + 10));
     const badgeHeight = 18;
-    const x = size - badgeWidth - 1;
+    const fontSize = displayCount.length >= 5 ? 7 : displayCount.length >= 4 ? 8 : displayCount.length >= 3 ? 9 : 10;
+    const x = Math.max(1, size - badgeWidth - 1);
     const y = 1;
     return `
       <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="#E63946" />
-      <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${displayCount.length >= 3 ? 9 : 10}" font-weight="800">${displayCount}</text>
+      <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${fontSize}" font-weight="800">${displayCount}</text>
     `;
   };
 
