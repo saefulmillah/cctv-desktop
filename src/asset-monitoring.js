@@ -554,7 +554,7 @@
   const ONLY_ICON_URLS = {
     cctv: new URL('./assets/MARKER/CLUSTER_CCTV.svg', window.location.href).toString(),
     gate: new URL('./assets/MARKER/CLUSTER_GATE.svg', window.location.href).toString(),
-    mixed: new URL('./assets/MARKER/COLOR_MIXED.svg', window.location.href).toString(),
+    mixed: new URL('./assets/ONLY3_MIXED.svg', window.location.href).toString(),
     vms: new URL('./assets/MARKER/CLUSTER_VMS.svg', window.location.href).toString(),
   };
   const COLOR_ICON_URLS = {
@@ -1192,14 +1192,18 @@
           return;
         }
         const tone = getGateMarkerTone(this.gate);
+        const isNormalGate = tone === 'success';
         this.element.className = `sos-map-marker asset-map-marker asset-map-marker--${tone} ${
+          isNormalGate ? 'asset-map-marker--icon-only' : ''
+        } ${
           this.gate.pulse ? 'asset-map-marker--pulse' : ''
         } ${String(state.gateAlerts.selectedGateId || '') === String(this.gate.gate_id) ? 'is-selected' : ''}`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
         this.element.title = this.gate.gate_name || this.gate.gate_code || 'Gate Alert';
-        this.element.innerHTML =
-          `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><img src="${escapeHtml(getGateMarkerIconUrl(this.gate))}" alt="" aria-hidden="true" /></span>`;
+        this.element.innerHTML = isNormalGate
+          ? `<img class="asset-map-marker__icon" src="${escapeHtml(getGateMarkerIconUrl(this.gate))}" alt="" aria-hidden="true" />`
+          : `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><img src="${escapeHtml(getGateMarkerIconUrl(this.gate))}" alt="" aria-hidden="true" /></span>`;
       }
 
       onRemove() {

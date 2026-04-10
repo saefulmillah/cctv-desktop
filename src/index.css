@@ -2430,6 +2430,59 @@ body.sos-mode .asset-toolbar-control {
   height: calc(100% - 10px);
 }
 
+.asset-map-marker--danger.sos-map-marker .sos-map-marker__dot img,
+.asset-map-marker--warning.sos-map-marker .sos-map-marker__dot img {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.asset-map-marker--danger.sos-map-marker,
+.asset-map-marker--warning.sos-map-marker {
+  width: 60px;
+  height: 60px;
+}
+
+.asset-map-marker--danger.sos-map-marker.is-selected,
+.asset-map-marker--warning.sos-map-marker.is-selected {
+  width: 68px;
+  height: 68px;
+}
+
+.asset-map-marker--danger.sos-map-marker .sos-map-marker__dot,
+.asset-map-marker--warning.sos-map-marker .sos-map-marker__dot {
+  inset: 12px;
+}
+
+.asset-map-marker--danger.sos-map-marker.is-selected .sos-map-marker__dot,
+.asset-map-marker--warning.sos-map-marker.is-selected .sos-map-marker__dot {
+  inset: 13px;
+}
+
+.asset-map-marker--icon-only.sos-map-marker {
+  width: 34px;
+  height: 34px;
+}
+
+.asset-map-marker--icon-only.sos-map-marker.is-selected {
+  width: 40px;
+  height: 40px;
+}
+
+.asset-map-marker--icon-only .sos-map-marker__pulse,
+.asset-map-marker--icon-only .sos-map-marker__dot {
+  display: none;
+}
+
+.asset-map-marker__icon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
 .asset-map-marker.sos-map-marker.is-selected {
   width: 64px;
   height: 64px;
