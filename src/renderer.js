@@ -3807,5 +3807,20 @@ window.cameraService.onReloadStreams(() => {
   refreshCurrentStreams();
 });
 
+window.__HKTV_PAUSE_GRID_STREAMS__ = () => {
+  clearPlayers();
+  addActivity('Grid streams paused', 'Streaming grid dihentikan sementara saat Asset Monitoring aktif.', 'warning');
+};
+
+window.__HKTV_RESUME_GRID_STREAMS__ = async () => {
+  if (isSosModeActive()) {
+    return;
+  }
+  if (!activeBranch || !activeBranch.id) {
+    return;
+  }
+  await refreshCurrentStreams();
+};
+
 
 

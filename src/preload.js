@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('cameraService', {
   getMapBranches: () => ipcRenderer.invoke('camera-service:get-map-branches'),
   getGateAlerts: (query) => ipcRenderer.invoke('camera-service:get-gate-alerts', query),
   getGateAlertDetail: (gateId) => ipcRenderer.invoke('camera-service:get-gate-alert-detail', gateId),
+  getMapNetworkArcs: (query) => ipcRenderer.invoke('camera-service:get-map-network-arcs', query),
   getCameras: (query) => ipcRenderer.invoke('camera-service:get-cameras', query),
   getMapAssets: (query) => ipcRenderer.invoke('camera-service:get-map-assets', query),
   getMapAssetDetail: (assetType, id) =>

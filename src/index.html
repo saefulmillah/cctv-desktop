@@ -97,6 +97,10 @@
           <input id="sosGateToggle" type="checkbox" checked />
           <span>Gerbang</span>
         </label>
+        <label class="sos-map-toggle asset-toolbar-control" for="sosNetworkToggle">
+          <input id="sosNetworkToggle" type="checkbox" checked />
+          <span>Network</span>
+        </label>
         <div class="toolbar-menu-wrap">
           <button id="toolbarMenuBtn" class="toolbar-btn" type="button" aria-haspopup="true">
             Menu
@@ -131,6 +135,8 @@
       <div class="sos-dashboard__layout">
         <section class="sos-map-shell">
           <div id="sosMap" class="sos-map" aria-label="Asset monitoring map"></div>
+          <div id="networkArcTooltip" class="network-arc-tooltip hidden" role="status" aria-live="polite"></div>
+          <div id="mapCameraDebug" class="map-camera-debug" aria-live="polite"></div>
           <div class="asset-map-topbar">
             <div class="asset-map-topbar__title">
               <p class="eyebrow">HK TOLL VISION</p>
@@ -146,6 +152,13 @@
                 <option value="default">Default</option>
                 <option value="minimal-light">Minimal Light</option>
               </select>
+              <div class="asset-map-camera-toggle" role="group" aria-label="Map camera mode">
+                <button id="sosMapNormalBtn" class="toolbar-btn asset-map-camera-toggle__btn is-active" type="button">Normal</button>
+                <button id="sosMapTiltBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button">Tilt</button>
+                <button id="sosMapRotateLeftBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button" aria-label="Rotate Left">Left</button>
+                <button id="sosMapRotateRightBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button" aria-label="Rotate Right">Right</button>
+                <button id="sosMapResetCameraBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button">Reset</button>
+              </div>
               <span id="sosConnectionBadge" class="status-pill neutral">Idle</span>
               <button id="sosRefreshBtn" class="toolbar-btn" type="button">Refresh Monitor</button>
             </div>
@@ -524,6 +537,7 @@
       <div id="healthMonitorGrid" class="health-monitor__grid"></div>
     </aside>
 
+    <script src="https://unpkg.com/deck.gl@9.1.12/dist.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <script src="./renderer.js"></script>
     <script src="./asset-monitoring.js"></script>

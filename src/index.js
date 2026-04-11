@@ -781,6 +781,14 @@ const registerServiceHandlers = () => {
     }
   });
 
+  ipcMain.handle('camera-service:get-map-network-arcs', async (_event, query) => {
+    try {
+      return await cameraService.getMapNetworkArcs(query);
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
   ipcMain.handle('camera-service:get-branch-pages', async (_event, branchId) => {
     try {
       return await cameraService.getBranchPages(branchId);
