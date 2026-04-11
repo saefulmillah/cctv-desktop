@@ -2228,6 +2228,8 @@
     return [...rgb.map((value) => Number(value) || 0), alpha];
   };
 
+  const NETWORK_NEON_BLUE = [0, 224, 255];
+
   const syncNetworkOverlay = () => {
     if (!state.networkArcs.overlay) {
       return;
@@ -2261,22 +2263,28 @@
           getSourceColor: (d) => {
             const isSelected = d.edgeKey === state.networkArcs.selectedEdgeKey;
             const isHovered = d.edgeKey === state.networkArcs.hoveredEdgeKey;
-            return withAlpha(d.arc.color, isSelected ? 255 : isHovered ? 230 : hasSelection || hasHover ? 120 : 190);
+            return withAlpha(
+              NETWORK_NEON_BLUE,
+              isSelected ? 255 : isHovered ? 245 : hasSelection || hasHover ? 150 : 225
+            );
           },
           getTargetColor: (d) => {
             const isSelected = d.edgeKey === state.networkArcs.selectedEdgeKey;
             const isHovered = d.edgeKey === state.networkArcs.hoveredEdgeKey;
-            return withAlpha(d.arc.color, isSelected ? 255 : isHovered ? 230 : hasSelection || hasHover ? 120 : 190);
+            return withAlpha(
+              NETWORK_NEON_BLUE,
+              isSelected ? 255 : isHovered ? 245 : hasSelection || hasHover ? 150 : 225
+            );
           },
           getWidth: (d) => {
             const baseWidth = Number(d.arc.width) || 1;
             if (d.edgeKey === state.networkArcs.selectedEdgeKey) {
-              return baseWidth + 1.4;
+              return baseWidth + 2.1;
             }
             if (d.edgeKey === state.networkArcs.hoveredEdgeKey) {
-              return baseWidth + 0.8;
+              return baseWidth + 1.4;
             }
-            return baseWidth;
+            return baseWidth + 0.8;
           },
           getHeight: (d) => (Number(d.arc.height) || 0.35) * heightScale,
           onHover: (info) => {
