@@ -23,11 +23,9 @@
   const sosRouteTitleEl = $('sosRouteTitle');
   const assetMapSubtitleEl = $('assetMapSubtitle');
   const sosMapEl = $('sosMap');
-  const mapCameraDebugEl = $('mapCameraDebug');
   const sosMapLoadingEl = $('sosMapLoading');
   const sosMapEmptyEl = $('sosMapEmpty');
   const sosBranchSelectEl = $('sosBranchSelect');
-  const sosMapThemeSelectEl = $('sosMapThemeSelect');
   const sosMapNormalBtn = $('sosMapNormalBtn');
   const sosMapTiltBtn = $('sosMapTiltBtn');
   const sosMapRotateLeftBtn = $('sosMapRotateLeftBtn');
@@ -205,9 +203,7 @@
     activeWorkspaceBranch: null,
   };
 
-  const debugLog = (...args) => {
-    console.info('[asset-monitoring]', ...args);
-  };
+  const debugLog = () => {};
 
   const setText = (element, value) => {
     if (element) {
@@ -1273,6 +1269,9 @@
         }`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
+        this.element.style.zIndex = String(
+          getMapMarkerZIndex(this.alert.sos_id === state.selectedSosId ? 'selected' : 'default')
+        );
         this.element.innerHTML =
           '<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"></span>';
       }
@@ -1301,6 +1300,22 @@
       return 'warning';
     }
     return 'success';
+  };
+
+  const getMapMarkerZIndex = (variant = 'default') => {
+    const networkVisible = Boolean(state.networkArcs && state.networkArcs.visible);
+    if (networkVisible) {
+      if (variant === 'selected') return 60;
+      if (variant === 'cluster') return 28;
+      if (variant === 'spiderfy') return 40;
+      if (variant === 'polyline') return 8;
+      return 20;
+    }
+    if (variant === 'selected') return 1000;
+    if (variant === 'cluster') return 900;
+    if (variant === 'spiderfy') return 950;
+    if (variant === 'polyline') return 1;
+    return 300;
   };
 
   const getGateMarkerClass = () => {
@@ -1350,6 +1365,15 @@
         }`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
+        this.element.style.zIndex = String(
+          getMapMarkerZIndex(
+            String(state.gateAlerts.selectedGateId || '') === String(this.gate.gate_id)
+              ? 'selected'
+              : isCluster
+                ? 'cluster'
+                : 'default'
+          )
+        );
         this.element.title = isCluster
           ? `${Number(this.gate.count || 0)} gate alert`
           : this.gate.gate_name || this.gate.gate_code || 'Gate Alert';
@@ -1378,9 +1402,6 @@
   const applyMapTheme = (preset) => {
     const normalized = MAP_THEME_PRESETS[preset] !== undefined ? preset : 'dark-ops';
     state.mapContext.themePreset = normalized;
-    if (sosMapThemeSelectEl) {
-      sosMapThemeSelectEl.value = normalized;
-    }
     if (state.map && isVectorRenderingActive() && window.google && window.google.maps && window.google.maps.ColorScheme) {
       const colorScheme =
         normalized === 'dark-ops'
@@ -1438,19 +1459,7 @@
   };
 
   const syncMapThemeControlState = () => {
-    if (!sosMapThemeSelectEl) {
-      return;
-    }
-    const canUseColorScheme =
-      Boolean(state.map) &&
-      isVectorRenderingActive() &&
-      Boolean(window.google && window.google.maps && window.google.maps.ColorScheme);
-    sosMapThemeSelectEl.disabled = false;
-    sosMapThemeSelectEl.title = canUseColorScheme
-      ? 'Theme menggunakan Google Maps ColorScheme.'
-      : hasGoogleMapsMapId()
-        ? 'Map ID aktif. Jika theme tidak berubah, periksa style cloud map Anda.'
-        : '';
+    // Theme selector removed for production build.
   };
 
   const renderMapCameraModeControls = () => {
@@ -1467,51 +1476,8 @@
     return Number.isFinite(numeric) ? String(Math.round(numeric * 10) / 10) : '-';
   };
 
-  const getThemeRuntimeLabel = () => {
-    const selectedTheme = String(state.mapContext.themePreset || 'dark-ops');
-    const schemeLabel =
-      state.map && isVectorRenderingActive() && window.google && window.google.maps && window.google.maps.ColorScheme
-        ? selectedTheme === 'dark-ops'
-          ? 'ColorScheme.DARK'
-          : selectedTheme === 'minimal-light'
-            ? 'ColorScheme.LIGHT'
-            : 'ColorScheme.FOLLOW_SYSTEM'
-        : hasGoogleMapsMapId()
-          ? 'Map ID style'
-          : 'Local styles';
-    return `${selectedTheme} • ${schemeLabel}`;
-  };
-
   const renderMapCameraDebug = () => {
-    if (!mapCameraDebugEl) {
-      return;
-    }
-    const zoom =
-      state.map && typeof state.map.getZoom === 'function'
-        ? Number(state.map.getZoom() || MAP_ZOOM_BRANCH)
-        : MAP_ZOOM_BRANCH;
-    const heading =
-      state.map && typeof state.map.getHeading === 'function'
-        ? Number(state.map.getHeading() || state.mapContext.cameraHeading || 0)
-        : Number(state.mapContext.cameraHeading || 0);
-    const tilt =
-      state.map && typeof state.map.getTilt === 'function'
-        ? Number(state.map.getTilt() || (state.mapContext.cameraMode === 'tilt' ? 45 : 0))
-        : state.mapContext.cameraMode === 'tilt'
-          ? 45
-          : 0;
-    const renderingType =
-      state.map && typeof state.map.getRenderingType === 'function'
-        ? String(state.map.getRenderingType() || '-')
-        : '-';
-    mapCameraDebugEl.innerHTML = `
-      <div class="map-camera-debug__row"><span class="map-camera-debug__label">Zoom</span><strong class="map-camera-debug__value">${escapeHtml(formatCameraNumber(zoom))}</strong></div>
-      <div class="map-camera-debug__row"><span class="map-camera-debug__label">Tilt</span><strong class="map-camera-debug__value">${escapeHtml(formatCameraNumber(tilt))}</strong></div>
-      <div class="map-camera-debug__row"><span class="map-camera-debug__label">Heading</span><strong class="map-camera-debug__value">${escapeHtml(formatCameraNumber(heading))}</strong></div>
-      <div class="map-camera-debug__row"><span class="map-camera-debug__label">Mode</span><strong class="map-camera-debug__value">${escapeHtml(String(state.mapContext.cameraMode || 'normal').toUpperCase())}</strong></div>
-      <div class="map-camera-debug__row"><span class="map-camera-debug__label">Theme</span><strong class="map-camera-debug__value">${escapeHtml(getThemeRuntimeLabel())}</strong></div>
-      <div class="map-camera-debug__row"><span class="map-camera-debug__label">Render</span><strong class="map-camera-debug__value">${escapeHtml(renderingType)}</strong></div>
-    `;
+    // Debug camera panel removed for production build.
   };
 
   const getCurrentMapCamera = () => ({
@@ -2228,7 +2194,7 @@
     return [...rgb.map((value) => Number(value) || 0), alpha];
   };
 
-  const NETWORK_NEON_BLUE = [0, 224, 255];
+  const NETWORK_NEON_BLUE = [64, 238, 255];
 
   const syncNetworkOverlay = () => {
     if (!state.networkArcs.overlay) {
@@ -2265,7 +2231,7 @@
             const isHovered = d.edgeKey === state.networkArcs.hoveredEdgeKey;
             return withAlpha(
               NETWORK_NEON_BLUE,
-              isSelected ? 255 : isHovered ? 245 : hasSelection || hasHover ? 150 : 225
+              isSelected ? 255 : isHovered ? 250 : hasSelection || hasHover ? 170 : 242
             );
           },
           getTargetColor: (d) => {
@@ -2273,18 +2239,18 @@
             const isHovered = d.edgeKey === state.networkArcs.hoveredEdgeKey;
             return withAlpha(
               NETWORK_NEON_BLUE,
-              isSelected ? 255 : isHovered ? 245 : hasSelection || hasHover ? 150 : 225
+              isSelected ? 255 : isHovered ? 250 : hasSelection || hasHover ? 170 : 242
             );
           },
           getWidth: (d) => {
             const baseWidth = Number(d.arc.width) || 1;
             if (d.edgeKey === state.networkArcs.selectedEdgeKey) {
-              return baseWidth + 2.1;
-            }
-            if (d.edgeKey === state.networkArcs.hoveredEdgeKey) {
               return baseWidth + 1.4;
             }
-            return baseWidth + 0.8;
+            if (d.edgeKey === state.networkArcs.hoveredEdgeKey) {
+              return baseWidth + 1.0;
+            }
+            return baseWidth + 0.5;
           },
           getHeight: (d) => (Number(d.arc.height) || 0.35) * heightScale,
           onHover: (info) => {
@@ -2443,7 +2409,9 @@
       }
       entry.marker.setPosition(entry.originalPosition);
       entry.marker.setZIndex(
-        String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId) ? 1000 : undefined
+        String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+          ? getMapMarkerZIndex('selected')
+          : getMapMarkerZIndex('default')
       );
     });
   };
@@ -2544,7 +2512,9 @@
         ),
       });
       entry.marker.setZIndex(
-        String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId) ? 1000 : undefined
+        String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+          ? getMapMarkerZIndex('selected')
+          : getMapMarkerZIndex('default')
       );
     });
     setText(
@@ -2658,7 +2628,10 @@
             getCctvMarkerScaledSize(entry.camera)
           ),
         },
-        zIndex: String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId) ? 1000 : 950,
+        zIndex:
+          String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+            ? getMapMarkerZIndex('selected')
+            : getMapMarkerZIndex('spiderfy'),
       });
       spiderfyMarker.addListener('click', () => {
         state.cctvSuppressMapClickUntil = Date.now() + 250;
@@ -2672,7 +2645,7 @@
         strokeOpacity: 0.85,
         strokeWeight: 1.5,
         clickable: false,
-        zIndex: 1,
+        zIndex: getMapMarkerZIndex('polyline'),
       });
       state.cctvSpiderfyLegs.push(leg);
       animateSpiderfyMarker(spiderfyMarker, centerLatLng, targetLatLng, leg, centerLatLng);
@@ -2753,6 +2726,9 @@
           continue;
         }
         const candidate = positioned[i];
+        if (getGateMarkerTone(candidate.gate) !== getGateMarkerTone(entry.gate)) {
+          continue;
+        }
         const dx = Number(candidate.pixel.x) - Number(entry.pixel.x);
         const dy = Number(candidate.pixel.y) - Number(entry.pixel.y);
         if (Math.hypot(dx, dy) <= Number(state.gateAlerts.clusterDistancePx || 44)) {
@@ -3155,7 +3131,10 @@
                 getCctvMarkerScaledSize(camera)
               ),
             },
-            zIndex: String(camera && camera.id) === String(state.cctvSelectedCameraId) ? 1000 : undefined,
+            zIndex:
+              String(camera && camera.id) === String(state.cctvSelectedCameraId)
+                ? getMapMarkerZIndex('selected')
+                : getMapMarkerZIndex('default'),
           });
         marker.addListener('click', () => {
           state.cctvSuppressMapClickUntil = Date.now() + 250;
@@ -3235,7 +3214,7 @@
                   }),
                   scaledSize: new window.google.maps.Size(size, size),
                 },
-                zIndex: 900,
+                zIndex: getMapMarkerZIndex('cluster'),
               });
               marker.__clusterSummary = {
                 count,
@@ -4214,9 +4193,6 @@
     state.ui.mapEmptyMessage = getDefaultMapEmptyMessage();
     setMapLoadingVisible(true);
     await loadWorkspaceBranchContext();
-    if (sosMapThemeSelectEl) {
-      sosMapThemeSelectEl.value = state.mapContext.themePreset;
-    }
     syncMapThemeControlState();
     renderMapCameraModeControls();
     if (sosNetworkToggleEl) {
@@ -4344,13 +4320,6 @@
       void refreshDashboard().catch((error) => {
         setConnectionBadge(error.message || 'Gagal mengganti branch monitoring.', 'danger');
       });
-    });
-  }
-
-  if (sosMapThemeSelectEl) {
-    sosMapThemeSelectEl.addEventListener('change', () => {
-      applyMapTheme(String(sosMapThemeSelectEl.value || 'dark-ops'));
-      void persistAssetMonitoringPrefs();
     });
   }
 
