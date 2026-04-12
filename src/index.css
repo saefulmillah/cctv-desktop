@@ -2417,6 +2417,10 @@ body.sos-mode .asset-toolbar-control {
   cursor: pointer;
 }
 
+.sos-map-marker.is-entering {
+  animation: mapMarkerPopIn 420ms cubic-bezier(0.22, 1, 0.36, 1) 800ms both;
+}
+
 .sos-map-marker__pulse,
 .sos-map-marker__dot {
   position: absolute;
@@ -2594,6 +2598,10 @@ body.sos-mode .asset-toolbar-control {
   overflow: visible;
 }
 
+.weather-map-marker.is-entering .weather-map-marker__pin {
+  animation: weatherMarkerPopIn 420ms cubic-bezier(0.22, 1, 0.36, 1) 800ms both;
+}
+
 .weather-map-marker__pin {
   position: relative;
   width: 42px;
@@ -2697,6 +2705,36 @@ body.sos-mode .asset-toolbar-control {
 
 .weather-map-marker.is-stale .weather-map-marker__pin {
   background: linear-gradient(180deg, #4d8cff 0%, #315fc9 100%);
+}
+
+@keyframes mapMarkerPopIn {
+  0% {
+    transform: translate(-50%, -50%) scale(0.7);
+    opacity: 0;
+  }
+  68% {
+    transform: translate(-50%, -50%) scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes weatherMarkerPopIn {
+  0% {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+  68% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .map-camera-debug {

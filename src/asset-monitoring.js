@@ -790,6 +790,40 @@
 
   const svgTextToDataUri = (value) =>
     `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(String(value || '').trim())}`;
+  const MARKER_ENTRANCE_DELAY_MS = 800;
+  const MARKER_ENTRANCE_DURATION_MS = 420;
+  let cctvClusterAnimationNonce = 0;
+
+  const buildAnimatedMapMarkerIconDataUrl = (iconUrl, size) => {
+    const safeUrl = escapeHtml(String(iconUrl || ''));
+    const safeSize = Math.max(20, Number(size) || 36);
+    const center = safeSize / 2;
+    return svgTextToDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="${safeSize}" height="${safeSize}" viewBox="0 0 ${safeSize} ${safeSize}">
+        <image
+          href="${safeUrl}"
+          x="0"
+          y="0"
+          width="${safeSize}"
+          height="${safeSize}"
+          preserveAspectRatio="xMidYMid meet"
+          transform-origin="${center} ${center}"
+        >
+          <animateTransform
+            attributeName="transform"
+            type="scale"
+            begin="${MARKER_ENTRANCE_DELAY_MS}ms"
+            dur="${MARKER_ENTRANCE_DURATION_MS}ms"
+            calcMode="spline"
+            keyTimes="0;0.68;1"
+            keySplines="0.22 1 0.36 1;0.22 1 0.36 1"
+            values="0.72 0.72;1.08 1.08;1 1"
+            fill="freeze"
+          />
+        </image>
+      </svg>
+    `);
+  };
 
   const WEATHER_FALLBACK_ICON_URL = svgTextToDataUri(`
     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
@@ -924,12 +958,12 @@
     `;
   };
 
-  const buildCctvClusterMarkerSvg = (size) => {
+  const buildCctvClusterMarkerSvg = (size, gradientId = 'cctvMarkerGradient') => {
     const scale = size * 0.00084;
     const offset = (size / 2) - (364 * scale);
     return `
       <g transform="translate(${offset.toFixed(2)} ${offset.toFixed(2)}) scale(${scale.toFixed(5)})">
-        <circle cx="364" cy="364" r="340" fill="url(#cctvMarkerGradient)" stroke="#ffffff" stroke-width="38" />
+        <circle cx="364" cy="364" r="340" fill="url(#${gradientId})" stroke="#ffffff" stroke-width="38" />
         <path fill="#ffffff" d="M247.6 233.8 515.6 359.5 536.8 389.1 478.2 514.1 181.4 374.9z" />
         <path fill="#ffffff" d="M533 409.9 553.4 419.5 519.6 491.3 499.3 481.8z" />
         <path fill="#ffffff" d="M577.5 421.1 600.9 432.1 559.7 519.8 533.1 507.3 527.7 493.7 560.2 424.3z" />
@@ -940,10 +974,10 @@
     `;
   };
 
-  const buildOnlyIconClusterSvg = (typeMeta, size) => {
+  const buildOnlyIconClusterSvg = (typeMeta, size, gradientId) => {
     const dataUri = state.onlyIconDataUris[typeMeta.iconKey];
     if (!dataUri) {
-      return typeMeta.iconType === 'cctv-marker' ? buildCctvClusterMarkerSvg(size) : typeMeta.icon;
+      return typeMeta.iconType === 'cctv-marker' ? buildCctvClusterMarkerSvg(size, gradientId) : typeMeta.icon;
     }
     const imageRatio = typeMeta.iconKey === 'cctv' || typeMeta.iconKey === 'mixed' ? 0.54 : 0.64;
     const imageSize = Math.round(size * imageRatio);
@@ -973,10 +1007,14 @@
     onlineCount,
     warningCount,
     offlineCount,
+    animationKey = '',
   }) => {
     const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
     const typeMeta = getAssetClusterTypeMeta(assetType);
     const useCenterCountOnly = String(assetType || '').toLowerCase() === 'mixed';
+    const svgToken = String(animationKey || `cluster-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const clusterGlowId = `clusterGlow-${svgToken}`;
+    const cctvMarkerGradientId = `cctvMarkerGradient-${svgToken}`;
     const tone = {
       fill: '#41E75D',
       border: 'rgba(255,255,255,0.24)',
@@ -984,22 +1022,35 @@
     };
     const centerGraphic = useCenterCountOnly
       ? buildCenterCountClusterSvg(count, size)
-      : buildOnlyIconClusterSvg(typeMeta, size);
+      : buildOnlyIconClusterSvg(typeMeta, size, cctvMarkerGradientId);
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
         <defs>
-          <filter id="clusterGlow" x="-65%" y="-65%" width="230%" height="230%">
+          <filter id="${clusterGlowId}" x="-65%" y="-65%" width="230%" height="230%">
             <feGaussianBlur stdDeviation="7" />
           </filter>
-          <linearGradient id="cctvMarkerGradient" x1="0" y1="0" x2="728" y2="728" gradientUnits="userSpaceOnUse">
+          <linearGradient id="${cctvMarkerGradientId}" x1="0" y1="0" x2="728" y2="728" gradientUnits="userSpaceOnUse">
             <stop offset="0" stop-color="#ff3131" />
             <stop offset="1" stop-color="#ff914d" />
           </linearGradient>
         </defs>
-        <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 6}" fill="${tone.glow}" filter="url(#clusterGlow)" />
+        <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 6}" fill="${tone.glow}" filter="url(#${clusterGlowId})" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
-        ${centerGraphic}
+        <g transform-origin="${size / 2} ${size / 2}">
+          <animateTransform
+            attributeName="transform"
+            type="scale"
+            begin="${MARKER_ENTRANCE_DELAY_MS}ms"
+            dur="${MARKER_ENTRANCE_DURATION_MS}ms"
+            calcMode="spline"
+            keyTimes="0;0.68;1"
+            keySplines="0.22 1 0.36 1;0.22 1 0.36 1"
+            values="0.7 0.7;1.08 1.08;1 1"
+            fill="freeze"
+          />
+          ${centerGraphic}
+        </g>
       </svg>
     `.trim();
     return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
@@ -1432,6 +1483,8 @@
         this.gate = gate;
         this.onSelect = onSelect;
         this.element = null;
+        this.isEntering = false;
+        this.entranceTimer = 0;
         this.setMap(map);
       }
 
@@ -1442,6 +1495,12 @@
         button.addEventListener('click', () => this.onSelect(this.gate));
         this.element = button;
         this.getPanes().overlayMouseTarget.appendChild(button);
+        this.isEntering = true;
+        this.entranceTimer = window.setTimeout(() => {
+          this.entranceTimer = 0;
+          this.isEntering = false;
+          this.draw();
+        }, MARKER_ENTRANCE_DELAY_MS + MARKER_ENTRANCE_DURATION_MS + 180);
         this.draw();
       }
 
@@ -1464,6 +1523,8 @@
         } ${
           pulseEnabled ? 'asset-map-marker--pulse' : ''
         } ${isCluster ? 'asset-map-marker--cluster' : ''} ${
+          this.isEntering ? 'is-entering' : ''
+        } ${
           String(state.gateAlerts.selectedGateId || '') === String(this.gate.gate_id) ? 'is-selected' : ''
         }`;
         this.element.style.left = `${pixel.x}px`;
@@ -1485,6 +1546,10 @@
       }
 
       onRemove() {
+        if (this.entranceTimer) {
+          window.clearTimeout(this.entranceTimer);
+          this.entranceTimer = 0;
+        }
         if (this.element && this.element.parentNode) {
           this.element.parentNode.removeChild(this.element);
         }
@@ -1511,6 +1576,8 @@
         this.onSelect = onSelect;
         this.element = null;
         this.renderKey = '';
+        this.isEntering = false;
+        this.entranceTimer = 0;
         this.setMap(map);
       }
 
@@ -1525,6 +1592,12 @@
         });
         this.element = button;
         this.getPanes().overlayMouseTarget.appendChild(button);
+        this.isEntering = true;
+        this.entranceTimer = window.setTimeout(() => {
+          this.entranceTimer = 0;
+          this.isEntering = false;
+          this.draw();
+        }, MARKER_ENTRANCE_DELAY_MS + MARKER_ENTRANCE_DURATION_MS + 180);
         this.draw();
       }
 
@@ -1540,7 +1613,7 @@
         }
         const isExpanded = isWeatherMarkerExpanded(this.weather.id);
         const isStale = Boolean(this.weather.is_stale);
-        this.element.className = `weather-map-marker ${isExpanded ? 'is-expanded' : ''} ${isStale ? 'is-stale' : ''}`;
+        this.element.className = `weather-map-marker ${this.isEntering ? 'is-entering' : ''} ${isExpanded ? 'is-expanded' : ''} ${isStale ? 'is-stale' : ''}`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
         this.element.style.zIndex = String(getWeatherMarkerZIndex(isExpanded));
@@ -1585,6 +1658,10 @@
       }
 
       onRemove() {
+        if (this.entranceTimer) {
+          window.clearTimeout(this.entranceTimer);
+          this.entranceTimer = 0;
+        }
         if (this.element && this.element.parentNode) {
           this.element.parentNode.removeChild(this.element);
         }
@@ -3703,6 +3780,7 @@
               });
               const assetType = getClusterAssetType(clusterMarkers);
               const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
+              const animationKey = `cluster-${++cctvClusterAnimationNonce}-${assetType}-${count}`;
               const marker = new window.google.maps.Marker({
                 position,
                 icon: {
@@ -3712,6 +3790,7 @@
                     onlineCount: summary.onlineCount,
                     warningCount,
                     offlineCount: summary.offlineCount,
+                    animationKey,
                   }),
                   scaledSize: new window.google.maps.Size(size, size),
                 },
