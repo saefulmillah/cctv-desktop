@@ -1804,6 +1804,52 @@ body.sos-mode .current-branch {
   text-transform: uppercase;
 }
 
+.sos-incident-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sos-incident-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(234, 245, 255, 0.16);
+  background: rgba(245, 250, 255, 0.05);
+  color: rgba(215, 236, 255, 0.78);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.sos-incident-filter-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(86, 193, 255, 0.34);
+  color: #f2fbff;
+}
+
+.sos-incident-filter-chip:focus-visible {
+  outline: 2px solid rgba(255, 159, 28, 0.55);
+  outline-offset: 2px;
+}
+
+.sos-incident-filter-chip.is-active {
+  border-color: rgba(30, 216, 222, 0.52);
+  background: rgba(30, 216, 222, 0.16);
+  color: #f4feff;
+  box-shadow: 0 0 0 1px rgba(30, 216, 222, 0.12);
+}
+
 .sos-incident-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -1851,6 +1897,16 @@ body.sos-mode .current-branch {
     transform 0.18s ease,
     border-color 0.18s ease,
     background 0.18s ease;
+}
+
+.sos-incident-item.is-entering {
+  animation: incidentListEnter 0.32s cubic-bezier(0.18, 0.88, 0.24, 1) both;
+}
+
+.sos-incident-item.is-leaving {
+  pointer-events: none;
+  user-select: none;
+  animation: incidentListLeave 0.22s ease forwards;
 }
 
 .sos-incident-item--summary {
@@ -1980,6 +2036,26 @@ body.sos-mode .current-branch {
 
 .sos-incident-list:has(.sos-incident-item--empty) {
   align-content: center;
+}
+
+@keyframes incidentListEnter {
+  from {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes incidentListLeave {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 .sos-floating-notifications,
