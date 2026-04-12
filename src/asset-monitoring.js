@@ -190,6 +190,7 @@
     cctvMapBranchLabel: '',
     cctvMapLayerKey: '',
     cctvViewportKey: '',
+    cctvClusterOverlayKey: '',
     cctvVisible: true,
     vmsVisible: true,
     cctvCacheByBranch: new Map(),
@@ -1184,6 +1185,11 @@
         projection.fromDivPixelToLatLng(new window.google.maps.Point(avgX, avgY)) || group[0].latLng;
       const clusterEntries = group.map((item) => item.entry);
       clusters.push({
+        key: clusterEntries
+          .map((entry) => String(entry && entry.camera && entry.camera.id ? entry.camera.id : ''))
+          .filter(Boolean)
+          .sort()
+          .join(','),
         count: clusterEntries.length,
         entries: clusterEntries,
         position: centerLatLng,
@@ -1589,6 +1595,7 @@
         super();
         this.map = map;
         this.cluster = cluster;
+        this.clusterKey = String(cluster && cluster.key ? cluster.key : '');
         this.onSelect = onSelect;
         this.element = null;
         this.isEntering = false;
@@ -1638,6 +1645,23 @@
 
       setDimmed(dimmed) {
         this.isDimmed = Boolean(dimmed);
+        this.draw();
+      }
+
+      update(cluster, options = {}) {
+        this.cluster = cluster;
+        this.clusterKey = String(cluster && cluster.key ? cluster.key : '');
+        if (options.animate) {
+          this.isEntering = true;
+          if (this.entranceTimer) {
+            window.clearTimeout(this.entranceTimer);
+          }
+          this.entranceTimer = window.setTimeout(() => {
+            this.entranceTimer = 0;
+            this.isEntering = false;
+            this.draw();
+          }, MARKER_ENTRANCE_DELAY_MS + MARKER_ENTRANCE_DURATION_MS + 180);
+        }
         this.draw();
       }
 
@@ -2891,6 +2915,7 @@
     state.cctvMapBranchLabel = '';
     state.cctvMapLayerKey = '';
     state.cctvViewportKey = '';
+    state.cctvClusterOverlayKey = '';
     state.cctvMarkerLoadSeq += 1;
     clearCctvMarkers({ invalidate: false });
   };
@@ -3288,13 +3313,14 @@
       state.cctvProjectionOverlay && typeof state.cctvProjectionOverlay.getProjection === 'function'
         ? state.cctvProjectionOverlay.getProjection()
         : null;
-    state.cctvClusterRenderMarkers.forEach((marker) => {
-      if (marker && typeof marker.setMap === 'function') {
-        marker.setMap(null);
-      }
-    });
-    state.cctvClusterRenderMarkers = [];
     if (!state.map || !projection) {
+      state.cctvClusterOverlayKey = '';
+      state.cctvClusterRenderMarkers.forEach((marker) => {
+        if (marker && typeof marker.setMap === 'function') {
+          marker.setMap(null);
+        }
+      });
+      state.cctvClusterRenderMarkers = [];
       state.cctvMarkers.forEach((entry) => {
         if (entry && entry.marker && typeof entry.marker.setMap === 'function') {
           entry.marker.setMap(state.map || null);
@@ -3303,6 +3329,42 @@
       return;
     }
     const { singles, clusters } = buildManualCctvClusters(state.cctvMarkers, projection);
+    const nextOverlayKey = [
+      `s:${singles
+        .map((entry) => String(entry && entry.camera && entry.camera.id ? entry.camera.id : ''))
+        .filter(Boolean)
+        .sort()
+        .join('|')}`,
+      ...clusters.map((cluster) =>
+        `c:${cluster.entries
+          .map((entry) => String(entry && entry.camera && entry.camera.id ? entry.camera.id : ''))
+          .filter(Boolean)
+          .sort()
+          .join(',')}`
+      ),
+    ].join('::');
+    if (state.cctvClusterOverlayKey === nextOverlayKey) {
+      return;
+    }
+    state.cctvClusterOverlayKey = nextOverlayKey;
+    const staleClusterMarkers = [];
+    const existingClusterMarkers = new Map();
+    state.cctvClusterRenderMarkers.forEach((marker) => {
+      if (!marker) {
+        return;
+      }
+      const clusterKey = String(marker && marker.clusterKey ? marker.clusterKey : '');
+      if (!clusterKey) {
+        staleClusterMarkers.push(marker);
+        return;
+      }
+      if (existingClusterMarkers.has(clusterKey)) {
+        staleClusterMarkers.push(marker);
+        return;
+      }
+      existingClusterMarkers.set(clusterKey, marker);
+    });
+    const nextClusterMarkers = [];
     const singleEntrySet = new Set(singles);
     state.cctvMarkers.forEach((entry) => {
       if (!(entry && entry.marker && typeof entry.marker.setMap === 'function')) {
@@ -3312,13 +3374,32 @@
     });
     const ClusterMarkerCtor = getCctvClusterMarkerClass();
     clusters.forEach((cluster) => {
+      const clusterKey = String(cluster && cluster.key ? cluster.key : '');
+      const existing = existingClusterMarkers.get(clusterKey);
+      if (existing && typeof existing.update === 'function') {
+        existing.update(cluster, { animate: false });
+        existingClusterMarkers.delete(clusterKey);
+        nextClusterMarkers.push(existing);
+        return;
+      }
       const overlay = new ClusterMarkerCtor({
         map: state.map,
         cluster,
         onSelect: handleCctvClusterSelect,
       });
-      state.cctvClusterRenderMarkers.push(overlay);
+      nextClusterMarkers.push(overlay);
     });
+    staleClusterMarkers.forEach((marker) => {
+      if (marker && typeof marker.setMap === 'function') {
+        marker.setMap(null);
+      }
+    });
+    existingClusterMarkers.forEach((marker) => {
+      if (marker && typeof marker.setMap === 'function') {
+        marker.setMap(null);
+      }
+    });
+    state.cctvClusterRenderMarkers = nextClusterMarkers;
   };
 
   const clearCctvMarkers = (options = {}) => {
@@ -3328,6 +3409,7 @@
     closeCctvModal();
     collapseCctvSpiderfy();
     state.cctvSelectedCameraId = null;
+    state.cctvClusterOverlayKey = '';
     state.cctvClusterRenderMarkers.forEach((marker) => {
       if (marker && typeof marker.setMap === 'function') {
         marker.setMap(null);
@@ -3902,13 +3984,24 @@
       updateMapEmptyState('');
       return;
     }
-    clearCctvMarkers({ invalidate: false });
+    const isBranchLayerChanged =
+      String(state.cctvMapBranchId) !== branchKey || state.cctvMapLayerKey !== layerKey;
+    if (isBranchLayerChanged) {
+      clearCctvMarkers({ invalidate: false });
+    } else {
+      collapseCctvSpiderfy();
+      state.cctvMarkers.forEach((entry) => {
+        if (entry && entry.marker && typeof entry.marker.setMap === 'function') {
+          entry.marker.setMap(null);
+        }
+      });
+      state.cctvMarkers = [];
+    }
     state.cctvMapBranchId = branchKey;
     state.cctvMapLayerKey = layerKey;
     state.cctvViewportKey = viewportKey;
     state.cctvMapBranchLabel = isAllBranchesSelected() ? 'Semua Branch' : branch.branch_name || branch.branch_code || '';
     try {
-      state.cctvClusterRenderMarkers = [];
       let cameras = state.cctvCacheByBranch.get(branchKey);
       const usingCache = Boolean(cameras);
       if (!cameras) {
@@ -4128,7 +4221,6 @@
     syncMapMarkers();
     syncWeatherMarkers();
     syncNetworkOverlay();
-    requestCctvClusterRender();
   };
 
   const mergeTicketToAlert = (alert) => {
