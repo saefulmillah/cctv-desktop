@@ -14,7 +14,15 @@ contextBridge.exposeInMainWorld('cameraService', {
   getBranchPages: (branchId) =>
     ipcRenderer.invoke('camera-service:get-branch-pages', branchId),
   getBranches: (query) => ipcRenderer.invoke('camera-service:get-branches', query),
+  getMapBranches: () => ipcRenderer.invoke('camera-service:get-map-branches'),
+  getGateAlerts: (query) => ipcRenderer.invoke('camera-service:get-gate-alerts', query),
+  getGateAlertDetail: (gateId) => ipcRenderer.invoke('camera-service:get-gate-alert-detail', gateId),
+  getMapNetworkArcs: (query) => ipcRenderer.invoke('camera-service:get-map-network-arcs', query),
+  getMapWeather: (query) => ipcRenderer.invoke('camera-service:get-map-weather', query),
   getCameras: (query) => ipcRenderer.invoke('camera-service:get-cameras', query),
+  getMapAssets: (query) => ipcRenderer.invoke('camera-service:get-map-assets', query),
+  getMapAssetDetail: (assetType, id) =>
+    ipcRenderer.invoke('camera-service:get-map-asset-detail', assetType, id),
   searchCameras: (query) => ipcRenderer.invoke('camera-service:search-cameras', query),
   getCamerasByBranch: (branchId, page) =>
     ipcRenderer.invoke('camera-service:get-cameras-by-branch', branchId, page),

@@ -1535,12 +1535,48 @@ body.sos-mode .grid {
   display: none;
 }
 
+body.sos-mode .toolbar {
+  left: 29px;
+  bottom: 27px;
+  transform: none;
+  width: auto;
+  max-width: calc(100vw - 36px);
+  padding: 10px 12px;
+  border-radius: 22px;
+  z-index: 12;
+}
+
+body.sos-mode .toolbar.collapsed {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  visibility: visible;
+}
+
+body.sos-mode #openBranchBtn,
+body.sos-mode #quickSearchBtn,
+body.sos-mode #layoutConfigBtn,
+body.sos-mode #focusModeBtn,
+body.sos-mode #normalModeBtn,
+body.sos-mode #reloadStreamBtn {
+  display: none;
+}
+
+body.sos-mode .toolbar-primary {
+  flex-wrap: wrap;
+  margin-right: 0;
+  gap: 10px;
+}
+
+body.sos-mode .current-branch {
+  max-width: 220px;
+}
+
 .sos-dashboard {
   position: absolute;
   inset: 18px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 16px;
+  grid-template-rows: minmax(0, 1fr);
   z-index: 6;
 }
 
@@ -1548,12 +1584,12 @@ body.sos-mode .grid {
   display: none;
 }
 
-.sos-dashboard__topbar,
 .sos-dashboard__layout {
   min-width: 0;
 }
 
-.sos-dashboard__topbar,
+.asset-map-topbar,
+.asset-map-topbar__controls,
 .sos-dashboard__actions,
 .sos-panel__header,
 .sos-incident-item__head,
@@ -1564,7 +1600,7 @@ body.sos-mode .grid {
   gap: 12px;
 }
 
-.sos-dashboard__topbar h2,
+.asset-map-topbar h2,
 .sos-panel__header h3 {
   margin: 0;
 }
@@ -1595,22 +1631,138 @@ body.sos-mode .grid {
   border-radius: 28px;
 }
 
+.asset-map-topbar {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  z-index: 3;
+  padding: 0;
+}
+
+.asset-map-topbar__title {
+  min-width: 0;
+}
+
+.asset-map-topbar__title h2 {
+  color: #ffffff;
+  -webkit-text-stroke: 0.8px rgba(9, 25, 46, 0.9);
+  text-shadow:
+    0 1px 0 rgba(9, 25, 46, 0.82),
+    0 0 12px rgba(12, 36, 63, 0.24);
+}
+
+.asset-map-topbar__subtitle {
+  margin: 6px 0 0;
+  color: rgba(231, 246, 255, 0.82);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.asset-map-topbar__controls {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.asset-map-camera-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(234, 245, 255, 0.16);
+  background: rgba(245, 250, 255, 0.07);
+  gap: 4px;
+}
+
+.asset-map-camera-toggle__btn {
+  min-height: 28px;
+  min-width: 36px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.asset-map-camera-toggle__btn.is-active {
+  border-color: rgba(86, 193, 255, 0.56);
+  background: rgba(86, 193, 255, 0.18);
+  color: #f5fbff;
+  box-shadow: inset 0 0 0 1px rgba(86, 193, 255, 0.16);
+}
+
+.asset-map-topbar__select {
+  min-height: 34px;
+  border-radius: 999px;
+  padding: 0 28px 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  outline: none;
+  text-transform: none;
+}
+
+#sosBranchSelect.asset-map-topbar__select {
+  min-width: 128px;
+}
+
+.asset-map-topbar__select:focus {
+  border-color: rgba(86, 193, 255, 0.66);
+  box-shadow: 0 0 0 3px rgba(86, 193, 255, 0.18);
+}
+
+.asset-map-topbar__select option {
+  background: #234d86;
+  color: #f4fbff;
+}
+
 .sos-map {
   width: 100%;
   height: 100%;
   min-height: 540px;
 }
 
+.network-arc-tooltip {
+  position: absolute;
+  z-index: 4;
+  max-width: 280px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(145, 217, 255, 0.26);
+  background: rgba(10, 27, 47, 0.92);
+  box-shadow: 0 18px 38px rgba(3, 14, 28, 0.34);
+  color: #eef8ff;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.network-arc-tooltip strong,
+.network-arc-tooltip span {
+  display: block;
+}
+
+.network-arc-tooltip strong {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.network-arc-tooltip span {
+  margin-top: 4px;
+  color: rgba(224, 241, 255, 0.8);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .sos-map-empty {
   position: absolute;
-  inset: 24px;
+  inset: 0;
   display: grid;
   place-items: center;
-  border-radius: 22px;
+  border-radius: 28px;
   background: rgba(9, 25, 46, 0.72);
   color: var(--muted);
   text-align: center;
-  padding: 24px;
+  padding: 32px;
   z-index: 1;
 }
 
@@ -1637,6 +1789,65 @@ body.sos-mode .grid {
 .sos-cctv-list {
   display: grid;
   gap: 12px;
+}
+
+.sos-incident-group {
+  display: grid;
+  gap: 10px;
+}
+
+.sos-incident-group__title {
+  margin: 4px 0 0;
+  color: rgba(215, 236, 255, 0.72);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sos-incident-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sos-incident-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(234, 245, 255, 0.16);
+  background: rgba(245, 250, 255, 0.05);
+  color: rgba(215, 236, 255, 0.78);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.sos-incident-filter-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(86, 193, 255, 0.34);
+  color: #f2fbff;
+}
+
+.sos-incident-filter-chip:focus-visible {
+  outline: 2px solid rgba(255, 159, 28, 0.55);
+  outline-offset: 2px;
+}
+
+.sos-incident-filter-chip.is-active {
+  border-color: rgba(30, 216, 222, 0.52);
+  background: rgba(30, 216, 222, 0.16);
+  color: #f4feff;
+  box-shadow: 0 0 0 1px rgba(30, 216, 222, 0.12);
 }
 
 .sos-incident-list {
@@ -1686,6 +1897,30 @@ body.sos-mode .grid {
     transform 0.18s ease,
     border-color 0.18s ease,
     background 0.18s ease;
+}
+
+.sos-incident-item.is-entering {
+  animation: incidentListEnter 0.32s cubic-bezier(0.18, 0.88, 0.24, 1) both;
+}
+
+.sos-incident-item.is-leaving {
+  pointer-events: none;
+  user-select: none;
+  animation: incidentListLeave 0.22s ease forwards;
+}
+
+.sos-incident-item--summary {
+  min-height: 108px;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.sos-incident-item--summary .sos-incident-item__value,
+.sos-incident-item--summary .sos-incident-item__phone,
+.sos-incident-item--summary .sos-incident-item__branch {
+  font-size: 12px;
 }
 
 .sos-incident-item:hover {
@@ -1803,6 +2038,26 @@ body.sos-mode .grid {
   align-content: center;
 }
 
+@keyframes incidentListEnter {
+  from {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes incidentListLeave {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 .sos-floating-notifications,
 .sos-detail-panel {
   position: absolute;
@@ -1810,7 +2065,7 @@ body.sos-mode .grid {
 }
 
 .sos-floating-notifications {
-  top: 18px;
+  top: 92px;
   right: 18px;
   width: min(360px, calc(100% - 36px));
   padding: 0;
@@ -1821,30 +2076,32 @@ body.sos-mode .grid {
 }
 
 .sos-map-toggle {
-  position: absolute;
-  left: 18px;
-  bottom: 18px;
-  z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: 16px;
-  border: 1px solid rgba(242, 249, 255, 0.18);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 18%),
-    linear-gradient(180deg, rgba(23, 58, 101, 0.94), rgba(17, 44, 78, 0.96));
-  box-shadow: var(--shadow);
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(234, 245, 255, 0.16);
+  background: rgba(245, 250, 255, 0.07);
   color: var(--text);
   font-size: 12px;
   font-weight: 600;
-  backdrop-filter: blur(12px);
+  cursor: pointer;
 }
 
 .sos-map-toggle input {
   width: 16px;
   height: 16px;
   accent-color: #1ed8de;
+}
+
+.asset-toolbar-control {
+  display: none;
+}
+
+body.sos-mode .asset-toolbar-control {
+  display: inline-flex;
 }
 
 .sos-floating-notifications.hidden {
@@ -1856,6 +2113,12 @@ body.sos-mode .grid {
   gap: 4px;
   border-radius: 16px;
   padding: 12px 12px 10px;
+  animation: notificationEnter 0.26s cubic-bezier(0.2, 0.9, 0.22, 1) both;
+  transform-origin: top right;
+}
+
+.sos-notification-card.is-leaving {
+  animation: notificationExit 0.22s ease forwards;
 }
 
 .sos-notification-card strong {
@@ -1908,12 +2171,13 @@ body.sos-mode .grid {
 }
 
 .sos-detail-panel {
-  left: 18px;
-  top: 18px;
+  left: 9px;
+  top: 115px;
   width: min(420px, calc(100% - 380px));
   border-radius: 22px;
   padding: 16px;
-  opacity: 0.8;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  opacity: 0.96;
   transform-origin: top left;
   transition:
     opacity 0.24s ease,
@@ -1927,8 +2191,12 @@ body.sos-mode .grid {
 }
 
 .sos-detail-panel.is-visible {
-  opacity: 0.8;
+  opacity: 0.96;
   transform: translateY(0) scale(1);
+}
+
+.sos-detail-panel.is-revealing {
+  animation: detailPanelReveal 0.24s cubic-bezier(0.2, 0.9, 0.22, 1);
 }
 
 .sos-detail-meta {
@@ -1981,6 +2249,100 @@ body.sos-mode .grid {
   line-height: 1.45;
 }
 
+.sos-gate-log-list {
+  margin-top: 14px;
+}
+
+.sos-gate-log-list__item,
+.sos-gate-log-list__empty {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(234, 245, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(245, 250, 255, 0.07);
+}
+
+.sos-gate-log-list__item {
+  display: grid;
+  gap: 4px;
+}
+
+.sos-gate-log-list__head,
+.sos-gate-log-list__item strong,
+.sos-gate-log-list__item > span,
+.sos-gate-log-list__item small {
+  display: block;
+  line-height: 1.35;
+}
+
+.sos-gate-log-list__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sos-gate-log-list__head .status-pill {
+  flex: 0 0 auto;
+}
+
+.sos-gate-log-list__item > span {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.sos-gate-log-list__item small,
+.sos-gate-log-list__empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sos-gate-log-list__meta {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
+.sos-gate-log-list__duration {
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  margin-left: auto;
+  white-space: nowrap;
+  text-shadow: 0 1px 8px rgba(8, 18, 36, 0.28);
+}
+
+.severity-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+  color: #ffffff;
+}
+
+.severity-pill.danger {
+  background: #e63946;
+}
+
+.severity-pill.warning {
+  background: #ff9c1c;
+}
+
+.severity-pill.neutral {
+  background: #6b7280;
+}
+
 .sos-detail-actions {
   margin-top: 16px;
 }
@@ -2011,6 +2373,39 @@ body.sos-mode .grid {
   transform: translateY(-1px);
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(242, 249, 255, 0.28);
+}
+
+@keyframes notificationEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes notificationExit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(18px) scale(0.98);
+  }
+}
+
+@keyframes detailPanelReveal {
+  from {
+    opacity: 0.72;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 0.96;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .sos-cctv-modal-body {
@@ -2090,12 +2485,16 @@ body.sos-mode .grid {
 
 .sos-map-marker {
   position: absolute;
-  width: 30px;
-  height: 30px;
+  width: 48px;
+  height: 48px;
   border: 0;
   background: transparent;
   transform: translate(-50%, -50%);
   cursor: pointer;
+}
+
+.sos-map-marker.is-entering {
+  animation: mapMarkerPopIn 420ms cubic-bezier(0.22, 1, 0.36, 1) 800ms both;
 }
 
 .sos-map-marker__pulse,
@@ -2110,13 +2509,22 @@ body.sos-mode .grid {
 }
 
 .sos-map-marker__dot {
-  inset: 7px;
+  inset: 10px;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
+}
+
+.sos-map-marker__dot img {
+  position: absolute;
+  inset: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .sos-map-marker.is-critical .sos-map-marker__pulse,
 .sos-map-marker.is-critical .sos-map-marker__dot {
-  background: rgba(255, 63, 77, 0.92);
+  background: #ff006e;
 }
 
 .sos-map-marker.is-dispatched .sos-map-marker__pulse,
@@ -2124,14 +2532,332 @@ body.sos-mode .grid {
   background: rgba(255, 156, 28, 0.92);
 }
 
+.asset-map-marker--success .sos-map-marker__pulse,
+.asset-map-marker--success .sos-map-marker__dot {
+  background: rgba(65, 231, 93, 0.92);
+}
+
+.asset-map-marker--warning .sos-map-marker__pulse,
+.asset-map-marker--warning .sos-map-marker__dot {
+  background: rgba(255, 156, 28, 0.92);
+}
+
+.asset-map-marker--danger .sos-map-marker__pulse,
+.asset-map-marker--danger .sos-map-marker__dot {
+  background: #ff006e;
+}
+
+.asset-map-marker:not(.asset-map-marker--pulse) .sos-map-marker__pulse {
+  opacity: 0.2;
+  animation: none;
+}
+
 .sos-map-marker.is-selected {
-  width: 36px;
-  height: 36px;
+  width: 56px;
+  height: 56px;
 }
 
 .sos-map-marker.is-selected .sos-map-marker__dot {
-  inset: 8px;
+  inset: 11px;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.26);
+}
+
+.asset-map-marker.sos-map-marker {
+  width: 56px;
+  height: 56px;
+}
+
+.asset-map-marker.sos-map-marker .sos-map-marker__dot {
+  inset: 12px;
+}
+
+.asset-map-marker.sos-map-marker .sos-map-marker__dot img {
+  inset: 5px;
+  width: calc(100% - 10px);
+  height: calc(100% - 10px);
+}
+
+.asset-map-marker--danger.sos-map-marker .sos-map-marker__dot img,
+.asset-map-marker--warning.sos-map-marker .sos-map-marker__dot img {
+  inset: 4px;
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
+}
+
+.asset-map-marker--danger.sos-map-marker,
+.asset-map-marker--warning.sos-map-marker {
+  width: 54px;
+  height: 54px;
+}
+
+.asset-map-marker--danger.sos-map-marker.is-selected,
+.asset-map-marker--warning.sos-map-marker.is-selected {
+  width: 60px;
+  height: 60px;
+}
+
+.asset-map-marker--danger.sos-map-marker .sos-map-marker__dot,
+.asset-map-marker--warning.sos-map-marker .sos-map-marker__dot {
+  inset: 12px;
+}
+
+.asset-map-marker--danger.sos-map-marker.is-selected .sos-map-marker__dot,
+.asset-map-marker--warning.sos-map-marker.is-selected .sos-map-marker__dot {
+  inset: 12px;
+}
+
+.asset-map-marker--icon-only.sos-map-marker {
+  width: 34px;
+  height: 34px;
+}
+
+.asset-map-marker--icon-only.sos-map-marker.is-selected {
+  width: 40px;
+  height: 40px;
+}
+
+.asset-map-marker--icon-only .sos-map-marker__pulse,
+.asset-map-marker--icon-only .sos-map-marker__dot {
+  display: none;
+}
+
+.asset-map-marker__icon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.asset-map-marker.sos-map-marker.is-selected {
+  width: 64px;
+  height: 64px;
+}
+
+.asset-map-marker.sos-map-marker.is-selected .sos-map-marker__dot {
+  inset: 13px;
+}
+
+.asset-map-marker--cluster.sos-map-marker {
+  width: 62px;
+  height: 62px;
+}
+
+.asset-map-marker--cluster.sos-map-marker .sos-map-marker__dot {
+  inset: 10px;
+  display: grid;
+  place-items: center;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.24),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.asset-map-cluster__count {
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.cctv-cluster-marker.is-dimmed {
+  opacity: 0.3;
+}
+
+.cctv-cluster-marker--cctv .sos-map-marker__dot img,
+.cctv-cluster-marker--vms .sos-map-marker__dot img {
+  inset: 6px;
+  width: calc(100% - 12px);
+  height: calc(100% - 12px);
+}
+
+.cctv-cluster-marker--mixed .sos-map-marker__dot {
+  font-size: 16px;
+}
+
+.weather-map-marker {
+  position: absolute;
+  display: block;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  transform: translate(-50%, -100%);
+  cursor: pointer;
+  overflow: visible;
+}
+
+.weather-map-marker.is-entering .weather-map-marker__pin {
+  animation: weatherMarkerPopIn 420ms cubic-bezier(0.22, 1, 0.36, 1) 800ms both;
+}
+
+.weather-map-marker__pin {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 10px 16px rgba(10, 38, 92, 0.24));
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2b7bff 0%, #1a56e5 100%);
+  display: grid;
+  place-items: center;
+  box-shadow:
+    0 10px 18px rgba(10, 38, 92, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.weather-map-marker__icon-wrap {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.weather-map-marker__icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.weather-map-marker__bubble {
+  position: absolute;
+  left: 52px;
+  top: 50%;
+  display: inline-grid;
+  gap: 2px;
+  min-width: 230px;
+  max-width: 320px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 14px 34px rgba(8, 24, 58, 0.18),
+    0 2px 8px rgba(8, 24, 58, 0.1);
+  color: #203042;
+  text-align: left;
+  transform: translate(-18px, -50%) scale(0.96);
+  transform-origin: left center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.weather-map-marker.is-expanded .weather-map-marker__bubble {
+  opacity: 1;
+  transform: translate(0, -50%) scale(1);
+  animation: weatherBubbleSlideIn 0.28s cubic-bezier(0.2, 0.9, 0.22, 1);
+}
+
+@keyframes weatherBubbleSlideIn {
+  from {
+    opacity: 0;
+    transform: translate(-22px, -50%) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+}
+
+.weather-map-marker__summary {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #374c63;
+}
+
+.weather-map-marker__location {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #1a2430;
+}
+
+.weather-map-marker__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 173, 51, 0.18);
+  color: #8a5a00;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.weather-map-marker.is-stale .weather-map-marker__pin {
+  background: linear-gradient(180deg, #4d8cff 0%, #315fc9 100%);
+}
+
+@keyframes mapMarkerPopIn {
+  0% {
+    transform: translate(-50%, -50%) scale(0.7);
+    opacity: 0;
+  }
+  68% {
+    transform: translate(-50%, -50%) scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes weatherMarkerPopIn {
+  0% {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+  68% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.map-camera-debug {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  min-width: 170px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 18, 34, 0.78);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.24);
+}
+
+.map-camera-debug__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(233, 243, 255, 0.84);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.map-camera-debug__row strong {
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 @keyframes sosPulse {
@@ -2165,12 +2891,29 @@ body.sos-mode .grid {
     grid-template-columns: 1fr;
   }
 
+  .asset-map-topbar {
+    top: 14px;
+    left: 14px;
+    right: 14px;
+  }
+
+  .asset-map-topbar__controls {
+    justify-content: flex-start;
+  }
+
+  body.sos-mode .toolbar {
+    left: 14px;
+    bottom: 14px;
+    max-width: calc(100vw - 28px);
+  }
+
   .sos-side-panel {
     max-height: none;
   }
 
   .sos-detail-panel {
     width: min(420px, calc(100% - 36px));
+    top: 115px;
   }
 }
 
@@ -2200,6 +2943,10 @@ body.sos-mode .grid {
     position: relative;
     inset: auto;
     padding: 18px;
+  }
+
+  #sosBranchSelect.asset-map-topbar__select {
+    min-width: 132px;
   }
 
   .sos-map {
@@ -2237,9 +2984,26 @@ body.sos-mode .grid {
   }
 
   .sos-map-toggle {
-    position: static;
-    margin: 0 12px 12px;
     justify-self: start;
+  }
+
+  .asset-map-topbar {
+    position: static;
+    margin: 12px 12px 0;
+  }
+
+  body.sos-mode .toolbar {
+    left: 12px;
+    bottom: 12px;
+    width: calc(100vw - 24px);
+  }
+
+  body.sos-mode .toolbar-primary {
+    width: 100%;
+  }
+
+  #sosBranchSelect.asset-map-topbar__select {
+    min-width: 100%;
   }
 
   .sos-map-shell {
