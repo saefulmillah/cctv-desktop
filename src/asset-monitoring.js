@@ -189,6 +189,7 @@
     cctvMapBranchId: null,
     cctvMapBranchLabel: '',
     cctvMapLayerKey: '',
+    cctvViewportKey: '',
     cctvVisible: true,
     vmsVisible: true,
     cctvCacheByBranch: new Map(),
@@ -1840,6 +1841,64 @@
   const isWeatherMarkerExpanded = (weatherId) =>
     isWeatherLayerActive() &&
     String(state.weather.selectedWeatherId || '') === String(weatherId || '');
+  const isViewportCullingActive = () => isAllBranchesSelected();
+  const getViewportBoundsWithPadding = (paddingRatio = 0.08) => {
+    if (!state.map || typeof state.map.getBounds !== 'function') {
+      return null;
+    }
+    const bounds = state.map.getBounds();
+    if (!bounds || typeof bounds.getNorthEast !== 'function' || typeof bounds.getSouthWest !== 'function') {
+      return null;
+    }
+    const northEast = bounds.getNorthEast();
+    const southWest = bounds.getSouthWest();
+    if (!northEast || !southWest) {
+      return null;
+    }
+    const north = Number(northEast.lat());
+    const east = Number(northEast.lng());
+    const south = Number(southWest.lat());
+    const west = Number(southWest.lng());
+    const latPad = Math.max(0.0015, Math.abs(north - south) * paddingRatio);
+    const lngPad = Math.max(0.0015, Math.abs(east - west) * paddingRatio);
+    return new window.google.maps.LatLngBounds(
+      new window.google.maps.LatLng(south - latPad, west - lngPad),
+      new window.google.maps.LatLng(north + latPad, east + lngPad)
+    );
+  };
+  const isLatLngInViewport = (latLng, bounds = null) => {
+    if (!latLng || !isViewportCullingActive()) {
+      return true;
+    }
+    const viewportBounds = bounds || getViewportBoundsWithPadding();
+    if (!viewportBounds || typeof viewportBounds.contains !== 'function') {
+      return true;
+    }
+    const point =
+      latLng instanceof window.google.maps.LatLng
+        ? latLng
+        : new window.google.maps.LatLng(Number(latLng.lat), Number(latLng.lng));
+    return viewportBounds.contains(point);
+  };
+  const getViewportRenderKey = () => {
+    if (!isViewportCullingActive()) {
+      return '';
+    }
+    const bounds = getViewportBoundsWithPadding();
+    if (!bounds) {
+      return 'viewport:pending';
+    }
+    const northEast = bounds.getNorthEast();
+    const southWest = bounds.getSouthWest();
+    const zoom = Number(state.map && state.map.getZoom ? state.map.getZoom() : 0);
+    return [
+      zoom.toFixed(2),
+      Number(southWest.lat()).toFixed(4),
+      Number(southWest.lng()).toFixed(4),
+      Number(northEast.lat()).toFixed(4),
+      Number(northEast.lng()).toFixed(4),
+    ].join(':');
+  };
   const isStandaloneAssetTypeVisible = (asset) => {
     const assetType = String(asset && asset.asset_type ? asset.asset_type : 'cctv').toLowerCase();
     return assetType === 'vms' ? state.vmsVisible : state.cctvVisible;
@@ -2571,6 +2630,7 @@
     state.cctvMapBranchId = null;
     state.cctvMapBranchLabel = '';
     state.cctvMapLayerKey = '';
+    state.cctvViewportKey = '';
     state.cctvMarkerLoadSeq += 1;
     clearCctvMarkers({ invalidate: false });
   };
@@ -2981,7 +3041,10 @@
       : null;
 
   const buildGateAlertMarkerEntries = () => {
-    const gates = Array.from(state.gateAlerts.items.values()).filter((gate) => gate && gate.latLng);
+    const viewportBounds = isViewportCullingActive() ? getViewportBoundsWithPadding() : null;
+    const gates = Array.from(state.gateAlerts.items.values()).filter(
+      (gate) => gate && gate.latLng && isLatLngInViewport(gate.latLng, viewportBounds)
+    );
     const projection = getGateProjection();
     if (!projection) {
       return gates.map((gate) => ({ ...gate, markerKey: `gate:${gate.gate_id}` }));
@@ -3123,8 +3186,9 @@
     }
     const MarkerCtor = getWeatherMarkerClass();
     const activeIds = new Set();
+    const viewportBounds = isViewportCullingActive() ? getViewportBoundsWithPadding() : null;
     state.weather.items.forEach((weather) => {
-      if (!(weather && weather.latLng)) {
+      if (!(weather && weather.latLng) || !isLatLngInViewport(weather.latLng, viewportBounds)) {
         return;
       }
       activeIds.add(String(weather.id));
@@ -3463,6 +3527,7 @@
     const branch = getSelectedBranch();
     const branchKey = isAllBranchesSelected() ? ALL_BRANCHES_OPTION : String((branch && branch.id) || '');
     const layerKey = getStandaloneLayerKey(branchKey);
+    const viewportKey = getViewportRenderKey();
     debugLog('updateDefaultCctvMarkers:start', {
       loadSeq,
       branchKey,
@@ -3473,6 +3538,8 @@
       currentMarkerCount: state.cctvMarkers.length,
       currentMapBranchId: state.cctvMapBranchId,
       currentMapLayerKey: state.cctvMapLayerKey,
+      viewportKey,
+      currentViewportKey: state.cctvViewportKey,
       visibleFlags: {
         cctv: state.cctvVisible,
         vms: state.vmsVisible,
@@ -3494,7 +3561,11 @@
       updateMapEmptyState('Pilih ruas aktif operator untuk menampilkan cluster CCTV.');
       return;
     }
-    if (String(state.cctvMapBranchId) === branchKey && state.cctvMapLayerKey === layerKey && state.cctvMarkers.length) {
+    if (
+      String(state.cctvMapBranchId) === branchKey &&
+      state.cctvMapLayerKey === layerKey &&
+      (isViewportCullingActive() ? state.cctvViewportKey === viewportKey : state.cctvMarkers.length)
+    ) {
       requestCctvClusterRender();
       updateMapEmptyState('');
       return;
@@ -3502,6 +3573,7 @@
     clearCctvMarkers({ invalidate: false });
     state.cctvMapBranchId = branchKey;
     state.cctvMapLayerKey = layerKey;
+    state.cctvViewportKey = viewportKey;
     state.cctvMapBranchLabel = isAllBranchesSelected() ? 'Semua Branch' : branch.branch_name || branch.branch_code || '';
     try {
       state.cctvClusterRenderMarkers = [];
@@ -3537,29 +3609,34 @@
         return;
       }
       const visibleCameras = cameras.filter(isStandaloneAssetTypeVisible);
+      const viewportBounds = isViewportCullingActive() ? getViewportBoundsWithPadding() : null;
+      const renderableCameras = viewportBounds
+        ? visibleCameras.filter((camera) => isLatLngInViewport(camera.position, viewportBounds))
+        : visibleCameras;
       debugLog('updateDefaultCctvMarkers:data', {
         branchKey,
         usingCache,
         totalCameras: cameras.length,
         visibleCameras: visibleCameras.length,
+        renderableCameras: renderableCameras.length,
       });
-      state.cctvMarkers = visibleCameras.map((camera) => {
+      state.cctvMarkers = renderableCameras.map((camera) => {
         const marker = new window.google.maps.Marker({
-            map: null,
-            position: camera.position,
-            title: camera.title || camera.cctv_name || 'Asset',
-            icon: {
-              url: getCctvMarkerIconUrl(camera),
-              scaledSize: new window.google.maps.Size(
-                getCctvMarkerScaledSize(camera),
-                getCctvMarkerScaledSize(camera)
-              ),
-            },
-            zIndex:
-              String(camera && camera.id) === String(state.cctvSelectedCameraId)
-                ? getMapMarkerZIndex('selected')
-                : getMapMarkerZIndex('default'),
-          });
+          map: null,
+          position: camera.position,
+          title: camera.title || camera.cctv_name || 'Asset',
+          icon: {
+            url: getCctvMarkerIconUrl(camera),
+            scaledSize: new window.google.maps.Size(
+              getCctvMarkerScaledSize(camera),
+              getCctvMarkerScaledSize(camera)
+            ),
+          },
+          zIndex:
+            String(camera && camera.id) === String(state.cctvSelectedCameraId)
+              ? getMapMarkerZIndex('selected')
+              : getMapMarkerZIndex('default'),
+        });
         marker.addListener('click', () => {
           state.cctvSuppressMapClickUntil = Date.now() + 250;
           void openCctvModal(camera);
@@ -3694,9 +3771,9 @@
           }
         });
       }
-      if (!getVisibleAlerts().length && visibleCameras.length) {
+      if (!isAllBranchesSelected() && !getVisibleAlerts().length && renderableCameras.length) {
         const bounds = new google.maps.LatLngBounds();
-        visibleCameras.forEach((camera) => bounds.extend(camera.position));
+        renderableCameras.forEach((camera) => bounds.extend(camera.position));
         state.map.fitBounds(bounds, 56);
       }
       debugLog('updateDefaultCctvMarkers:done', {
@@ -4392,13 +4469,19 @@
         state.ui.mapInteractionActive = true;
         collapseCctvSpiderfy();
         renderMapCameraDebug();
-        syncGateAlertMarkers();
-        syncWeatherMarkers();
+        if (!isViewportCullingActive()) {
+          syncGateAlertMarkers();
+          syncWeatherMarkers();
+        }
       });
       state.map.addListener('idle', () => {
         state.ui.mapInteractionActive = false;
         syncGateAlertMarkers();
         syncWeatherMarkers();
+        if (isViewportCullingActive()) {
+          void updateDefaultCctvMarkers();
+          return;
+        }
         requestCctvClusterRender();
       });
       state.map.addListener('heading_changed', () => {
@@ -5062,7 +5145,6 @@
   renderNotifications();
   renderSummary();
 })();
-
 
 
 
