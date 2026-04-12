@@ -1086,6 +1086,113 @@
     return 'mixed';
   };
 
+  const getClusterAssetTypeFromEntries = (entries) => {
+    const typeCounts = {
+      cctv: 0,
+      vms: 0,
+      other: 0,
+    };
+    (Array.isArray(entries) ? entries : []).forEach((entry) => {
+      const assetType = String(entry && entry.camera && entry.camera.asset_type ? entry.camera.asset_type : '').toLowerCase();
+      if (assetType === 'cctv') {
+        typeCounts.cctv += 1;
+      } else if (assetType === 'vms') {
+        typeCounts.vms += 1;
+      } else {
+        typeCounts.other += 1;
+      }
+    });
+    const activeTypes = [typeCounts.cctv, typeCounts.vms, typeCounts.other].filter((value) => value > 0).length;
+    if (activeTypes !== 1) {
+      return 'mixed';
+    }
+    if (typeCounts.cctv > 0) {
+      return 'cctv';
+    }
+    if (typeCounts.vms > 0) {
+      return 'vms';
+    }
+    return 'mixed';
+  };
+
+  const getCctvClusterIconUrl = (assetType) => {
+    const normalized = String(assetType || '').toLowerCase();
+    if (normalized === 'vms') {
+      return ONLY_ICON_URLS.vms;
+    }
+    if (normalized === 'cctv') {
+      return ONLY_ICON_URLS.cctv;
+    }
+    return '';
+  };
+
+  const buildManualCctvClusters = (entries, projection, clusterRadius = 42) => {
+    if (!projection || !Array.isArray(entries) || !entries.length) {
+      return {
+        singles: Array.isArray(entries) ? entries.slice() : [],
+        clusters: [],
+      };
+    }
+    const points = entries
+      .map((entry) => {
+        const latLng = entry && (entry.originalPosition || (entry.marker && entry.marker.getPosition && entry.marker.getPosition()));
+        const pixel = latLng ? projection.fromLatLngToDivPixel(latLng) : null;
+        return pixel ? { entry, pixel, latLng } : null;
+      })
+      .filter(Boolean);
+    const visited = new Set();
+    const singles = [];
+    const clusters = [];
+    const radiusSq = clusterRadius * clusterRadius;
+    for (let index = 0; index < points.length; index += 1) {
+      if (visited.has(index)) {
+        continue;
+      }
+      visited.add(index);
+      const queue = [index];
+      const group = [];
+      while (queue.length) {
+        const currentIndex = queue.shift();
+        const currentPoint = points[currentIndex];
+        if (!currentPoint) {
+          continue;
+        }
+        group.push(currentPoint);
+        for (let nextIndex = 0; nextIndex < points.length; nextIndex += 1) {
+          if (visited.has(nextIndex)) {
+            continue;
+          }
+          const nextPoint = points[nextIndex];
+          if (!nextPoint) {
+            continue;
+          }
+          const dx = currentPoint.pixel.x - nextPoint.pixel.x;
+          const dy = currentPoint.pixel.y - nextPoint.pixel.y;
+          if (dx * dx + dy * dy <= radiusSq) {
+            visited.add(nextIndex);
+            queue.push(nextIndex);
+          }
+        }
+      }
+      if (group.length <= 1) {
+        singles.push(group[0].entry);
+        continue;
+      }
+      const avgX = group.reduce((sum, item) => sum + item.pixel.x, 0) / group.length;
+      const avgY = group.reduce((sum, item) => sum + item.pixel.y, 0) / group.length;
+      const centerLatLng =
+        projection.fromDivPixelToLatLng(new window.google.maps.Point(avgX, avgY)) || group[0].latLng;
+      const clusterEntries = group.map((item) => item.entry);
+      clusters.push({
+        count: clusterEntries.length,
+        entries: clusterEntries,
+        position: centerLatLng,
+        assetType: getClusterAssetTypeFromEntries(clusterEntries),
+      });
+    }
+    return { singles, clusters };
+  };
+
   const animateMapZoom = (map, targetZoom, center, stepDelay = 90) => {
     if (!map || !Number.isFinite(targetZoom)) {
       return;
@@ -1472,6 +1579,82 @@
 
   const getWeatherMarkerZIndex = (isExpanded = false) =>
     getLayerStackZIndex(5, { selected: isExpanded });
+
+  const getCctvClusterMarkerClass = () => {
+    if (state.standaloneAssets.clusterMarkerClass) {
+      return state.standaloneAssets.clusterMarkerClass;
+    }
+    state.standaloneAssets.clusterMarkerClass = class CctvClusterMarker extends window.google.maps.OverlayView {
+      constructor({ map, cluster, onSelect }) {
+        super();
+        this.map = map;
+        this.cluster = cluster;
+        this.onSelect = onSelect;
+        this.element = null;
+        this.isEntering = false;
+        this.isDimmed = false;
+        this.entranceTimer = 0;
+        this.setMap(map);
+      }
+
+      onAdd() {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'sos-map-marker';
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.onSelect(this.cluster, this);
+        });
+        this.element = button;
+        this.getPanes().overlayMouseTarget.appendChild(button);
+        this.isEntering = true;
+        this.entranceTimer = window.setTimeout(() => {
+          this.entranceTimer = 0;
+          this.isEntering = false;
+          this.draw();
+        }, MARKER_ENTRANCE_DELAY_MS + MARKER_ENTRANCE_DURATION_MS + 180);
+        this.draw();
+      }
+
+      draw() {
+        if (!this.element || !this.cluster || !this.cluster.position) {
+          return;
+        }
+        const pixel = this.getProjection().fromLatLngToDivPixel(this.cluster.position);
+        if (!pixel) {
+          return;
+        }
+        const assetType = String(this.cluster.assetType || 'mixed').toLowerCase();
+        this.element.className = `sos-map-marker asset-map-marker asset-map-marker--success asset-map-marker--cluster cctv-cluster-marker cctv-cluster-marker--${assetType} ${this.isEntering ? 'is-entering' : ''} ${this.isDimmed ? 'is-dimmed' : ''}`;
+        this.element.style.left = `${pixel.x}px`;
+        this.element.style.top = `${pixel.y}px`;
+        this.element.style.zIndex = String(getMapMarkerZIndex('cluster'));
+        this.element.title = `${Number(this.cluster.count || 0)} asset`;
+        this.element.innerHTML = assetType === 'mixed'
+          ? `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><span class="asset-map-cluster__count">${escapeHtml(String(this.cluster.count || 0))}</span></span>`
+          : `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><img src="${escapeHtml(getCctvClusterIconUrl(assetType))}" alt="" aria-hidden="true" /></span>`;
+      }
+
+      setDimmed(dimmed) {
+        this.isDimmed = Boolean(dimmed);
+        this.draw();
+      }
+
+      onRemove() {
+        if (this.entranceTimer) {
+          window.clearTimeout(this.entranceTimer);
+          this.entranceTimer = 0;
+        }
+        if (this.element && this.element.parentNode) {
+          this.element.parentNode.removeChild(this.element);
+        }
+        this.element = null;
+      }
+    };
+    return state.standaloneAssets.clusterMarkerClass;
+  };
+
   const getGateMarkerClass = () => {
     if (state.gateAlerts.markerClass) {
       return state.gateAlerts.markerClass;
@@ -2718,12 +2901,10 @@
     }
     state.ui.cctvClusterRenderTimeout = window.setTimeout(() => {
       state.ui.cctvClusterRenderTimeout = 0;
-      if (state.cctvCluster && typeof state.cctvCluster.render === 'function') {
-        try {
-          state.cctvCluster.render();
-        } catch (_) {
-          // Ignore cluster render errors and let native map repaint handle fallback.
-        }
+      try {
+        syncCctvClusterOverlays();
+      } catch (_) {
+        // Ignore cluster render errors and let native map repaint handle fallback.
       }
     }, state.ui.mapInteractionActive ? 120 : 32);
   };
@@ -2813,6 +2994,9 @@
     state.cctvSpiderfyTempMarkers = [];
     if (state.cctvSpiderfyClusterMarker && typeof state.cctvSpiderfyClusterMarker.setOpacity === 'function') {
       state.cctvSpiderfyClusterMarker.setOpacity(1);
+    }
+    if (state.cctvSpiderfyClusterMarker && typeof state.cctvSpiderfyClusterMarker.setDimmed === 'function') {
+      state.cctvSpiderfyClusterMarker.setDimmed(false);
     }
     state.cctvSpiderfyClusterMarker = null;
     state.cctvSpiderfiedCameraIds = new Set();
@@ -3064,6 +3248,77 @@
       animateSpiderfyMarker(spiderfyMarker, centerLatLng, targetLatLng, leg, centerLatLng);
     });
     return true;
+  };
+
+  const handleCctvClusterSelect = (cluster, clusterOverlay = null) => {
+    collapseCctvSpiderfy();
+    const entries = Array.isArray(cluster && cluster.entries) ? cluster.entries.filter(Boolean) : [];
+    if (entries.length <= 1) {
+      const singleCamera = entries[0] && entries[0].camera;
+      if (singleCamera) {
+        void openCctvModal(singleCamera);
+      }
+      return;
+    }
+    const clusterCenter =
+      (cluster && cluster.position) ||
+      entries[0].originalPosition ||
+      (entries[0].marker && entries[0].marker.getPosition && entries[0].marker.getPosition());
+    const currentZoom = Number(state.map && state.map.getZoom ? state.map.getZoom() : 4);
+    if (entries.length > 4) {
+      const zoomStep = entries.length >= 10 ? 1 : 2;
+      const nextZoom = Math.min(currentZoom + zoomStep, 20);
+      const shouldSpiderfyInstead = currentZoom >= 19 || nextZoom === currentZoom;
+      if (!shouldSpiderfyInstead) {
+        animateMapZoom(state.map, nextZoom, clusterCenter);
+        return;
+      }
+    }
+    if (clusterOverlay && typeof clusterOverlay.setDimmed === 'function') {
+      clusterOverlay.setDimmed(true);
+      state.cctvSpiderfyClusterMarker = clusterOverlay;
+    } else {
+      state.cctvSpiderfyClusterMarker = null;
+    }
+    spiderfyCctvMarkerGroup(entries[0], entries, clusterCenter);
+  };
+
+  const syncCctvClusterOverlays = () => {
+    const projection =
+      state.cctvProjectionOverlay && typeof state.cctvProjectionOverlay.getProjection === 'function'
+        ? state.cctvProjectionOverlay.getProjection()
+        : null;
+    state.cctvClusterRenderMarkers.forEach((marker) => {
+      if (marker && typeof marker.setMap === 'function') {
+        marker.setMap(null);
+      }
+    });
+    state.cctvClusterRenderMarkers = [];
+    if (!state.map || !projection) {
+      state.cctvMarkers.forEach((entry) => {
+        if (entry && entry.marker && typeof entry.marker.setMap === 'function') {
+          entry.marker.setMap(state.map || null);
+        }
+      });
+      return;
+    }
+    const { singles, clusters } = buildManualCctvClusters(state.cctvMarkers, projection);
+    const singleEntrySet = new Set(singles);
+    state.cctvMarkers.forEach((entry) => {
+      if (!(entry && entry.marker && typeof entry.marker.setMap === 'function')) {
+        return;
+      }
+      entry.marker.setMap(singleEntrySet.has(entry) ? state.map : null);
+    });
+    const ClusterMarkerCtor = getCctvClusterMarkerClass();
+    clusters.forEach((cluster) => {
+      const overlay = new ClusterMarkerCtor({
+        map: state.map,
+        cluster,
+        onSelect: handleCctvClusterSelect,
+      });
+      state.cctvClusterRenderMarkers.push(overlay);
+    });
   };
 
   const clearCctvMarkers = (options = {}) => {
@@ -3724,10 +3979,8 @@
           originalPosition: camera.position,
         };
       });
-      let markerClustererLib = null;
       try {
         await loadOnlyIconDataUris();
-        markerClustererLib = await loadMarkerClustererLibrary();
       } catch (clusterError) {
         debugLog('updateDefaultCctvMarkers:cluster-library-error', {
           message:
@@ -3737,119 +3990,13 @@
       if (!isCurrentCctvLoad()) {
         return;
       }
-      const MarkerClustererCtor = markerClustererLib && markerClustererLib.MarkerClusterer;
-      const SuperClusterAlgorithmCtor =
-        markerClustererLib && markerClustererLib.SuperClusterAlgorithm;
       debugLog('updateDefaultCctvMarkers:cluster-setup', {
         branchKey,
-        hasMarkerClusterer: Boolean(MarkerClustererCtor),
+        hasMarkerClusterer: false,
         markerCount: state.cctvMarkers.length,
       });
-      if (MarkerClustererCtor) {
-        state.cctvCluster = new MarkerClustererCtor({
-          map: state.map,
-          markers: state.cctvMarkers.map((entry) => entry.marker),
-          algorithm: SuperClusterAlgorithmCtor
-            ? new SuperClusterAlgorithmCtor({
-                radius: 170,
-                maxZoom: 22,
-              })
-            : undefined,
-          renderer: {
-            render({ count, position, markers: clusterMarkers }) {
-              const summary = {
-                onlineCount: 0,
-                offlineCount: 0,
-              };
-              let warningCount = 0;
-              (Array.isArray(clusterMarkers) ? clusterMarkers : []).forEach((clusterMarker) => {
-                const entry = state.cctvMarkers.find((item) => item && item.marker === clusterMarker);
-                if (!entry || !entry.camera) {
-                  return;
-                }
-                const operationalState = getCameraOperationalState(entry.camera);
-                if (operationalState === 'online') {
-                  summary.onlineCount += 1;
-                  return;
-                }
-                if (operationalState === 'warning') {
-                  warningCount += 1;
-                  return;
-                }
-                summary.offlineCount += 1;
-              });
-              const assetType = getClusterAssetType(clusterMarkers);
-              const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
-              const animationKey = `cluster-${++cctvClusterAnimationNonce}-${assetType}-${count}`;
-              const marker = new window.google.maps.Marker({
-                position,
-                icon: {
-                  url: buildTypedAssetClusterSvgDataUrl({
-                    assetType,
-                    count,
-                    onlineCount: summary.onlineCount,
-                    warningCount,
-                    offlineCount: summary.offlineCount,
-                    animationKey,
-                  }),
-                  scaledSize: new window.google.maps.Size(size, size),
-                },
-                zIndex: getMapMarkerZIndex('cluster'),
-              });
-              marker.__clusterSummary = {
-                count,
-                onlineCount: summary.onlineCount,
-                warningCount,
-                offlineCount: summary.offlineCount,
-                assetType,
-              };
-              state.cctvClusterRenderMarkers.push(marker);
-              return marker;
-            },
-          },
-          onClusterClick: (_, cluster) => {
-            collapseCctvSpiderfy();
-            const clusterMarkers = Array.isArray(cluster && cluster.markers) ? cluster.markers : [];
-            const entries = clusterMarkers
-              .map((marker) => state.cctvMarkers.find((entry) => entry && entry.marker === marker))
-              .filter(Boolean);
-            if (entries.length <= 1) {
-              const singleCamera = entries[0] && entries[0].camera;
-              if (singleCamera) {
-                void openCctvModal(singleCamera);
-              }
-              return;
-            }
-            const clusterCenter =
-              (cluster && cluster.position) ||
-              entries[0].originalPosition ||
-              (entries[0].marker && entries[0].marker.getPosition && entries[0].marker.getPosition());
-            const currentZoom = Number(state.map.getZoom() || 4);
-            if (entries.length > 4) {
-              const zoomStep = entries.length >= 10 ? 1 : 2;
-              const nextZoom = Math.min(currentZoom + zoomStep, 20);
-              const shouldSpiderfyInstead = currentZoom >= 19 || nextZoom === currentZoom;
-              if (!shouldSpiderfyInstead) {
-                animateMapZoom(state.map, nextZoom, clusterCenter);
-                return;
-              }
-            }
-            const clusterMarker = cluster && (cluster.marker || cluster._marker || null);
-            if (clusterMarker && typeof clusterMarker.setOpacity === 'function') {
-              clusterMarker.setOpacity(entries.length === 2 ? 0.22 : 0.32);
-              state.cctvSpiderfyClusterMarker = clusterMarker;
-            }
-            spiderfyCctvMarkerGroup(entries[0], entries, clusterCenter);
-          },
-        });
-        requestCctvClusterRender();
-      } else {
-        state.cctvMarkers.forEach((entry) => {
-          if (entry && entry.marker && typeof entry.marker.setMap === 'function') {
-            entry.marker.setMap(state.map);
-          }
-        });
-      }
+      state.cctvCluster = { render: syncCctvClusterOverlays };
+      requestCctvClusterRender();
       if (!isAllBranchesSelected() && !getVisibleAlerts().length && renderableCameras.length) {
         const bounds = new google.maps.LatLngBounds();
         renderableCameras.forEach((camera) => bounds.extend(camera.position));
@@ -3859,7 +4006,7 @@
         branchKey,
         markerCount: state.cctvMarkers.length,
         clusterRenderMarkers: state.cctvClusterRenderMarkers.length,
-        hasClusterInstance: Boolean(state.cctvCluster),
+        hasClusterInstance: true,
       });
       updateMapEmptyState('');
     } catch (error) {

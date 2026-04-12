@@ -2585,6 +2585,21 @@ body.sos-mode .asset-toolbar-control {
   letter-spacing: 0.02em;
 }
 
+.cctv-cluster-marker.is-dimmed {
+  opacity: 0.3;
+}
+
+.cctv-cluster-marker--cctv .sos-map-marker__dot img,
+.cctv-cluster-marker--vms .sos-map-marker__dot img {
+  inset: 6px;
+  width: calc(100% - 12px);
+  height: calc(100% - 12px);
+}
+
+.cctv-cluster-marker--mixed .sos-map-marker__dot {
+  font-size: 16px;
+}
+
 .weather-map-marker {
   position: absolute;
   display: block;
