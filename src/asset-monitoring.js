@@ -373,6 +373,32 @@
     return `${day}-${month}-${year} ${hours}:${minutes}`;
   };
 
+  const formatGateIssueDuration = (value, now = Date.now()) => {
+    if (!value) {
+      return '';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+    const diffMs = Math.max(0, now - date.getTime());
+    const totalMinutes = Math.floor(diffMs / 60000);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+    const parts = [];
+    if (days > 0) {
+      parts.push(`${days} hari`);
+    }
+    if (hours > 0) {
+      parts.push(`${hours} jam`);
+    }
+    if (minutes > 0 || !parts.length) {
+      parts.push(`${minutes} menit`);
+    }
+    return parts.join(' ');
+  };
+
   const normalizePhoneNumber = (value) => {
     let normalized = String(value || '').trim();
     if (!normalized) {
@@ -659,21 +685,21 @@
       return '<div class="sos-gate-log-list__empty">Belum ada log device terbaru.</div>';
     }
     return entries
-      .map(
-        (entry) => `
+      .map((entry) => {
+        const durationText = formatGateIssueDuration(entry.lastUpdateAt);
+        return `
           <div class="sos-gate-log-list__item">
             <div class="sos-gate-log-list__head">
               <strong>${escapeHtml(entry.deviceName)}</strong>
               <span class="status-pill ${getGateIssueStatusTone(entry.status)}">${escapeHtml(String(entry.status || '-').toUpperCase())}</span>
             </div>
             <span>${escapeHtml(entry.logDescription)}</span>
-            <small class="sos-gate-log-list__meta">${entry.severity ? `<span class="severity-pill ${getSeverityTone(entry.severity)}">${escapeHtml(String(entry.severity).toUpperCase())}</span>` : ''}${entry.lastUpdateAt ? `<span>${escapeHtml(toDateTime(entry.lastUpdateAt))}</span>` : ''}</small>
+            <small class="sos-gate-log-list__meta">${entry.severity ? `<span class="severity-pill ${getSeverityTone(entry.severity)}">${escapeHtml(String(entry.severity).toUpperCase())}</span>` : ''}${entry.lastUpdateAt ? `<span>${escapeHtml(toDateTime(entry.lastUpdateAt))}</span>` : ''}${durationText ? `<span class="sos-gate-log-list__duration">${escapeHtml(durationText)}</span>` : ''}</small>
           </div>
-        `
-      )
+        `;
+      })
       .join('');
   };
-
   const normalizeStandaloneAsset = (item) => {
     if (!item || typeof item !== 'object' || !(item.id || item.asset_id)) {
       return null;
@@ -1366,22 +1392,34 @@
     return 'success';
   };
 
-  const getMapMarkerZIndex = (variant = 'default') => {
+  const getLayerStackZIndex = (stackOrder, options = {}) => {
     const networkVisible = Boolean(state.networkArcs && state.networkArcs.visible);
-    if (networkVisible) {
-      if (variant === 'selected') return 60;
-      if (variant === 'cluster') return 28;
-      if (variant === 'spiderfy') return 40;
-      if (variant === 'polyline') return 8;
-      return 20;
-    }
-    if (variant === 'selected') return 1000;
-    if (variant === 'cluster') return 900;
-    if (variant === 'spiderfy') return 950;
-    if (variant === 'polyline') return 1;
-    return 300;
+    const tiers = networkVisible
+      ? { 1: 50, 2: 40, 3: 30, 4: 20, 5: 10 }
+      : { 1: 1000, 2: 900, 3: 800, 4: 700, 5: 600 };
+    const base = tiers[Number(stackOrder)] || (networkVisible ? 25 : 750);
+    const selectedBoost = options.selected ? (networkVisible ? 4 : 20) : 0;
+    const offset = Number.isFinite(Number(options.offset)) ? Number(options.offset) : 0;
+    return base + selectedBoost + offset;
   };
 
+  const getMapMarkerZIndex = (variant = 'default') => {
+    if (variant === 'selected') return getLayerStackZIndex(3, { selected: true, offset: 2 });
+    if (variant === 'cluster') return getLayerStackZIndex(3);
+    if (variant === 'spiderfy') return getLayerStackZIndex(3, { selected: true, offset: 1 });
+    if (variant === 'polyline') return Boolean(state.networkArcs && state.networkArcs.visible) ? 8 : 1;
+    return getLayerStackZIndex(3, { offset: -5 });
+  };
+
+  const getGateMarkerZIndex = (gate, isSelected = false) => {
+    const tone = getGateMarkerTone(gate);
+    const stackOrder = tone === 'danger' ? 1 : tone === 'warning' ? 2 : 4;
+    const offset = gate && gate.isCluster ? 0 : 2;
+    return getLayerStackZIndex(stackOrder, { selected: isSelected, offset });
+  };
+
+  const getWeatherMarkerZIndex = (isExpanded = false) =>
+    getLayerStackZIndex(5, { selected: isExpanded });
   const getGateMarkerClass = () => {
     if (state.gateAlerts.markerClass) {
       return state.gateAlerts.markerClass;
@@ -1430,12 +1468,9 @@
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
         this.element.style.zIndex = String(
-          getMapMarkerZIndex(
+          getGateMarkerZIndex(
+            this.gate,
             String(state.gateAlerts.selectedGateId || '') === String(this.gate.gate_id)
-              ? 'selected'
-              : isCluster
-                ? 'cluster'
-                : 'default'
           )
         );
         this.element.title = isCluster
@@ -1507,7 +1542,7 @@
         this.element.className = `weather-map-marker ${isExpanded ? 'is-expanded' : ''} ${isStale ? 'is-stale' : ''}`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
-        this.element.style.zIndex = String(isExpanded ? 6 : 4);
+        this.element.style.zIndex = String(getWeatherMarkerZIndex(isExpanded));
         this.element.title = this.weather.point_name || this.weather.segment_name || 'Weather';
         const weatherLabel = String(this.weather.weather_label || 'Cuaca').trim();
         const pointName = String(this.weather.point_name || this.weather.segment_name || this.weather.corridor_name || 'Lokasi').trim();
@@ -1630,10 +1665,9 @@
     if (!sosWeatherToggleEl) {
       return;
     }
-    const disabled = isAllBranchesSelected();
-    sosWeatherToggleEl.checked = !disabled && state.weather.visible;
+    sosWeatherToggleEl.checked = state.weather.visible;
     sosWeatherToggleEl.indeterminate = false;
-    sosWeatherToggleEl.disabled = disabled;
+    sosWeatherToggleEl.disabled = false;
   };
 
   const renderMapCameraModeControls = () => {
@@ -1802,7 +1836,7 @@
     isAllBranchesSelected() ? ALL_BRANCHES_OPTION : String((getSelectedBranch() && getSelectedBranch().id) || '');
   const getWeatherBranchKey = () =>
     isAllBranchesSelected() ? ALL_BRANCHES_OPTION : String((getSelectedBranch() && getSelectedBranch().id) || '');
-  const isWeatherLayerActive = () => state.weather.visible && !isAllBranchesSelected();
+  const isWeatherLayerActive = () => state.weather.visible;
   const isWeatherMarkerExpanded = (weatherId) =>
     isWeatherLayerActive() &&
     String(state.weather.selectedWeatherId || '') === String(weatherId || '');
@@ -2228,6 +2262,9 @@
   };
 
   const renderDetailPanel = () => {
+    if (state.ui.selectedEntityType !== 'gate' || !state.gateAlerts.selectedGateId) {
+      stopGateDetailDurationTimer();
+    }
     if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
       const gateDetail = state.gateAlerts.details.get(String(state.gateAlerts.selectedGateId));
       if (gateDetail) {
@@ -3301,6 +3338,71 @@
     }
   };
 
+  const renderGateDetailBody = (detail) => {
+    const deviceSummary = detail && detail.device_summary ? detail.device_summary : {};
+    const summaryLine = [
+      `${Number(deviceSummary.total || 0)} total`,
+      `${Number(deviceSummary.error || 0)} error`,
+      `${Number(deviceSummary.warning || 0)} warning`,
+      `${Number(deviceSummary.offline || 0)} offline`,
+    ].join(' | ');
+    const affectedDevices = (detail.affected_devices.length ? detail.affected_devices : detail.devices)
+      .filter((device) => isGateIssueStatus(device && device.status))
+      .map((device) => device.device_name || device.device_type || '-')
+      .filter(Boolean)
+      .join(', ');
+    return `
+      <div class="sos-detail-body__grid">
+        <div><span class="sos-detail-label">Koordinat</span><strong>${escapeHtml(detail.lat || '-')} / ${escapeHtml(detail.lng || '-')}</strong></div>
+        <div><span class="sos-detail-label">Ringkasan Device</span><strong>${escapeHtml(summaryLine)}</strong></div>
+        <div><span class="sos-detail-label">Status Device</span><strong>${escapeHtml(String(detail.status || 'normal').toUpperCase())}</strong></div>
+        <div><span class="sos-detail-label">Device Terdampak</span><strong>${escapeHtml(affectedDevices || '-')}</strong></div>
+      </div>
+      <div class="sos-gate-log-list">
+        <span class="sos-detail-label">Log Device</span>
+        ${renderGateLogList(detail)}
+      </div>
+    `;
+  };
+
+  const stopGateDetailDurationTimer = () => {
+    if (state.ui.gateDetailDurationTimer) {
+      window.clearInterval(state.ui.gateDetailDurationTimer);
+      state.ui.gateDetailDurationTimer = 0;
+    }
+  };
+
+  const refreshGateDetailDurationView = () => {
+    if (
+      !state.isActive ||
+      state.ui.selectedEntityType !== 'gate' ||
+      !state.gateAlerts.selectedGateId ||
+      sosDetailPanelEl.classList.contains('hidden')
+    ) {
+      stopGateDetailDurationTimer();
+      return;
+    }
+    const detail = state.gateAlerts.details.get(String(state.gateAlerts.selectedGateId));
+    if (!detail) {
+      stopGateDetailDurationTimer();
+      return;
+    }
+    sosDetailBodyEl.innerHTML = renderGateDetailBody(detail);
+  };
+
+  const startGateDetailDurationTimer = () => {
+    stopGateDetailDurationTimer();
+    if (
+      !state.isActive ||
+      state.ui.selectedEntityType !== 'gate' ||
+      !state.gateAlerts.selectedGateId ||
+      sosDetailPanelEl.classList.contains('hidden')
+    ) {
+      return;
+    }
+    state.ui.gateDetailDurationTimer = window.setInterval(refreshGateDetailDurationView, 60000);
+  };
+
   const openGateAlertDetail = async (gateId) => {
     const response = await window.cameraService.getGateAlertDetail(gateId);
     if (!response || response.status >= 400) {
@@ -3330,34 +3432,12 @@
     setText(sosDetailStatusEl, String(detail.status || 'normal').toUpperCase());
     sosDetailMetaEl.innerHTML = '';
     sosDetailMetaEl.classList.add('hidden');
-    const deviceSummary = detail.device_summary || {};
-    const summaryLine = [
-      `${Number(deviceSummary.total || 0)} total`,
-      `${Number(deviceSummary.error || 0)} error`,
-      `${Number(deviceSummary.warning || 0)} warning`,
-      `${Number(deviceSummary.offline || 0)} offline`,
-    ].join(' | ');
-    const affectedDevices = (detail.affected_devices.length ? detail.affected_devices : detail.devices)
-      .filter((device) => isGateIssueStatus(device && device.status))
-      .map((device) => device.device_name || device.device_type || '-')
-      .filter(Boolean)
-      .join(', ');
-    sosDetailBodyEl.innerHTML = `
-      <div class="sos-detail-body__grid">
-        <div><span class="sos-detail-label">Koordinat</span><strong>${escapeHtml(detail.lat || '-')} / ${escapeHtml(detail.lng || '-')}</strong></div>
-        <div><span class="sos-detail-label">Ringkasan Device</span><strong>${escapeHtml(summaryLine)}</strong></div>
-        <div><span class="sos-detail-label">Status Device</span><strong>${escapeHtml(String(detail.status || 'normal').toUpperCase())}</strong></div>
-        <div><span class="sos-detail-label">Device Terdampak</span><strong>${escapeHtml(affectedDevices || '-')}</strong></div>
-      </div>
-      <div class="sos-gate-log-list">
-        <span class="sos-detail-label">Log Device</span>
-        ${renderGateLogList(detail)}
-      </div>
-    `;
+    sosDetailBodyEl.innerHTML = renderGateDetailBody(detail);
     sosDetailPanelEl.classList.remove('hidden');
     sosDetailPanelEl.classList.add('is-visible');
     replayDetailPanelAnimation();
     focusEntityOnMap(detail.latLng, MAP_ZOOM_GATE);
+    startGateDetailDurationTimer();
   };
 
   const selectNetworkArc = (edge) => {
@@ -3847,6 +3927,7 @@
   };
 
   const clearSelectedAlert = () => {
+    stopGateDetailDurationTimer();
     state.selectedSosId = null;
     state.incidents.selectedSosId = null;
     state.gateAlerts.selectedGateId = null;
@@ -4477,6 +4558,12 @@
       if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'weatherVisible')) {
         state.weather.visible = Boolean(assetMonitoringPrefs.weatherVisible);
       }
+      if (
+        assetMonitoringPrefs &&
+        String(assetMonitoringPrefs.selectedBranchId || '') === ALL_BRANCHES_OPTION
+      ) {
+        state.weather.visible = false;
+      }
       if (assetMonitoringPrefs && assetMonitoringPrefs.selectedBranchId && !state.mapContext.selectedBranch) {
         state.mapContext.selectedBranch = {
           id: String(assetMonitoringPrefs.selectedBranchId),
@@ -4575,6 +4662,7 @@
     hideModal(sosDispatchModalEl);
     hideModal(sosCompleteModalEl);
     closeCctvModal();
+    stopGateDetailDurationTimer();
     state.gateAlerts.selectedGateId = null;
     state.ui.selectedEntityType = '';
     state.ui.selectedEntityId = null;
@@ -4676,6 +4764,9 @@
               branch_code: 'ALL',
             }
           : state.mapContext.availableBranches.find((branch) => String(branch.id) === nextBranchId) || null;
+      if (nextBranchId === ALL_BRANCHES_OPTION) {
+        state.weather.visible = false;
+      }
       resetStandaloneLayerState();
       resetNetworkLayerState();
       resetWeatherLayerState();
@@ -4779,22 +4870,28 @@
 
   if (sosWeatherToggleEl) {
     sosWeatherToggleEl.addEventListener('change', () => {
-      if (isAllBranchesSelected()) {
-        syncWeatherToggleState();
-        clearWeatherMarkers();
-        renderAssetToolbar();
-        return;
-      }
       state.weather.visible = Boolean(sosWeatherToggleEl.checked);
       if (!state.weather.visible) {
         state.weather.selectedWeatherId = null;
         clearWeatherMarkers();
-      } else {
-        syncWeatherMarkers();
+        renderAssetToolbar();
+        updateMapEmptyState('');
+        void persistAssetMonitoringPrefs();
+        return;
       }
+      void loadWeatherMarkers()
+        .then(() => {
+          renderAssetToolbar();
+          updateMapEmptyState('');
+        })
+        .catch((error) => {
+          state.weather.errorMessage =
+            error && error.message ? error.message : 'Gagal memuat marker weather.';
+          clearWeatherMarkers();
+          renderAssetToolbar();
+          updateMapEmptyState('');
+        });
       void persistAssetMonitoringPrefs();
-      renderAssetToolbar();
-      updateMapEmptyState('');
     });
   }
 
@@ -4965,5 +5062,11 @@
   renderNotifications();
   renderSummary();
 })();
+
+
+
+
+
+
 
 
