@@ -35,6 +35,8 @@
   const sosVmsToggleEl = $('sosVmsToggle');
   const sosGateToggleEl = $('sosGateToggle');
   const sosNetworkToggleEl = $('sosNetworkToggle');
+  const sosWeatherToggleEl = $('sosWeatherToggle');
+  const mapCameraDebugEl = $('mapCameraDebug');
   const networkArcTooltipEl = $('networkArcTooltip');
   const sosNotificationPanelEl = $('sosNotificationPanel');
   const sosNotificationListEl = $('sosNotificationList');
@@ -114,7 +116,7 @@
       selectedBranch: null,
       availableBranches: [],
       themePreset: 'dark-ops',
-      cameraMode: 'normal',
+      cameraMode: 'tilt',
       cameraHeading: 0,
       streamStatus: 'idle',
     },
@@ -143,6 +145,17 @@
       hasLoaded: false,
       errorMessage: '',
     },
+    weather: {
+      items: [],
+      cacheByBranch: new Map(),
+      meta: null,
+      visible: true,
+      selectedWeatherId: null,
+      hasLoaded: false,
+      errorMessage: '',
+      markers: new Map(),
+      markerClass: null,
+    },
     incidents: {
       alerts: new Map(),
       ticketsBySosId: new Map(),
@@ -155,6 +168,8 @@
       mapEmptyMessage: 'Hubungkan API lalu buka asset monitoring untuk memantau asset dan kejadian secara real-time.',
       selectedEntityType: 'sos',
       selectedEntityId: null,
+      cctvClusterRenderTimeout: 0,
+      mapInteractionActive: false,
     },
     alerts: new Map(),
     ticketsBySosId: new Map(),
@@ -547,6 +562,40 @@
     };
   };
 
+  const normalizeWeatherMarker = (item) => {
+    if (!item || typeof item !== 'object' || !item.id) {
+      return null;
+    }
+    const lat = Number(item.lat);
+    const lng = Number(item.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return null;
+    }
+    return {
+      ...item,
+      id: String(item.id),
+      branch_id: String(item.branch_id || ''),
+      point_code: String(item.point_code || '').trim(),
+      point_name: String(item.point_name || item.segment_name || item.corridor_name || `Weather ${item.id}`).trim(),
+      corridor_name: String(item.corridor_name || '').trim(),
+      segment_name: String(item.segment_name || '').trim(),
+      condition_key: String(item.condition_key || '').trim().toUpperCase(),
+      weather_label: String(item.weather_label || 'Cuaca').trim(),
+      icon_url: String(item.icon_url || '').trim(),
+      temperature_c: Number.isFinite(Number(item.temperature_c)) ? Number(item.temperature_c) : null,
+      feels_like_c: Number.isFinite(Number(item.feels_like_c)) ? Number(item.feels_like_c) : null,
+      humidity_pct: Number.isFinite(Number(item.humidity_pct)) ? Number(item.humidity_pct) : null,
+      wind_kph: Number.isFinite(Number(item.wind_kph)) ? Number(item.wind_kph) : null,
+      observed_at: String(item.observed_at || '').trim(),
+      cached_at: String(item.cached_at || '').trim(),
+      expires_at: String(item.expires_at || '').trim(),
+      is_stale: Boolean(item.is_stale),
+      lat,
+      lng,
+      latLng: { lat, lng },
+    };
+  };
+
   const getGateLogEntries = (gate) => {
     const entries = [];
     const addEntry = (device, event) => {
@@ -714,6 +763,21 @@
 
   const svgTextToDataUri = (value) =>
     `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(String(value || '').trim())}`;
+
+  const WEATHER_FALLBACK_ICON_URL = svgTextToDataUri(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+      <circle cx="17" cy="18" r="8" fill="#FFC83D" />
+      <path d="M31 33H15c-4.418 0-8-3.134-8-7s3.582-7 8-7c.803 0 1.58.104 2.314.298C18.82 14.936 22.96 12 27.75 12 33.963 12 39 16.925 39 23c4.418 0 8 3.134 8 7s-3.582 7-8 7Z" fill="#ffffff"/>
+    </svg>
+  `);
+
+  const formatWeatherTemperature = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}°` : '-';
+  };
+
+  const getWeatherMarkerIconUrl = (weather) =>
+    String(weather && weather.icon_url ? weather.icon_url : '').trim() || WEATHER_FALLBACK_ICON_URL;
 
   const loadOnlyIconDataUris = () => {
     if (state.onlyIconLoaderPromise) {
@@ -1399,6 +1463,106 @@
     return state.gateAlerts.markerClass;
   };
 
+  const getWeatherMarkerClass = () => {
+    if (state.weather.markerClass) {
+      return state.weather.markerClass;
+    }
+    state.weather.markerClass = class WeatherMarker extends window.google.maps.OverlayView {
+      constructor({ map, weather, onSelect }) {
+        super();
+        this.map = map;
+        this.weather = weather;
+        this.onSelect = onSelect;
+        this.element = null;
+        this.renderKey = '';
+        this.setMap(map);
+      }
+
+      onAdd() {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'weather-map-marker';
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.onSelect(this.weather.id);
+        });
+        this.element = button;
+        this.getPanes().overlayMouseTarget.appendChild(button);
+        this.draw();
+      }
+
+      draw() {
+        if (!this.element || !this.weather || !this.weather.latLng) {
+          return;
+        }
+        const pixel = this.getProjection().fromLatLngToDivPixel(
+          new window.google.maps.LatLng(this.weather.latLng.lat, this.weather.latLng.lng)
+        );
+        if (!pixel) {
+          return;
+        }
+        const isExpanded = isWeatherMarkerExpanded(this.weather.id);
+        const isStale = Boolean(this.weather.is_stale);
+        this.element.className = `weather-map-marker ${isExpanded ? 'is-expanded' : ''} ${isStale ? 'is-stale' : ''}`;
+        this.element.style.left = `${pixel.x}px`;
+        this.element.style.top = `${pixel.y}px`;
+        this.element.style.zIndex = String(isExpanded ? 6 : 4);
+        this.element.title = this.weather.point_name || this.weather.segment_name || 'Weather';
+        const weatherLabel = String(this.weather.weather_label || 'Cuaca').trim();
+        const pointName = String(this.weather.point_name || this.weather.segment_name || this.weather.corridor_name || 'Lokasi').trim();
+        const iconUrl = escapeHtml(getWeatherMarkerIconUrl(this.weather));
+        const staleBadge = isStale ? '<span class="weather-map-marker__badge">Data lama</span>' : '';
+        const renderKey = JSON.stringify({
+          isExpanded,
+          isStale,
+          weatherLabel,
+          pointName,
+          iconUrl,
+          temperature: formatWeatherTemperature(this.weather.temperature_c),
+        });
+        if (this.renderKey !== renderKey) {
+          this.renderKey = renderKey;
+          this.element.innerHTML = `
+            <span class="weather-map-marker__pin" aria-hidden="true">
+              <span class="weather-map-marker__icon-wrap">
+                <img class="weather-map-marker__icon" src="${iconUrl}" alt="" aria-hidden="true" />
+              </span>
+            </span>
+            <span class="weather-map-marker__bubble" aria-hidden="${isExpanded ? 'false' : 'true'}">
+              <span class="weather-map-marker__summary">${escapeHtml(weatherLabel)} &bull; ${escapeHtml(formatWeatherTemperature(this.weather.temperature_c))}</span>
+              <strong class="weather-map-marker__location">${escapeHtml(pointName)}</strong>
+              ${staleBadge}
+            </span>
+          `;
+          const iconEl = this.element.querySelector('.weather-map-marker__icon');
+          if (iconEl) {
+            iconEl.addEventListener(
+              'error',
+              () => {
+                iconEl.src = WEATHER_FALLBACK_ICON_URL;
+              },
+              { once: true }
+            );
+          }
+        }
+      }
+
+      onRemove() {
+        if (this.element && this.element.parentNode) {
+          this.element.parentNode.removeChild(this.element);
+        }
+        this.element = null;
+      }
+
+      update(weather) {
+        this.weather = weather;
+        this.draw();
+      }
+    };
+    return state.weather.markerClass;
+  };
+
   const applyMapTheme = (preset) => {
     const normalized = MAP_THEME_PRESETS[preset] !== undefined ? preset : 'dark-ops';
     state.mapContext.themePreset = normalized;
@@ -1462,6 +1626,16 @@
     // Theme selector removed for production build.
   };
 
+  const syncWeatherToggleState = () => {
+    if (!sosWeatherToggleEl) {
+      return;
+    }
+    const disabled = isAllBranchesSelected();
+    sosWeatherToggleEl.checked = !disabled && state.weather.visible;
+    sosWeatherToggleEl.indeterminate = false;
+    sosWeatherToggleEl.disabled = disabled;
+  };
+
   const renderMapCameraModeControls = () => {
     if (sosMapNormalBtn) {
       sosMapNormalBtn.classList.toggle('is-active', state.mapContext.cameraMode !== 'tilt');
@@ -1477,7 +1651,33 @@
   };
 
   const renderMapCameraDebug = () => {
-    // Debug camera panel removed for production build.
+    if (!mapCameraDebugEl) {
+      return;
+    }
+    const renderType =
+      state.map && typeof state.map.getRenderingType === 'function'
+        ? String(state.map.getRenderingType() || 'UNKNOWN')
+        : 'UNKNOWN';
+    const zoom =
+      state.map && typeof state.map.getZoom === 'function'
+        ? formatCameraNumber(state.map.getZoom())
+        : '-';
+    const tilt =
+      state.map && typeof state.map.getTilt === 'function'
+        ? formatCameraNumber(state.map.getTilt())
+        : '-';
+    const heading =
+      state.map && typeof state.map.getHeading === 'function'
+        ? formatCameraNumber(state.map.getHeading() || 0)
+        : formatCameraNumber(state.mapContext.cameraHeading || 0);
+    mapCameraDebugEl.innerHTML = [
+      `<div class="map-camera-debug__row"><span>Zoom</span><strong>${escapeHtml(zoom)}</strong></div>`,
+      `<div class="map-camera-debug__row"><span>Tilt</span><strong>${escapeHtml(tilt)}</strong></div>`,
+      `<div class="map-camera-debug__row"><span>Heading</span><strong>${escapeHtml(heading)}</strong></div>`,
+      `<div class="map-camera-debug__row"><span>Mode</span><strong>${escapeHtml(String(state.mapContext.cameraMode || '').toUpperCase())}</strong></div>`,
+      `<div class="map-camera-debug__row"><span>Theme</span><strong>${escapeHtml(String(state.mapContext.themePreset || 'default'))}</strong></div>`,
+      `<div class="map-camera-debug__row"><span>Render</span><strong>${escapeHtml(renderType)}</strong></div>`,
+    ].join('');
   };
 
   const getCurrentMapCamera = () => ({
@@ -1572,18 +1772,14 @@
       return;
     }
     state.mapContext.cameraHeading = 0;
-    applyMapCameraMode('normal');
+    applyMapCameraMode('tilt');
   };
 
   const syncCameraModeForBranchSelection = () => {
     if (!state.map) {
       return;
     }
-    if (isAllBranchesSelected()) {
-      applyMapCameraMode('tilt');
-      return;
-    }
-    renderMapCameraDebug();
+    applyMapCameraMode('tilt');
   };
 
   const isAllBranchesSelected = () => String((state.mapContext.selectedBranch && state.mapContext.selectedBranch.id) || '') === ALL_BRANCHES_OPTION;
@@ -1604,6 +1800,12 @@
   const getSelectedBranch = () => state.mapContext.selectedBranch || state.activeWorkspaceBranch || null;
   const getNetworkBranchKey = () =>
     isAllBranchesSelected() ? ALL_BRANCHES_OPTION : String((getSelectedBranch() && getSelectedBranch().id) || '');
+  const getWeatherBranchKey = () =>
+    isAllBranchesSelected() ? ALL_BRANCHES_OPTION : String((getSelectedBranch() && getSelectedBranch().id) || '');
+  const isWeatherLayerActive = () => state.weather.visible && !isAllBranchesSelected();
+  const isWeatherMarkerExpanded = (weatherId) =>
+    isWeatherLayerActive() &&
+    String(state.weather.selectedWeatherId || '') === String(weatherId || '');
   const isStandaloneAssetTypeVisible = (asset) => {
     const assetType = String(asset && asset.asset_type ? asset.asset_type : 'cctv').toLowerCase();
     return assetType === 'vms' ? state.vmsVisible : state.cctvVisible;
@@ -1623,6 +1825,21 @@
     }
     return `${arcCount} arc${arcCount === 1 ? '' : 's'}${crossBranch ? ' • cross-branch' : ''}`;
   };
+  const getWeatherSummaryLabel = () => {
+    if (!isWeatherLayerActive()) {
+      return '';
+    }
+    const itemCount = Array.isArray(state.weather.items) ? state.weather.items.length : 0;
+    if (!itemCount) {
+      return '';
+    }
+    const hasStaleItems = Boolean(
+      (state.weather.meta && state.weather.meta.has_stale_items) ||
+      state.weather.items.some((item) => item && item.is_stale)
+    );
+    return `${itemCount} weather point${itemCount === 1 ? '' : 's'}${hasStaleItems ? ' • sebagian data lama' : ''}`;
+  };
+
   const getDefaultMapEmptyMessage = () => {
     const hasGateMarkers = Array.from(state.gateAlerts.items.values()).some(
       (gate) => gate && gate.latLng && state.gateAlerts.visible && isEntityInSelectedBranch(gate.branch_id)
@@ -1634,6 +1851,7 @@
       !getVisibleAlerts().length &&
       !hasGateMarkers &&
       !hasAssets &&
+      !(isWeatherLayerActive() && Array.isArray(state.weather.items) && state.weather.items.length > 0) &&
       state.networkArcs.visible &&
       state.networkArcs.hasLoaded &&
       !state.networkArcs.items.length &&
@@ -1641,7 +1859,7 @@
     ) {
       return 'Belum ada koneksi fiber untuk filter branch aktif.';
     }
-    return 'Belum ada marker gate alert, CCTV, VMS, koneksi fiber, atau SOS aktif untuk ditampilkan.';
+    return 'Belum ada marker gate alert, CCTV, VMS, weather, koneksi fiber, atau SOS aktif untuk ditampilkan.';
   };
   const hasRenderableMapData = () =>
     getVisibleAlerts().length > 0 ||
@@ -1659,6 +1877,7 @@
         isEntityInSelectedBranch(item.branch_id) &&
         isStandaloneAssetTypeVisible(item)
     ) ||
+    (isWeatherLayerActive() && Array.isArray(state.weather.items) && state.weather.items.length > 0) ||
     (state.networkArcs.visible && Array.isArray(state.networkArcs.items) && state.networkArcs.items.length > 0);
 
   const setConnectionBadge = (label, tone = 'neutral') => {
@@ -1859,14 +2078,19 @@
     if (!state.isActive) {
       return;
     }
+    syncWeatherToggleState();
     const selectedBranch = getSelectedBranch();
     const branchLabel = isAllBranchesSelected()
       ? 'Semua Branch'
       : selectedBranch
         ? selectedBranch.branch_name || selectedBranch.branch_code || selectedBranch.id
         : 'Tanpa branch';
+    const weatherSummary = getWeatherSummaryLabel();
     if (assetMapSubtitleEl) {
-      setText(assetMapSubtitleEl, `Branch aktif: ${branchLabel} • ${getNetworkSummaryLabel()}`);
+      setText(
+        assetMapSubtitleEl,
+        `Branch aktif: ${branchLabel} • ${getNetworkSummaryLabel()}${weatherSummary ? ` • ${weatherSummary}` : ''}`
+      );
     }
   };
 
@@ -2315,13 +2539,19 @@
   };
 
   const requestCctvClusterRender = () => {
-    if (state.cctvCluster && typeof state.cctvCluster.render === 'function') {
-      try {
-        state.cctvCluster.render();
-      } catch (_) {
-        // Ignore cluster render errors and let native map repaint handle fallback.
-      }
+    if (state.ui.cctvClusterRenderTimeout) {
+      window.clearTimeout(state.ui.cctvClusterRenderTimeout);
     }
+    state.ui.cctvClusterRenderTimeout = window.setTimeout(() => {
+      state.ui.cctvClusterRenderTimeout = 0;
+      if (state.cctvCluster && typeof state.cctvCluster.render === 'function') {
+        try {
+          state.cctvCluster.render();
+        } catch (_) {
+          // Ignore cluster render errors and let native map repaint handle fallback.
+        }
+      }
+    }, state.ui.mapInteractionActive ? 120 : 32);
   };
 
   const resetNetworkLayerState = () => {
@@ -2335,6 +2565,15 @@
     if (state.networkArcs.overlay) {
       state.networkArcs.overlay.setProps({ layers: [] });
     }
+  };
+
+  const resetWeatherLayerState = () => {
+    state.weather.items = [];
+    state.weather.meta = null;
+    state.weather.selectedWeatherId = null;
+    state.weather.errorMessage = '';
+    state.weather.hasLoaded = false;
+    clearWeatherMarkers();
   };
 
   const focusAlertOnMap = (alert, forceZoom = false) => {
@@ -2690,6 +2929,15 @@
     state.gateAlerts.markers.clear();
   };
 
+  const clearWeatherMarkers = () => {
+    state.weather.markers.forEach((marker) => {
+      if (marker && typeof marker.setMap === 'function') {
+        marker.setMap(null);
+      }
+    });
+    state.weather.markers.clear();
+  };
+
   const getGateProjection = () =>
     state.gateProjectionOverlay && typeof state.gateProjectionOverlay.getProjection === 'function'
       ? state.gateProjectionOverlay.getProjection()
@@ -2817,6 +3065,102 @@
       marker.setMap(null);
       state.gateAlerts.markers.delete(gateId);
     });
+  };
+
+  const selectWeatherMarker = (weatherId) => {
+    const nextId =
+      String(state.weather.selectedWeatherId || '') === String(weatherId || '')
+        ? null
+        : String(weatherId || '');
+    state.weather.selectedWeatherId = nextId;
+    syncWeatherMarkers();
+  };
+
+  const syncWeatherMarkers = () => {
+    if (!state.map) {
+      return;
+    }
+    if (!isWeatherLayerActive()) {
+      clearWeatherMarkers();
+      return;
+    }
+    const MarkerCtor = getWeatherMarkerClass();
+    const activeIds = new Set();
+    state.weather.items.forEach((weather) => {
+      if (!(weather && weather.latLng)) {
+        return;
+      }
+      activeIds.add(String(weather.id));
+      const existing = state.weather.markers.get(String(weather.id));
+      if (existing) {
+        existing.update(weather);
+        return;
+      }
+      const marker = new MarkerCtor({
+        map: state.map,
+        weather,
+        onSelect: selectWeatherMarker,
+      });
+      state.weather.markers.set(String(weather.id), marker);
+    });
+    Array.from(state.weather.markers.entries()).forEach(([weatherId, marker]) => {
+      if (activeIds.has(weatherId)) {
+        return;
+      }
+      marker.setMap(null);
+      state.weather.markers.delete(weatherId);
+    });
+  };
+
+  const loadWeatherMarkers = async () => {
+    state.weather.errorMessage = '';
+    state.weather.hasLoaded = false;
+    const branch = getSelectedBranch();
+    if (!(branch && branch.id) || !isWeatherLayerActive()) {
+      state.weather.items = [];
+      state.weather.meta = null;
+      state.weather.selectedWeatherId = null;
+      syncWeatherMarkers();
+      return;
+    }
+    const branchKey = getWeatherBranchKey();
+    const cached = state.weather.cacheByBranch.get(branchKey) || null;
+    state.weather.items = cached && Array.isArray(cached.items) ? cached.items : [];
+    state.weather.meta = cached && cached.meta ? cached.meta : null;
+    syncWeatherMarkers();
+    try {
+      const response = await window.cameraService.getMapWeather(
+        isAllBranchesSelected() ? {} : { branch_id: branch.id }
+      );
+      if (!response || response.status >= 400) {
+        throw new Error((response && response.message) || 'Gagal memuat marker weather.');
+      }
+      const items = unwrapCollection(response).map(normalizeWeatherMarker).filter(Boolean);
+      state.weather.items = items;
+      state.weather.meta =
+        response && response.meta && typeof response.meta === 'object'
+          ? response.meta
+          : response && response.data && response.data.meta && typeof response.data.meta === 'object'
+            ? response.data.meta
+            : null;
+      state.weather.cacheByBranch.set(branchKey, {
+        items,
+        meta: state.weather.meta,
+      });
+      state.weather.hasLoaded = true;
+      if (
+        state.weather.selectedWeatherId &&
+        !items.some((item) => String(item.id) === String(state.weather.selectedWeatherId))
+      ) {
+        state.weather.selectedWeatherId = null;
+      }
+      syncWeatherMarkers();
+    } catch (error) {
+      state.weather.errorMessage = error && error.message ? error.message : 'Gagal memuat marker weather.';
+      state.weather.hasLoaded = true;
+      state.weather.selectedWeatherId = null;
+      syncWeatherMarkers();
+    }
   };
 
   const loadMapBranches = async () => {
@@ -3399,6 +3743,7 @@
     renderNotifications();
     syncGateAlertMarkers();
     syncMapMarkers();
+    syncWeatherMarkers();
     syncNetworkOverlay();
     requestCctvClusterRender();
   };
@@ -3594,6 +3939,7 @@
         loadGateAlerts(),
         updateDefaultCctvMarkers(),
         loadNetworkArcs(),
+        loadWeatherMarkers(),
         loadSnapshot(),
         loadOpenTickets(),
       ]);
@@ -3958,15 +4304,21 @@
       state.cctvProjectionOverlay.onRemove = () => {};
       state.cctvProjectionOverlay.setMap(state.map);
       state.map.addListener('dragstart', () => {
+        state.ui.mapInteractionActive = true;
         collapseCctvSpiderfy();
       });
       state.map.addListener('zoom_changed', () => {
+        state.ui.mapInteractionActive = true;
         collapseCctvSpiderfy();
         renderMapCameraDebug();
         syncGateAlertMarkers();
+        syncWeatherMarkers();
       });
       state.map.addListener('idle', () => {
+        state.ui.mapInteractionActive = false;
         syncGateAlertMarkers();
+        syncWeatherMarkers();
+        requestCctvClusterRender();
       });
       state.map.addListener('heading_changed', () => {
         renderMapCameraDebug();
@@ -3979,6 +4331,10 @@
           return;
         }
         collapseCctvSpiderfy();
+        if (state.weather.selectedWeatherId) {
+          state.weather.selectedWeatherId = null;
+          syncWeatherMarkers();
+        }
       });
     }
     ensureNetworkOverlay();
@@ -4111,15 +4467,15 @@
       if (assetMonitoringPrefs && assetMonitoringPrefs.mapThemePreset) {
         state.mapContext.themePreset = String(assetMonitoringPrefs.mapThemePreset);
       }
-      if (assetMonitoringPrefs && assetMonitoringPrefs.mapCameraMode) {
-        state.mapContext.cameraMode =
-          String(assetMonitoringPrefs.mapCameraMode).toLowerCase() === 'tilt' ? 'tilt' : 'normal';
-      }
+      state.mapContext.cameraMode = 'tilt';
       if (assetMonitoringPrefs && Number.isFinite(Number(assetMonitoringPrefs.mapCameraHeading))) {
         state.mapContext.cameraHeading = Number(assetMonitoringPrefs.mapCameraHeading);
       }
       if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'networkVisible')) {
         state.networkArcs.visible = Boolean(assetMonitoringPrefs.networkVisible);
+      }
+      if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'weatherVisible')) {
+        state.weather.visible = Boolean(assetMonitoringPrefs.weatherVisible);
       }
       if (assetMonitoringPrefs && assetMonitoringPrefs.selectedBranchId && !state.mapContext.selectedBranch) {
         state.mapContext.selectedBranch = {
@@ -4155,6 +4511,7 @@
           mapCameraMode: state.mapContext.cameraMode,
           mapCameraHeading: Number(state.mapContext.cameraHeading || 0),
           networkVisible: state.networkArcs.visible,
+          weatherVisible: state.weather.visible,
         },
       };
       await window.appState.saveWorkspaceState(nextState);
@@ -4188,6 +4545,7 @@
     state.gateAlerts.visible = sosGateToggleEl ? Boolean(sosGateToggleEl.checked) : true;
     resetStandaloneLayerState();
     resetNetworkLayerState();
+    resetWeatherLayerState();
     renderNotifications();
     setToolbarState();
     state.ui.mapEmptyMessage = getDefaultMapEmptyMessage();
@@ -4197,6 +4555,9 @@
     renderMapCameraModeControls();
     if (sosNetworkToggleEl) {
       sosNetworkToggleEl.checked = state.networkArcs.visible;
+    }
+    if (sosWeatherToggleEl) {
+      syncWeatherToggleState();
     }
     await ensureMap();
     await refreshDashboard();
@@ -4220,6 +4581,7 @@
     clearGateMarkers();
     resetStandaloneLayerState();
     resetNetworkLayerState();
+    resetWeatherLayerState();
     stopStream();
     stopTicketRefreshLoop();
     setConnectionBadge('Idle', 'neutral');
@@ -4316,6 +4678,7 @@
           : state.mapContext.availableBranches.find((branch) => String(branch.id) === nextBranchId) || null;
       resetStandaloneLayerState();
       resetNetworkLayerState();
+      resetWeatherLayerState();
       void persistAssetMonitoringPrefs();
       void refreshDashboard().catch((error) => {
         setConnectionBadge(error.message || 'Gagal mengganti branch monitoring.', 'danger');
@@ -4410,6 +4773,27 @@
       }
       void persistAssetMonitoringPrefs();
       renderAll();
+      updateMapEmptyState('');
+    });
+  }
+
+  if (sosWeatherToggleEl) {
+    sosWeatherToggleEl.addEventListener('change', () => {
+      if (isAllBranchesSelected()) {
+        syncWeatherToggleState();
+        clearWeatherMarkers();
+        renderAssetToolbar();
+        return;
+      }
+      state.weather.visible = Boolean(sosWeatherToggleEl.checked);
+      if (!state.weather.visible) {
+        state.weather.selectedWeatherId = null;
+        clearWeatherMarkers();
+      } else {
+        syncWeatherMarkers();
+      }
+      void persistAssetMonitoringPrefs();
+      renderAssetToolbar();
       updateMapEmptyState('');
     });
   }

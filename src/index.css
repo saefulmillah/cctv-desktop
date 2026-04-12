@@ -2567,6 +2567,156 @@ body.sos-mode .asset-toolbar-control {
   letter-spacing: 0.02em;
 }
 
+.weather-map-marker {
+  position: absolute;
+  display: block;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  transform: translate(-50%, -100%);
+  cursor: pointer;
+  overflow: visible;
+}
+
+.weather-map-marker__pin {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 10px 16px rgba(10, 38, 92, 0.24));
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2b7bff 0%, #1a56e5 100%);
+  display: grid;
+  place-items: center;
+  box-shadow:
+    0 10px 18px rgba(10, 38, 92, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.weather-map-marker__icon-wrap {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.weather-map-marker__icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.weather-map-marker__bubble {
+  position: absolute;
+  left: 52px;
+  top: 50%;
+  display: inline-grid;
+  gap: 2px;
+  min-width: 230px;
+  max-width: 320px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 14px 34px rgba(8, 24, 58, 0.18),
+    0 2px 8px rgba(8, 24, 58, 0.1);
+  color: #203042;
+  text-align: left;
+  transform: translate(-18px, -50%) scale(0.96);
+  transform-origin: left center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.weather-map-marker.is-expanded .weather-map-marker__bubble {
+  opacity: 1;
+  transform: translate(0, -50%) scale(1);
+  animation: weatherBubbleSlideIn 0.28s cubic-bezier(0.2, 0.9, 0.22, 1);
+}
+
+@keyframes weatherBubbleSlideIn {
+  from {
+    opacity: 0;
+    transform: translate(-22px, -50%) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+}
+
+.weather-map-marker__summary {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #374c63;
+}
+
+.weather-map-marker__location {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #1a2430;
+}
+
+.weather-map-marker__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 173, 51, 0.18);
+  color: #8a5a00;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.weather-map-marker.is-stale .weather-map-marker__pin {
+  background: linear-gradient(180deg, #4d8cff 0%, #315fc9 100%);
+}
+
+.map-camera-debug {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  min-width: 170px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 18, 34, 0.78);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.24);
+}
+
+.map-camera-debug__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(233, 243, 255, 0.84);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.map-camera-debug__row strong {
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 @keyframes sosPulse {
   0% {
     transform: scale(0.85);

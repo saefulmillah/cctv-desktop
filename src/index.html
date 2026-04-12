@@ -101,6 +101,10 @@
           <input id="sosNetworkToggle" type="checkbox" checked />
           <span>Network</span>
         </label>
+        <label class="sos-map-toggle asset-toolbar-control" for="sosWeatherToggle">
+          <input id="sosWeatherToggle" type="checkbox" checked />
+          <span>Weather</span>
+        </label>
         <div class="toolbar-menu-wrap">
           <button id="toolbarMenuBtn" class="toolbar-btn" type="button" aria-haspopup="true">
             Menu
@@ -136,6 +140,7 @@
         <section class="sos-map-shell">
           <div id="sosMap" class="sos-map" aria-label="Asset monitoring map"></div>
           <div id="networkArcTooltip" class="network-arc-tooltip hidden" role="status" aria-live="polite"></div>
+          <div id="mapCameraDebug" class="map-camera-debug" aria-live="polite"></div>
           <div class="asset-map-topbar">
             <div class="asset-map-topbar__title">
               <p class="eyebrow">HK TOLL VISION</p>
