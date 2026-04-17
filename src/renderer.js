@@ -1619,6 +1619,7 @@ const sanitizeCameraForPersistence = (camera) => {
 
 const serializeWorkspaceState = () => ({
   version: WORKSPACE_STATE_VERSION,
+  viewMode: isSosModeActive() ? 'asset-monitoring' : 'cctv',
   activeBranch: activeBranch
     ? {
         id: activeBranch.id,

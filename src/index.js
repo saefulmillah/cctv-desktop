@@ -439,7 +439,13 @@ const createWindow = () => {
     const sourceLabel = sourceId ? `${sourceId}:${line}` : `renderer:${line}`;
     const levelLabel =
       level === 3 ? 'error' : level === 2 ? 'warn' : level === 1 ? 'info' : 'debug';
-    console.log(`[renderer:${levelLabel}] ${sourceLabel} ${message}`);
+    try {
+      console.log(`[renderer:${levelLabel}] ${sourceLabel} ${message}`);
+    } catch (error) {
+      if (!(error && error.code === 'EPIPE')) {
+        throw error;
+      }
+    }
   });
   mainWindow.maximize();
 };

@@ -580,6 +580,26 @@ body.focus-mode .activity-panel {
   margin-right: 2px;
 }
 
+.asset-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asset-toolbar-group--toggles {
+  flex-wrap: wrap;
+}
+
+.asset-toolbar-separator {
+  display: none;
+  width: 1px;
+  height: 28px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(159, 223, 255, 0.46), rgba(255, 255, 255, 0.06));
+  opacity: 0.82;
+}
+
 .current-branch,
 .installed-version {
   white-space: nowrap;
@@ -677,6 +697,31 @@ body.focus-mode .activity-panel {
     opacity 0.22s ease,
     transform 0.22s ease,
     visibility 0.22s ease;
+}
+
+.asset-filter-popup {
+  display: grid;
+  gap: 8px;
+  min-width: 160px;
+  padding: 12px;
+}
+
+.asset-filter-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 2px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.asset-filter-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: #1ed8de;
 }
 
 .toolbar-menu-item {
@@ -1566,6 +1611,10 @@ body.sos-mode .toolbar-primary {
   flex-wrap: wrap;
   margin-right: 0;
   gap: 10px;
+}
+
+body.sos-mode .asset-toolbar-separator {
+  display: inline-flex;
 }
 
 body.sos-mode .current-branch {
@@ -3000,6 +3049,11 @@ body.sos-mode .asset-toolbar-control {
 
   body.sos-mode .toolbar-primary {
     width: 100%;
+    gap: 8px;
+  }
+
+  body.sos-mode .asset-toolbar-separator {
+    height: 24px;
   }
 
   #sosBranchSelect.asset-map-topbar__select {

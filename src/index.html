@@ -84,36 +84,64 @@
 
     <section id="toolbar" class="toolbar collapsed">
       <div class="toolbar-primary">
-        <button id="sosMonitorBtn" class="toolbar-btn" type="button">Assets</button>
-        <label class="sos-map-toggle asset-toolbar-control" for="sosCctvToggle">
-          <input id="sosCctvToggle" type="checkbox" checked />
-          <span>CCTV</span>
-        </label>
-        <label class="sos-map-toggle asset-toolbar-control" for="sosVmsToggle">
-          <input id="sosVmsToggle" type="checkbox" checked />
-          <span>VMS</span>
-        </label>
-        <label class="sos-map-toggle asset-toolbar-control" for="sosGateToggle">
-          <input id="sosGateToggle" type="checkbox" checked />
-          <span>Gerbang</span>
-        </label>
-        <label class="sos-map-toggle asset-toolbar-control" for="sosNetworkToggle">
-          <input id="sosNetworkToggle" type="checkbox" checked />
-          <span>Network</span>
-        </label>
-        <label class="sos-map-toggle asset-toolbar-control" for="sosWeatherToggle">
-          <input id="sosWeatherToggle" type="checkbox" checked />
-          <span>Weather</span>
-        </label>
-        <div class="toolbar-menu-wrap">
-          <button id="toolbarMenuBtn" class="toolbar-btn" type="button" aria-haspopup="true">
-            Menu
-          </button>
-          <div id="toolbarMenuPanel" class="toolbar-menu-panel hidden">
-            <button id="menuApiConfigBtn" class="toolbar-menu-item" type="button">Config API</button>
-            <button id="menuUpdateInfoBtn" class="toolbar-menu-item" type="button">Update Info</button>
-            <button id="menuHelpBtn" class="toolbar-menu-item" type="button">Help</button>
+        <div class="asset-toolbar-group asset-toolbar-group--actions">
+          <button id="sosMonitorBtn" class="toolbar-btn" type="button">Assets</button>
+          <div class="toolbar-menu-wrap">
+            <button id="toolbarMenuBtn" class="toolbar-btn" type="button" aria-haspopup="true" aria-expanded="false">
+              Menu
+            </button>
+            <div id="toolbarMenuPanel" class="toolbar-menu-panel hidden">
+              <button id="menuApiConfigBtn" class="toolbar-menu-item" type="button">Config API</button>
+              <button id="menuUpdateInfoBtn" class="toolbar-menu-item" type="button">Update Info</button>
+              <button id="menuHelpBtn" class="toolbar-menu-item" type="button">Help</button>
+            </div>
           </div>
+          <div class="toolbar-menu-wrap asset-filter-wrap asset-toolbar-control">
+            <button id="assetFilterBtn" class="toolbar-btn" type="button" aria-haspopup="true" aria-expanded="false">
+              Filter
+            </button>
+            <div id="assetFilterPopup" class="toolbar-menu-panel asset-filter-popup hidden">
+              <label class="asset-filter-option" for="sosMarkerNormalToggle" title="Tampilkan marker status normal">
+                <input id="sosMarkerNormalToggle" type="checkbox" checked />
+                <span>Normal</span>
+              </label>
+              <label class="asset-filter-option" for="sosMarkerWarningToggle" title="Tampilkan marker status warning">
+                <input id="sosMarkerWarningToggle" type="checkbox" checked />
+                <span>Warning</span>
+              </label>
+              <label class="asset-filter-option" for="sosMarkerErrorToggle" title="Tampilkan marker status error">
+                <input id="sosMarkerErrorToggle" type="checkbox" checked />
+                <span>Error</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <span class="asset-toolbar-separator asset-toolbar-control" aria-hidden="true"></span>
+        <div class="asset-toolbar-group asset-toolbar-group--toggles">
+          <label class="sos-map-toggle asset-toolbar-control" for="sosCctvToggle">
+            <input id="sosCctvToggle" type="checkbox" checked />
+            <span>CCTV</span>
+          </label>
+          <label class="sos-map-toggle asset-toolbar-control" for="sosVmsToggle">
+            <input id="sosVmsToggle" type="checkbox" checked />
+            <span>VMS</span>
+          </label>
+          <label class="sos-map-toggle asset-toolbar-control" for="sosGateToggle">
+            <input id="sosGateToggle" type="checkbox" checked />
+            <span>Gate</span>
+          </label>
+          <label class="sos-map-toggle asset-toolbar-control" for="sosNetworkToggle">
+            <input id="sosNetworkToggle" type="checkbox" checked />
+            <span>FO</span>
+          </label>
+          <label class="sos-map-toggle asset-toolbar-control" for="sosAnimatedNetworkToggle" title="Animated trail experiment for network arcs">
+            <input id="sosAnimatedNetworkToggle" type="checkbox" />
+            <span>Network</span>
+          </label>
+          <label class="sos-map-toggle asset-toolbar-control" for="sosWeatherToggle">
+            <input id="sosWeatherToggle" type="checkbox" checked />
+            <span>Weather</span>
+          </label>
         </div>
       </div>
 
@@ -543,6 +571,7 @@
     </aside>
 
     <script src="https://unpkg.com/deck.gl@9.1.12/dist.min.js"></script>
+    <script src="./animated-arc-layer.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <script src="./renderer.js"></script>
     <script src="./asset-monitoring.js"></script>

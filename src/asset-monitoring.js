@@ -38,7 +38,13 @@
   const sosVmsToggleEl = $('sosVmsToggle');
   const sosGateToggleEl = $('sosGateToggle');
   const sosNetworkToggleEl = $('sosNetworkToggle');
+  const sosAnimatedNetworkToggleEl = $('sosAnimatedNetworkToggle');
   const sosWeatherToggleEl = $('sosWeatherToggle');
+  const sosMarkerNormalToggleEl = $('sosMarkerNormalToggle');
+  const sosMarkerWarningToggleEl = $('sosMarkerWarningToggle');
+  const sosMarkerErrorToggleEl = $('sosMarkerErrorToggle');
+  const assetFilterBtn = $('assetFilterBtn');
+  const assetFilterPopup = $('assetFilterPopup');
   const mapCameraDebugEl = $('mapCameraDebug');
   const networkArcTooltipEl = $('networkArcTooltip');
   const sosNotificationPanelEl = $('sosNotificationPanel');
@@ -145,11 +151,15 @@
       cacheByBranch: new Map(),
       meta: null,
       visible: true,
+      experimentalEnabled: false,
       selectedEdgeKey: null,
       hoveredEdgeKey: null,
       overlay: null,
       hasLoaded: false,
       errorMessage: '',
+      animationFrame: 0,
+      animationStartedAt: 0,
+      currentTime: 0,
     },
     weather: {
       items: [],
@@ -192,6 +202,11 @@
       mapInteractionActive: false,
       mapCameraDebugVisible: true,
       sosFocusAnimationFrame: 0,
+    },
+    markerStatusFilters: {
+      normal: true,
+      warning: true,
+      error: true,
     },
     alerts: new Map(),
     ticketsBySosId: new Map(),
@@ -254,6 +269,8 @@
       element.className = value;
     }
   };
+
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
   const toCapitalizedWords = (value) =>
     String(value ?? '')
@@ -530,6 +547,17 @@
     }
     return 'neutral';
   };
+  const getMarkerFilterKeyFromTone = (tone) => {
+    if (tone === 'danger') {
+      return 'error';
+    }
+    if (tone === 'warning') {
+      return 'warning';
+    }
+    return 'normal';
+  };
+  const isMarkerStatusFilterEnabled = (key) =>
+    Boolean(state.markerStatusFilters[String(key || '').toLowerCase()]);
   const getNetworkStatusTone = (status) => {
     const normalized = String(status || '').trim().toLowerCase();
     if (normalized === 'warning') {
@@ -581,6 +609,45 @@
     };
   };
 
+  const NETWORK_STATUS_STYLE = {
+    up: {
+      key: 'up',
+      color: [64, 238, 255],
+      speed: 0.18,
+      pulse: true,
+    },
+    degraded: {
+      key: 'degraded',
+      color: [255, 191, 71],
+      speed: 0.1,
+      pulse: true,
+    },
+    down: {
+      key: 'down',
+      color: [255, 90, 90],
+      speed: 0,
+      pulse: false,
+    },
+  };
+
+  const resolveNetworkStatusStyle = (status, severity) => {
+    const normalizedStatus = String(status || 'normal').trim().toLowerCase();
+    const normalizedSeverity = String(severity || 'none').trim().toLowerCase();
+    if (
+      ['down', 'error', 'offline', 'critical'].includes(normalizedStatus) ||
+      ['critical', 'high'].includes(normalizedSeverity)
+    ) {
+      return NETWORK_STATUS_STYLE.down;
+    }
+    if (
+      ['degraded', 'warning', 'unstable'].includes(normalizedStatus) ||
+      ['medium', 'warning', 'moderate'].includes(normalizedSeverity)
+    ) {
+      return NETWORK_STATUS_STYLE.degraded;
+    }
+    return NETWORK_STATUS_STYLE.up;
+  };
+
   const normalizeNetworkArc = (item) => {
     if (!item || typeof item !== 'object' || !(item.edge_id || item.edge_code)) {
       return null;
@@ -612,6 +679,7 @@
       Number.isFinite(Number(item.target && item.target.lng))
       ? { lat: Number(item.target.lat), lng: Number(item.target.lng) }
       : { lat: targetPosition[1], lng: targetPosition[0] };
+    const statusStyle = resolveNetworkStatusStyle(item.status, item.severity);
     return {
       ...item,
       edge_id: String(item.edge_id || ''),
@@ -636,10 +704,13 @@
         ...(item.arc || {}),
         source_position: sourcePosition,
         target_position: targetPosition,
-        color: arcColor.length >= 3 ? arcColor.slice(0, 3) : [34, 197, 94],
+        color: arcColor.length >= 3 ? arcColor.slice(0, 3) : statusStyle.color,
         width: Number.isFinite(Number(item.arc && item.arc.width)) ? Number(item.arc.width) : 1,
         height: Number.isFinite(Number(item.arc && item.arc.height)) ? Number(item.arc.height) : 0.35,
-        pulse: Boolean(item.arc && item.arc.pulse),
+        pulse: statusStyle.pulse,
+        status_style: statusStyle.key,
+        animation_speed: statusStyle.speed,
+        visual_color: statusStyle.color.slice(0, 3),
       },
       edgeKey: makeNetworkEdgeKey(item),
       isCrossBranch: Boolean(sourceBranchId && targetBranchId && sourceBranchId !== targetBranchId),
@@ -838,6 +909,20 @@
     }
     return Number(camera && camera.is_active) === 1 ? 'online' : 'offline';
   };
+  const getStandaloneAssetMarkerTone = (camera) => {
+    const operationalState = getCameraOperationalState(camera);
+    if (operationalState === 'offline') {
+      return 'danger';
+    }
+    if (operationalState === 'warning') {
+      return 'warning';
+    }
+    return 'success';
+  };
+  const shouldDisplayStandaloneAssetStatus = (camera) =>
+    isMarkerStatusFilterEnabled(getMarkerFilterKeyFromTone(getStandaloneAssetMarkerTone(camera)));
+  const shouldDisplayGateStatus = (gate) =>
+    isMarkerStatusFilterEnabled(getMarkerFilterKeyFromTone(getGateMarkerTone(gate)));
 
   const getCctvMarkerIconUrl = (camera) => {
     const assetType = String(camera && camera.asset_type ? camera.asset_type : 'cctv').toLowerCase();
@@ -1249,6 +1334,8 @@
       const centerLatLng =
         projection.fromDivPixelToLatLng(new window.google.maps.Point(avgX, avgY)) || group[0].latLng;
       const clusterEntries = group.map((item) => item.entry);
+      const hasDanger = clusterEntries.some((item) => getStandaloneAssetMarkerTone(item && item.camera) === 'danger');
+      const hasWarning = clusterEntries.some((item) => getStandaloneAssetMarkerTone(item && item.camera) === 'warning');
       clusters.push({
         key: clusterEntries
           .map((entry) => String(entry && entry.camera && entry.camera.id ? entry.camera.id : ''))
@@ -1259,6 +1346,7 @@
         entries: clusterEntries,
         position: centerLatLng,
         assetType: getClusterAssetTypeFromEntries(clusterEntries),
+        status: hasDanger ? 'error' : hasWarning ? 'warning' : 'normal',
       });
     }
     return { singles, clusters };
@@ -1637,7 +1725,7 @@
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
         this.element.style.zIndex = String(
-          getMapMarkerZIndex(this.alert.sos_id === state.selectedSosId ? 'selected' : 'default')
+          getSosMarkerZIndex(this.alert.sos_id === state.selectedSosId ? 'selected' : 'default')
         );
         this.element.innerHTML =
           '<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"></span>';
@@ -1672,8 +1760,8 @@
   const getLayerStackZIndex = (stackOrder, options = {}) => {
     const networkVisible = Boolean(state.networkArcs && state.networkArcs.visible);
     const tiers = networkVisible
-      ? { 1: 50, 2: 40, 3: 30, 4: 20, 5: 10 }
-      : { 1: 1000, 2: 900, 3: 800, 4: 700, 5: 600 };
+      ? { 1: 50, 2: 40, 3: 30, 4: 20, 5: 10, 6: 4 }
+      : { 1: 1000, 2: 900, 3: 800, 4: 700, 5: 600, 6: 520 };
     const base = tiers[Number(stackOrder)] || (networkVisible ? 25 : 750);
     const selectedBoost = options.selected ? (networkVisible ? 4 : 20) : 0;
     const offset = Number.isFinite(Number(options.offset)) ? Number(options.offset) : 0;
@@ -1686,6 +1774,20 @@
     if (variant === 'spiderfy') return getLayerStackZIndex(3, { selected: true, offset: 1 });
     if (variant === 'polyline') return Boolean(state.networkArcs && state.networkArcs.visible) ? 8 : 1;
     return getLayerStackZIndex(3, { offset: -5 });
+  };
+  const getSosMarkerZIndex = (variant = 'default') => {
+    if (variant === 'selected') return getLayerStackZIndex(1, { selected: true, offset: 12 });
+    return getLayerStackZIndex(1, { offset: 8 });
+  };
+  const getStandaloneAssetZIndex = (camera, isSelected = false) => {
+    const tone = getStandaloneAssetMarkerTone(camera);
+    const stackOrder = tone === 'danger' ? 4 : tone === 'warning' ? 5 : 6;
+    return getLayerStackZIndex(stackOrder, { selected: isSelected, offset: isSelected ? 6 : 0 });
+  };
+  const getCctvClusterZIndex = (cluster) => {
+    const tone = getAssetIssueTone(cluster && cluster.status ? cluster.status : 'normal');
+    const stackOrder = tone === 'danger' ? 2 : tone === 'warning' ? 3 : 4;
+    return getLayerStackZIndex(stackOrder, { offset: 1 });
   };
 
   const getGateMarkerZIndex = (gate, isSelected = false) => {
@@ -1745,10 +1847,11 @@
           return;
         }
         const assetType = String(this.cluster.assetType || 'mixed').toLowerCase();
-        this.element.className = `sos-map-marker asset-map-marker asset-map-marker--success asset-map-marker--cluster cctv-cluster-marker cctv-cluster-marker--${assetType} ${this.isEntering ? 'is-entering' : ''} ${this.isDimmed ? 'is-dimmed' : ''}`;
+        const tone = getAssetIssueTone(this.cluster && this.cluster.status ? this.cluster.status : 'normal');
+        this.element.className = `sos-map-marker asset-map-marker asset-map-marker--${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'success'} asset-map-marker--cluster cctv-cluster-marker cctv-cluster-marker--${assetType} ${this.isEntering ? 'is-entering' : ''} ${this.isDimmed ? 'is-dimmed' : ''}`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
-        this.element.style.zIndex = String(getMapMarkerZIndex('cluster'));
+        this.element.style.zIndex = String(getCctvClusterZIndex(this.cluster));
         this.element.title = `${Number(this.cluster.count || 0)} asset`;
         this.element.innerHTML = assetType === 'mixed'
           ? `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><span class="asset-map-cluster__count">${escapeHtml(String(this.cluster.count || 0))}</span></span>`
@@ -2065,6 +2168,26 @@
     sosWeatherToggleEl.checked = state.weather.visible;
     sosWeatherToggleEl.indeterminate = false;
     sosWeatherToggleEl.disabled = false;
+  };
+
+  const getActiveMarkerFilterCount = () =>
+    ['normal', 'warning', 'error'].filter((key) => Boolean(state.markerStatusFilters[key])).length;
+
+  const syncAssetFilterButtonState = () => {
+    if (!assetFilterBtn) {
+      return;
+    }
+    const activeCount = getActiveMarkerFilterCount();
+    assetFilterBtn.textContent = activeCount === 3 ? 'Filter' : `Filter ${activeCount}/3`;
+    assetFilterBtn.setAttribute('aria-expanded', assetFilterPopup && !assetFilterPopup.classList.contains('hidden') ? 'true' : 'false');
+  };
+
+  const setAssetFilterPopupVisible = (visible) => {
+    if (!assetFilterPopup) {
+      return;
+    }
+    assetFilterPopup.classList.toggle('hidden', !visible);
+    syncAssetFilterButtonState();
   };
 
   const renderMapCameraModeControls = () => {
@@ -2679,7 +2802,14 @@
     return assetType === 'vms' ? state.vmsVisible : state.cctvVisible;
   };
   const getStandaloneLayerKey = (branchKey) =>
-    `${branchKey}:${state.cctvVisible ? 'cctv' : ''}:${state.vmsVisible ? 'vms' : ''}`;
+    [
+      branchKey,
+      state.cctvVisible ? 'cctv' : '',
+      state.vmsVisible ? 'vms' : '',
+      state.markerStatusFilters.normal ? 'normal' : '',
+      state.markerStatusFilters.warning ? 'warning' : '',
+      state.markerStatusFilters.error ? 'error' : '',
+    ].join(':');
   const getNetworkSummaryLabel = () => {
     const totals = state.networkArcs.meta && state.networkArcs.meta.totals ? state.networkArcs.meta.totals : null;
     const arcCount = totals && Number.isFinite(Number(totals.arcs))
@@ -2691,7 +2821,7 @@
     if (!state.networkArcs.visible) {
       return 'Layer network disembunyikan';
     }
-    return `${arcCount} arc${arcCount === 1 ? '' : 's'}${crossBranch ? ' • cross-branch' : ''}`;
+    return `${arcCount} arc${arcCount === 1 ? '' : 's'}${crossBranch ? ' • cross-branch' : ''}${state.networkArcs.experimentalEnabled ? ' • arc fx' : ''}`;
   };
   const getWeatherSummaryLabel = () => {
     if (!isWeatherLayerActive()) {
@@ -2947,6 +3077,7 @@
       return;
     }
     syncWeatherToggleState();
+    syncAssetFilterButtonState();
     const selectedBranch = getSelectedBranch();
     const branchLabel = isAllBranchesSelected()
       ? 'Semua Branch'
@@ -3205,16 +3336,102 @@
     const rgb = Array.isArray(color) ? color.slice(0, 3) : [34, 197, 94];
     return [...rgb.map((value) => Number(value) || 0), alpha];
   };
+  const getNetworkArcBaseColor = (edge) => {
+    const color = edge && edge.arc && Array.isArray(edge.arc.visual_color) ? edge.arc.visual_color : null;
+    return Array.isArray(color) && color.length >= 3 ? color.slice(0, 3) : NETWORK_STATUS_STYLE.up.color;
+  };
 
-  const NETWORK_NEON_BLUE = [64, 238, 255];
+  const getNetworkArcColor = (edge, { selected = false, hovered = false, animated = false } = {}) => {
+    const baseColor = getNetworkArcBaseColor(edge);
+    const intensity = selected ? 34 : hovered ? 18 : animated ? 10 : 0;
+    const alpha = selected ? 255 : hovered ? 246 : animated ? 228 : 208;
+    return withAlpha(
+      baseColor.map((channel) => clamp(Number(channel || 0) + intensity, 0, 255)),
+      alpha
+    );
+  };
+
+  const getNetworkArcWidth = (edge, { animated = false } = {}) => {
+    const baseWidth = Number(edge && edge.arc && edge.arc.width) || 1;
+    if (edge && edge.edgeKey === state.networkArcs.selectedEdgeKey) {
+      return baseWidth + (animated ? 3.0 : 1.4);
+    }
+    if (edge && edge.edgeKey === state.networkArcs.hoveredEdgeKey) {
+      return baseWidth + (animated ? 2.5 : 1.0);
+    }
+    return baseWidth + (animated ? 1.9 : 0.5);
+  };
+
+  const getNetworkArcHeight = (edge) => {
+    const heightScale = state.mapContext.cameraMode === 'tilt' ? 2.2 : 1.15;
+    return (Number(edge && edge.arc && edge.arc.height) || 0.35) * heightScale;
+  };
+
+  const getAnimatedArcLayerCtor = () => window.AnimatedArcLayer || null;
+  const getStableAnimationOffset = (edge) => {
+    const key = String((edge && (edge.edgeKey || edge.edge_id || edge.edge_code)) || '');
+    if (!key) {
+      return 0;
+    }
+    let hash = 0;
+    for (let index = 0; index < key.length; index += 1) {
+      hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+    }
+    return (hash % 1000) / 1000;
+  };
+
+  const hasAnimatedNetworkArcs = () =>
+    Boolean(
+      state.networkArcs.experimentalEnabled &&
+      getAnimatedArcLayerCtor() &&
+      state.networkArcs.visible &&
+      Array.isArray(state.networkArcs.items) &&
+      state.networkArcs.items.some((item) => item && item.arc && item.arc.pulse)
+    );
+
+  const stopNetworkArcAnimation = ({ resetTime = false } = {}) => {
+    if (state.networkArcs.animationFrame) {
+      window.cancelAnimationFrame(state.networkArcs.animationFrame);
+      state.networkArcs.animationFrame = 0;
+    }
+    state.networkArcs.animationStartedAt = 0;
+    if (resetTime) {
+      state.networkArcs.currentTime = 0;
+    }
+  };
+
+  const startNetworkArcAnimation = () => {
+    if (!hasAnimatedNetworkArcs()) {
+      stopNetworkArcAnimation({ resetTime: !state.networkArcs.experimentalEnabled });
+      return;
+    }
+    if (state.networkArcs.animationFrame) {
+      return;
+    }
+    const step = (timestamp) => {
+      state.networkArcs.animationFrame = 0;
+      if (!hasAnimatedNetworkArcs()) {
+        stopNetworkArcAnimation();
+        return;
+      }
+      if (!state.networkArcs.animationStartedAt) {
+        state.networkArcs.animationStartedAt = timestamp - state.networkArcs.currentTime * 1000;
+      }
+      state.networkArcs.currentTime = (timestamp - state.networkArcs.animationStartedAt) / 1000;
+      syncNetworkOverlay();
+    };
+    state.networkArcs.animationFrame = window.requestAnimationFrame(step);
+  };
 
   const syncNetworkOverlay = () => {
     if (!state.networkArcs.overlay) {
+      stopNetworkArcAnimation();
       return;
     }
     if (!state.networkArcs.visible || !Array.isArray(state.networkArcs.items) || !state.networkArcs.items.length) {
       state.networkArcs.overlay.setProps({ layers: [] });
       hideNetworkArcTooltip();
+      stopNetworkArcAnimation({ resetTime: !state.networkArcs.experimentalEnabled });
       return;
     }
     const deckGlobal = window.deck || {};
@@ -3222,73 +3439,132 @@
       deckGlobal.ArcLayer ||
       (deckGlobal.layers && deckGlobal.layers.ArcLayer) ||
       (window.deckLayers && window.deckLayers.ArcLayer);
+    const AnimatedArcLayerCtor = getAnimatedArcLayerCtor();
     if (!ArcLayerCtor) {
+      stopNetworkArcAnimation();
       return;
     }
-    const hasSelection = Boolean(state.networkArcs.selectedEdgeKey);
-    const hasHover = Boolean(state.networkArcs.hoveredEdgeKey);
-    const heightScale = state.mapContext.cameraMode === 'tilt' ? 2.2 : 1.15;
-    state.networkArcs.overlay.setProps({
-      layers: [
-        new ArcLayerCtor({
-          id: 'fiber-network-arcs',
-          data: state.networkArcs.items,
-          pickable: true,
-          autoHighlight: false,
+    const animatedEnabled = Boolean(state.networkArcs.experimentalEnabled && AnimatedArcLayerCtor);
+    const layers = [
+      new ArcLayerCtor({
+        id: 'fiber-network-arcs-base',
+        data: state.networkArcs.items,
+        pickable: true,
+        autoHighlight: false,
+        widthUnits: 'pixels',
+        getSourcePosition: (d) => d.arc.source_position,
+        getTargetPosition: (d) => d.arc.target_position,
+        getSourceColor: (d) =>
+          getNetworkArcColor(d, {
+            selected: d.edgeKey === state.networkArcs.selectedEdgeKey,
+            hovered: d.edgeKey === state.networkArcs.hoveredEdgeKey,
+          }),
+        getTargetColor: (d) =>
+          getNetworkArcColor(d, {
+            selected: d.edgeKey === state.networkArcs.selectedEdgeKey,
+            hovered: d.edgeKey === state.networkArcs.hoveredEdgeKey,
+          }),
+        getWidth: (d) => getNetworkArcWidth(d),
+        getHeight: (d) => getNetworkArcHeight(d),
+        onHover: (info) => {
+          const nextHoveredEdgeKey = info && info.object ? info.object.edgeKey : null;
+          const hasChanged = state.networkArcs.hoveredEdgeKey !== nextHoveredEdgeKey;
+          state.networkArcs.hoveredEdgeKey = nextHoveredEdgeKey;
+          showNetworkArcTooltip(info);
+          if (hasChanged) {
+            syncNetworkOverlay();
+          }
+        },
+        onClick: (info) => {
+          if (!(info && info.object)) {
+            return;
+          }
+          selectNetworkArc(info.object);
+        },
+        updateTriggers: {
+          getSourceColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+          getTargetColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+          getWidth: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+          getHeight: [state.mapContext.cameraMode],
+        },
+      }),
+    ];
+    const animatedUpItems = animatedEnabled
+      ? state.networkArcs.items.filter((item) => item && item.arc && item.arc.pulse && item.arc.status_style === 'up')
+      : [];
+    const animatedDegradedItems = animatedEnabled
+      ? state.networkArcs.items.filter(
+          (item) => item && item.arc && item.arc.pulse && item.arc.status_style === 'degraded'
+        )
+      : [];
+    if (animatedUpItems.length) {
+      animatedUpItems.forEach((edge) => {
+        layers.push(
+          new AnimatedArcLayerCtor({
+            id: `fiber-network-arcs-animated-up-${edge.edgeKey}`,
+            data: [edge],
+            pickable: false,
+            widthUnits: 'pixels',
+            currentTime: state.networkArcs.currentTime + getStableAnimationOffset(edge) / NETWORK_STATUS_STYLE.up.speed,
+            speed: NETWORK_STATUS_STYLE.up.speed,
+            headSize: 0.05,
+            tailSize: 0.28,
+            minAlpha: 0.2,
+            getSourcePosition: (d) => d.arc.source_position,
+            getTargetPosition: (d) => d.arc.target_position,
+            getSourceColor: (d) => getNetworkArcColor(d, { animated: true }),
+            getTargetColor: (d) => getNetworkArcColor(d, { animated: true }),
+            getWidth: (d) => getNetworkArcWidth(d, { animated: true }),
+            getHeight: (d) => getNetworkArcHeight(d),
+            updateTriggers: {
+              getSourceColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+              getTargetColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+              getWidth: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+              getHeight: [state.mapContext.cameraMode],
+              currentTime: [state.networkArcs.currentTime],
+            },
+          })
+        );
+      });
+    }
+    if (animatedDegradedItems.length) {
+      animatedDegradedItems.forEach((edge) => {
+        layers.push(
+        new AnimatedArcLayerCtor({
+          id: `fiber-network-arcs-animated-degraded-${edge.edgeKey}`,
+          data: [edge],
+          pickable: false,
           widthUnits: 'pixels',
+          currentTime: state.networkArcs.currentTime + getStableAnimationOffset(edge) / NETWORK_STATUS_STYLE.degraded.speed,
+          speed: NETWORK_STATUS_STYLE.degraded.speed,
+          headSize: 0.042,
+          tailSize: 0.24,
+          minAlpha: 0.18,
           getSourcePosition: (d) => d.arc.source_position,
           getTargetPosition: (d) => d.arc.target_position,
-          getSourceColor: (d) => {
-            const isSelected = d.edgeKey === state.networkArcs.selectedEdgeKey;
-            const isHovered = d.edgeKey === state.networkArcs.hoveredEdgeKey;
-            return withAlpha(
-              NETWORK_NEON_BLUE,
-              isSelected ? 255 : isHovered ? 250 : hasSelection || hasHover ? 170 : 242
-            );
-          },
-          getTargetColor: (d) => {
-            const isSelected = d.edgeKey === state.networkArcs.selectedEdgeKey;
-            const isHovered = d.edgeKey === state.networkArcs.hoveredEdgeKey;
-            return withAlpha(
-              NETWORK_NEON_BLUE,
-              isSelected ? 255 : isHovered ? 250 : hasSelection || hasHover ? 170 : 242
-            );
-          },
-          getWidth: (d) => {
-            const baseWidth = Number(d.arc.width) || 1;
-            if (d.edgeKey === state.networkArcs.selectedEdgeKey) {
-              return baseWidth + 1.4;
-            }
-            if (d.edgeKey === state.networkArcs.hoveredEdgeKey) {
-              return baseWidth + 1.0;
-            }
-            return baseWidth + 0.5;
-          },
-          getHeight: (d) => (Number(d.arc.height) || 0.35) * heightScale,
-          onHover: (info) => {
-            const nextHoveredEdgeKey = info && info.object ? info.object.edgeKey : null;
-            const hasChanged = state.networkArcs.hoveredEdgeKey !== nextHoveredEdgeKey;
-            state.networkArcs.hoveredEdgeKey = nextHoveredEdgeKey;
-            showNetworkArcTooltip(info);
-            if (hasChanged) {
-              syncNetworkOverlay();
-            }
-          },
-          onClick: (info) => {
-            if (!(info && info.object)) {
-              return;
-            }
-            selectNetworkArc(info.object);
-          },
+          getSourceColor: (d) => getNetworkArcColor(d, { animated: true }),
+          getTargetColor: (d) => getNetworkArcColor(d, { animated: true }),
+          getWidth: (d) => getNetworkArcWidth(d, { animated: true }),
+          getHeight: (d) => getNetworkArcHeight(d),
           updateTriggers: {
             getSourceColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
             getTargetColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
             getWidth: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
             getHeight: [state.mapContext.cameraMode],
+            currentTime: [state.networkArcs.currentTime],
           },
-        }),
-      ],
+        })
+      );
+      });
+    }
+    state.networkArcs.overlay.setProps({
+      layers,
     });
+    if (animatedEnabled && (animatedUpItems.length || animatedDegradedItems.length)) {
+      startNetworkArcAnimation();
+      return;
+    }
+    stopNetworkArcAnimation({ resetTime: !state.networkArcs.experimentalEnabled });
   };
 
   const ensureNetworkOverlay = () => {
@@ -3312,6 +3588,7 @@
 
   const clearNetworkOverlay = () => {
     hideNetworkArcTooltip();
+    stopNetworkArcAnimation({ resetTime: true });
     if (state.networkArcs.overlay) {
       state.networkArcs.overlay.setProps({ layers: [] });
       state.networkArcs.overlay.setMap(null);
@@ -3349,6 +3626,7 @@
     state.networkArcs.hoveredEdgeKey = null;
     state.networkArcs.errorMessage = '';
     state.networkArcs.hasLoaded = false;
+    stopNetworkArcAnimation({ resetTime: true });
     hideNetworkArcTooltip();
     if (state.networkArcs.overlay) {
       state.networkArcs.overlay.setProps({ layers: [] });
@@ -3435,9 +3713,10 @@
       }
       entry.marker.setPosition(entry.originalPosition);
       entry.marker.setZIndex(
-        String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
-          ? getMapMarkerZIndex('selected')
-          : getMapMarkerZIndex('default')
+        getStandaloneAssetZIndex(
+          entry.camera,
+          String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+        )
       );
     });
   };
@@ -3538,9 +3817,10 @@
         ),
       });
       entry.marker.setZIndex(
-        String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
-          ? getMapMarkerZIndex('selected')
-          : getMapMarkerZIndex('default')
+        getStandaloneAssetZIndex(
+          entry.camera,
+          String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+        )
       );
     });
     setText(
@@ -3655,9 +3935,10 @@
           ),
         },
         zIndex:
-          String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
-            ? getMapMarkerZIndex('selected')
-            : getMapMarkerZIndex('spiderfy'),
+          getStandaloneAssetZIndex(
+            entry.camera,
+            String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+          ) + 1,
       });
       spiderfyMarker.addListener('click', () => {
         state.cctvSuppressMapClickUntil = Date.now() + 250;
@@ -3691,10 +3972,10 @@
           getCctvMarkerScaledSize(camera)
         ),
       },
-      zIndex:
+      zIndex: getStandaloneAssetZIndex(
+        camera,
         String(camera && camera.id) === String(state.cctvSelectedCameraId)
-          ? getMapMarkerZIndex('selected')
-          : getMapMarkerZIndex('default'),
+      ),
     });
     marker.addListener('click', () => {
       state.cctvSuppressMapClickUntil = Date.now() + 250;
@@ -3725,9 +4006,10 @@
       ),
     });
     entry.marker.setZIndex(
-      String(camera && camera.id) === String(state.cctvSelectedCameraId)
-        ? getMapMarkerZIndex('selected')
-        : getMapMarkerZIndex('default')
+      getStandaloneAssetZIndex(
+        camera,
+        String(camera && camera.id) === String(state.cctvSelectedCameraId)
+      )
     );
     return entry;
   };
@@ -3902,7 +4184,7 @@
   const buildGateAlertMarkerEntries = () => {
     const viewportBounds = isViewportCullingActive() ? getViewportBoundsWithPadding() : null;
     const gates = Array.from(state.gateAlerts.items.values()).filter(
-      (gate) => gate && gate.latLng && isLatLngInViewport(gate.latLng, viewportBounds)
+      (gate) => gate && gate.latLng && shouldDisplayGateStatus(gate) && isLatLngInViewport(gate.latLng, viewportBounds)
     );
     const projection = getGateProjection();
     if (!projection) {
@@ -4473,7 +4755,9 @@
       if (!isCurrentCctvLoad()) {
         return;
       }
-      const visibleCameras = cameras.filter(isStandaloneAssetTypeVisible);
+      const visibleCameras = cameras.filter(
+        (camera) => isStandaloneAssetTypeVisible(camera) && shouldDisplayStandaloneAssetStatus(camera)
+      );
       const viewportBounds = isViewportCullingActive() ? getViewportBoundsWithPadding() : null;
       const renderableCameras = viewportBounds
         ? visibleCameras.filter((camera) => isLatLngInViewport(camera.position, viewportBounds))
@@ -5404,8 +5688,18 @@
       if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'networkVisible')) {
         state.networkArcs.visible = Boolean(assetMonitoringPrefs.networkVisible);
       }
+      if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'animatedNetworkArcsEnabled')) {
+        state.networkArcs.experimentalEnabled = Boolean(assetMonitoringPrefs.animatedNetworkArcsEnabled);
+      }
       if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'weatherVisible')) {
         state.weather.visible = Boolean(assetMonitoringPrefs.weatherVisible);
+      }
+      if (assetMonitoringPrefs && assetMonitoringPrefs.markerStatusFilters && typeof assetMonitoringPrefs.markerStatusFilters === 'object') {
+        state.markerStatusFilters = {
+          normal: assetMonitoringPrefs.markerStatusFilters.normal !== false,
+          warning: assetMonitoringPrefs.markerStatusFilters.warning !== false,
+          error: assetMonitoringPrefs.markerStatusFilters.error !== false,
+        };
       }
       if (
         assetMonitoringPrefs &&
@@ -5437,6 +5731,7 @@
       const workspaceState = (current && current.data) || {};
       const nextState = {
         ...workspaceState,
+        viewMode: state.isActive ? 'asset-monitoring' : 'cctv',
         assetMonitoring: {
           ...(workspaceState.assetMonitoring || {}),
           selectedBranchId:
@@ -5447,7 +5742,11 @@
           mapCameraMode: state.mapContext.cameraMode,
           mapCameraHeading: Number(state.mapContext.cameraHeading || 0),
           networkVisible: state.networkArcs.visible,
+          animatedNetworkArcsEnabled: state.networkArcs.experimentalEnabled,
           weatherVisible: state.weather.visible,
+          markerStatusFilters: {
+            ...state.markerStatusFilters,
+          },
         },
       };
       await window.appState.saveWorkspaceState(nextState);
@@ -5492,11 +5791,24 @@
     if (sosNetworkToggleEl) {
       sosNetworkToggleEl.checked = state.networkArcs.visible;
     }
+    if (sosAnimatedNetworkToggleEl) {
+      sosAnimatedNetworkToggleEl.checked = state.networkArcs.experimentalEnabled;
+    }
     if (sosWeatherToggleEl) {
       syncWeatherToggleState();
     }
+    if (sosMarkerNormalToggleEl) {
+      sosMarkerNormalToggleEl.checked = state.markerStatusFilters.normal;
+    }
+    if (sosMarkerWarningToggleEl) {
+      sosMarkerWarningToggleEl.checked = state.markerStatusFilters.warning;
+    }
+    if (sosMarkerErrorToggleEl) {
+      sosMarkerErrorToggleEl.checked = state.markerStatusFilters.error;
+    }
     await ensureMap();
     await refreshDashboard();
+    void persistAssetMonitoringPrefs();
     startTicketRefreshLoop();
     void connectStream();
   };
@@ -5504,6 +5816,7 @@
   const leaveAssetMonitoringMode = () => {
     debugLog('leaveAssetMonitoringMode');
     state.isActive = false;
+    setAssetFilterPopupVisible(false);
     document.body.classList.remove('sos-mode');
     sosDashboardEl.classList.add('hidden');
     cameraGridEl.classList.remove('hidden');
@@ -5523,6 +5836,7 @@
     stopTicketRefreshLoop();
     setConnectionBadge('Idle', 'neutral');
     setToolbarState();
+    void persistAssetMonitoringPrefs();
     if (typeof window.__HKTV_RESUME_GRID_STREAMS__ === 'function') {
       void window.__HKTV_RESUME_GRID_STREAMS__();
     }
@@ -5594,6 +5908,21 @@
       setConnectionBadge(error.message || 'Gagal membuka asset monitoring.', 'danger');
     });
   });
+
+  const restoreAssetMonitoringMode = async () => {
+    if (!window.appState || typeof window.appState.getWorkspaceState !== 'function') {
+      return;
+    }
+    const response = await window.appState.getWorkspaceState();
+    if (!response || response.status >= 400) {
+      return;
+    }
+    const workspaceState = response.data || null;
+    if (!workspaceState || String(workspaceState.viewMode || '').toLowerCase() !== 'asset-monitoring') {
+      return;
+    }
+    await enterAssetMonitoringMode();
+  };
 
   sosRefreshBtn.addEventListener('click', () => {
     void refreshDashboard().catch((error) => {
@@ -5735,6 +6064,95 @@
       updateMapEmptyState('');
     });
   }
+
+  if (sosAnimatedNetworkToggleEl) {
+    sosAnimatedNetworkToggleEl.addEventListener('change', () => {
+      state.networkArcs.experimentalEnabled = Boolean(sosAnimatedNetworkToggleEl.checked);
+      if (!state.networkArcs.experimentalEnabled) {
+        stopNetworkArcAnimation({ resetTime: true });
+      }
+      void persistAssetMonitoringPrefs();
+      renderAssetToolbar();
+      syncNetworkOverlay();
+      updateMapEmptyState('');
+    });
+  }
+
+  if (assetFilterBtn) {
+    assetFilterBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setAssetFilterPopupVisible(!(assetFilterPopup && !assetFilterPopup.classList.contains('hidden')));
+    });
+  }
+
+  if (assetFilterPopup) {
+    assetFilterPopup.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  }
+
+  const handleMarkerStatusFilterChange = () => {
+    state.markerStatusFilters.normal = sosMarkerNormalToggleEl ? Boolean(sosMarkerNormalToggleEl.checked) : true;
+    state.markerStatusFilters.warning = sosMarkerWarningToggleEl ? Boolean(sosMarkerWarningToggleEl.checked) : true;
+    state.markerStatusFilters.error = sosMarkerErrorToggleEl ? Boolean(sosMarkerErrorToggleEl.checked) : true;
+    const selectedGate = state.gateAlerts.selectedGateId
+      ? state.gateAlerts.items.get(String(state.gateAlerts.selectedGateId))
+      : null;
+    if (selectedGate && !shouldDisplayGateStatus(selectedGate)) {
+      state.gateAlerts.selectedGateId = null;
+      if (state.ui.selectedEntityType === 'gate') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+      }
+    }
+    const selectedAsset = state.standaloneAssets.selectedAssetKey
+      ? state.standaloneAssets.items.get(String(state.standaloneAssets.selectedAssetKey))
+      : null;
+    if (selectedAsset && !shouldDisplayStandaloneAssetStatus(selectedAsset)) {
+      state.standaloneAssets.selectedAssetKey = null;
+      closeCctvModal();
+      if (state.ui.selectedEntityType === 'asset') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+      }
+    }
+    void persistAssetMonitoringPrefs();
+    syncGateAlertMarkers();
+    void updateDefaultCctvMarkers();
+    renderAll();
+    updateMapEmptyState('');
+  };
+
+  if (sosMarkerNormalToggleEl) {
+    sosMarkerNormalToggleEl.addEventListener('change', handleMarkerStatusFilterChange);
+  }
+
+  if (sosMarkerWarningToggleEl) {
+    sosMarkerWarningToggleEl.addEventListener('change', handleMarkerStatusFilterChange);
+  }
+
+  if (sosMarkerErrorToggleEl) {
+    sosMarkerErrorToggleEl.addEventListener('change', handleMarkerStatusFilterChange);
+  }
+
+  document.addEventListener('click', (event) => {
+    if (!assetFilterPopup || assetFilterPopup.classList.contains('hidden')) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) {
+      setAssetFilterPopupVisible(false);
+      return;
+    }
+    if (
+      assetFilterPopup.contains(target) ||
+      (assetFilterBtn && assetFilterBtn.contains(target))
+    ) {
+      return;
+    }
+    setAssetFilterPopupVisible(false);
+  });
 
   if (sosWeatherToggleEl) {
     sosWeatherToggleEl.addEventListener('change', () => {
@@ -5942,6 +6360,12 @@
 
   renderNotifications();
   renderSummary();
+  void restoreAssetMonitoringMode().catch((error) => {
+    setConnectionBadge(
+      (error && error.message) || 'Gagal memulihkan asset monitoring.',
+      'danger'
+    );
+  });
 })();
 
 
