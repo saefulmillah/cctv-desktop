@@ -204,10 +204,10 @@
       topbarFloating: true,
       mapLoading: false,
       mapEmptyMessage: 'Hubungkan API lalu buka asset monitoring untuk memantau asset dan kejadian secara real-time.',
-      selectedEntityType: 'sos',
+      selectedEntityType: '',
       selectedEntityId: null,
-      selectedMarkerLabelDismissed: false,
-      hoveredMarkerLabel: null,
+      lockedMarkerLabel: null,
+      previewMarkerLabel: null,
       cctvClusterRenderTimeout: 0,
       mapInteractionActive: false,
       mapCameraDebugVisible: false,
@@ -282,12 +282,41 @@
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
-  const toCapitalizedWords = (value) =>
-    String(value ?? '')
-      .toLowerCase()
-      .replace(/(^|[\s\r\n]+)([a-z])/g, (match, prefix, char) => `${prefix}${char.toUpperCase()}`);
+  const toSentenceCase = (value) => {
+    const input = String(value ?? '');
+    if (!input.trim()) {
+      return '';
+    }
+    const normalized = input.trimStart();
+    let shouldUppercaseNext = true;
+    let result = '';
+    for (let index = 0; index < normalized.length; index += 1) {
+      const char = normalized[index];
+      if (shouldUppercaseNext && /[A-Za-z]/.test(char)) {
+        result += char.toUpperCase();
+        shouldUppercaseNext = false;
+        continue;
+      }
+      result += char;
+      if (/[.!?]/.test(char)) {
+        shouldUppercaseNext = true;
+      }
+    }
+    return result;
+  };
 
-  const applyAutoCapitalizeValue = (element) => {
+  const applySentenceCaseValue = (element) => {
+    if (!(element && typeof element.value === 'string')) {
+      return;
+    }
+    const nextValue = toSentenceCase(element.value);
+    if (nextValue === element.value) {
+      return;
+    }
+    element.value = nextValue;
+  };
+
+  const applyLiveSentenceCaseValue = (element) => {
     if (!(element && typeof element.value === 'string')) {
       return;
     }
@@ -296,24 +325,25 @@
       typeof element.selectionStart === 'number' ? element.selectionStart : currentValue.length;
     const selectionEnd =
       typeof element.selectionEnd === 'number' ? element.selectionEnd : currentValue.length;
-    const nextValue = toCapitalizedWords(currentValue);
+    const nextValue = toSentenceCase(currentValue);
     if (nextValue === currentValue) {
       return;
     }
-    const nextSelectionStart = toCapitalizedWords(currentValue.slice(0, selectionStart)).length;
-    const nextSelectionEnd = toCapitalizedWords(currentValue.slice(0, selectionEnd)).length;
     element.value = nextValue;
     if (typeof element.setSelectionRange === 'function') {
-      element.setSelectionRange(nextSelectionStart, nextSelectionEnd);
+      element.setSelectionRange(selectionStart, selectionEnd);
     }
   };
 
-  const bindAutoCapitalizeInput = (element) => {
+  const bindSentenceCaseInput = (element) => {
     if (!element) {
       return;
     }
     element.addEventListener('input', () => {
-      applyAutoCapitalizeValue(element);
+      applyLiveSentenceCaseValue(element);
+    });
+    element.addEventListener('blur', () => {
+      applySentenceCaseValue(element);
     });
   };
 
@@ -1602,8 +1632,79 @@
     };
   };
 
+  const getGateMarkerLabelPayload = (gate) => {
+    if (!(gate && gate.latLng && state.gateAlerts.visible && shouldDisplayGateStatus(gate))) {
+      return null;
+    }
+    return {
+      key: `gate:${gate.gate_id}`,
+      latLng: gate.latLng,
+      label: gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`,
+    };
+  };
+
+  const getAssetMarkerLabelPayload = (asset, latLngOverride = null) => {
+    if (
+      !(
+        asset &&
+        asset.latLng &&
+        isStandaloneAssetTypeVisible(asset) &&
+        shouldDisplayStandaloneAssetStatus(asset)
+      )
+    ) {
+      return null;
+    }
+    return {
+      key: `asset:${makeAssetKey(asset.asset_type, asset.id)}`,
+      latLng: latLngOverride || asset.latLng,
+      label: asset.title || asset.asset_name || asset.cctv_name || asset.asset_code || `Asset ${asset.id}`,
+    };
+  };
+
+  const resolveMarkerLabelRef = (ref) => {
+    if (!(ref && ref.kind && ref.id)) {
+      return null;
+    }
+    if (ref.kind === 'sos') {
+      return getSosMarkerLabelPayload(state.alerts.get(Number(ref.id)) || null);
+    }
+    if (ref.kind === 'gate') {
+      return getGateMarkerLabelPayload(state.gateAlerts.items.get(String(ref.id)) || null);
+    }
+    if (ref.kind === 'asset') {
+      return getAssetMarkerLabelPayload(
+        state.standaloneAssets.items.get(String(ref.id)) || null,
+        ref.latLng || null
+      );
+    }
+    return null;
+  };
+
+  const getSelectedEntityMarkerLabelPayload = () => {
+    if (state.ui.selectedEntityType === 'sos' && state.selectedSosId) {
+      return getSosMarkerLabelPayload(state.alerts.get(Number(state.selectedSosId)) || null);
+    }
+    if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
+      return getGateMarkerLabelPayload(state.gateAlerts.items.get(String(state.gateAlerts.selectedGateId)) || null);
+    }
+    if (state.ui.selectedEntityType === 'asset' && state.standaloneAssets.selectedAssetKey) {
+      return getAssetMarkerLabelPayload(
+        state.standaloneAssets.items.get(String(state.standaloneAssets.selectedAssetKey)) || null,
+        state.standaloneAssets.selectedLabelLatLng || null
+      );
+    }
+    return null;
+  };
+
   const ensureDefaultSosSelection = () => {
-    if (state.ui.selectedEntityType || state.selectedSosId) {
+    if (state.selectedSosId) {
+      return;
+    }
+    if (
+      state.ui.selectedEntityType &&
+      state.ui.selectedEntityType !== 'sos' &&
+      state.ui.selectedEntityId
+    ) {
       return;
     }
     const candidate = getVisibleAlerts()
@@ -1612,7 +1713,7 @@
     if (!candidate) {
       return;
     }
-    selectAlert(candidate.sos_id, false, { removeNotification: false, forceFocus: false });
+    selectAlert(candidate.sos_id, false, { removeNotification: false, forceFocus: false, lockLabel: false });
   };
 
   const getLatLng = (item) => {
@@ -1771,10 +1872,10 @@
         button.type = 'button';
         button.className = 'sos-map-marker';
         button.addEventListener('mouseenter', () => {
-          setHoveredMarkerLabel(getSosMarkerLabelPayload(this.alert));
+          setPreviewMarkerLabel(createMarkerLabelRef('sos', this.alert.sos_id));
         });
         button.addEventListener('mouseleave', () => {
-          setHoveredMarkerLabel(null);
+          clearPreviewMarkerLabelIfUnlocked();
         });
         button.addEventListener('click', () => {
           state.cctvSuppressMapClickUntil = Date.now() + 250;
@@ -1993,15 +2094,11 @@
         button.className = 'sos-map-marker';
         button.addEventListener('mouseenter', () => {
           if (this.gate && !this.gate.isCluster) {
-            setHoveredMarkerLabel({
-              key: `gate:hover:${this.gate.gate_id}`,
-              latLng: this.gate.latLng,
-              label: this.gate.gate_name || this.gate.gate_code || `Gate ${this.gate.gate_id}`,
-            });
+            setPreviewMarkerLabel(createMarkerLabelRef('gate', this.gate.gate_id));
           }
         });
         button.addEventListener('mouseleave', () => {
-          setHoveredMarkerLabel(null);
+          clearPreviewMarkerLabelIfUnlocked();
         });
         button.addEventListener('click', () => {
           state.cctvSuppressMapClickUntil = Date.now() + 250;
@@ -2311,8 +2408,44 @@
     syncFoControlButtonState();
   };
 
-  const setHoveredMarkerLabel = (payload) => {
-    state.ui.hoveredMarkerLabel = payload || null;
+  const createMarkerLabelRef = (kind, id, options = {}) => ({
+    kind: String(kind || ''),
+    id: id == null ? null : String(id),
+    latLng: options.latLng || null,
+  });
+
+  const setPreviewMarkerLabel = (ref) => {
+    if (state.ui.lockedMarkerLabel) {
+      return;
+    }
+    state.ui.previewMarkerLabel = ref || null;
+    syncSelectedMarkerLabelOverlay();
+  };
+
+  const setLockedMarkerLabel = (ref) => {
+    state.ui.lockedMarkerLabel = ref || null;
+    state.ui.previewMarkerLabel = null;
+    syncSelectedMarkerLabelOverlay();
+  };
+
+  const clearMarkerLabelState = (options = {}) => {
+    const preserveSosLocked = options.preserveSosLocked !== false;
+    if (preserveSosLocked && state.ui.selectedEntityType === 'sos' && state.selectedSosId) {
+      state.ui.lockedMarkerLabel = createMarkerLabelRef('sos', state.selectedSosId);
+      state.ui.previewMarkerLabel = null;
+      syncSelectedMarkerLabelOverlay();
+      return;
+    }
+    state.ui.lockedMarkerLabel = null;
+    state.ui.previewMarkerLabel = null;
+    syncSelectedMarkerLabelOverlay();
+  };
+
+  const clearPreviewMarkerLabelIfUnlocked = () => {
+    if (state.ui.lockedMarkerLabel || !state.ui.previewMarkerLabel) {
+      return;
+    }
+    state.ui.previewMarkerLabel = null;
     syncSelectedMarkerLabelOverlay();
   };
 
@@ -3783,6 +3916,10 @@
       state.standaloneAssets.selectedLabelOverlay.setMap(null);
       state.standaloneAssets.selectedLabelOverlay = null;
     }
+    state.ui.previewMarkerLabel = null;
+    if (state.ui.selectedEntityType !== 'sos') {
+      state.ui.lockedMarkerLabel = null;
+    }
     state.standaloneAssets.selectedLabelLatLng = null;
     clearCctvMarkers({ invalidate: false });
   };
@@ -4079,50 +4216,21 @@
     if (!state.map || !state.isActive) {
       return null;
     }
-    if (
-      state.ui.hoveredMarkerLabel &&
-      state.ui.hoveredMarkerLabel.latLng &&
-      (state.ui.hoveredMarkerLabel.label || state.ui.hoveredMarkerLabel.html)
-    ) {
-      return state.ui.hoveredMarkerLabel;
+    const lockedPayload = resolveMarkerLabelRef(state.ui.lockedMarkerLabel);
+    if (lockedPayload) {
+      return lockedPayload;
     }
-    if (state.ui.selectedEntityType === 'sos' && state.selectedSosId) {
-      const alert = getSelectedAlert();
-      return getSosMarkerLabelPayload(alert);
+    if (state.ui.lockedMarkerLabel) {
+      state.ui.lockedMarkerLabel = null;
     }
-    if (state.ui.selectedMarkerLabelDismissed) {
-      return null;
+    const previewPayload = resolveMarkerLabelRef(state.ui.previewMarkerLabel);
+    if (previewPayload) {
+      return previewPayload;
     }
-    if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
-      const gate = state.gateAlerts.items.get(String(state.gateAlerts.selectedGateId));
-      if (!(gate && gate.latLng && state.gateAlerts.visible && shouldDisplayGateStatus(gate))) {
-        return null;
-      }
-      return {
-        key: `gate:${gate.gate_id}`,
-        latLng: gate.latLng,
-        label: gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`,
-      };
+    if (state.ui.previewMarkerLabel) {
+      state.ui.previewMarkerLabel = null;
     }
-    if (state.ui.selectedEntityType === 'asset' && state.standaloneAssets.selectedAssetKey) {
-      const asset = state.standaloneAssets.items.get(String(state.standaloneAssets.selectedAssetKey));
-      if (
-        !(
-          asset &&
-          asset.latLng &&
-          isStandaloneAssetTypeVisible(asset) &&
-          shouldDisplayStandaloneAssetStatus(asset)
-        )
-      ) {
-        return null;
-      }
-      return {
-        key: `asset:${state.standaloneAssets.selectedAssetKey}`,
-        latLng: state.standaloneAssets.selectedLabelLatLng || asset.latLng,
-        label: asset.title || asset.asset_name || asset.cctv_name || asset.asset_code || `Asset ${asset.id}`,
-      };
-    }
-    return null;
+    return getSelectedEntityMarkerLabelPayload();
   };
 
   const getSelectedLabelOverlayClass = () => {
@@ -4267,25 +4375,18 @@
       });
       spiderfyMarker.addListener('click', () => {
         state.cctvSuppressMapClickUntil = Date.now() + 250;
-        selectStandaloneAssetOptimistic(entry.camera, { focus: false });
-        state.standaloneAssets.selectedLabelLatLng = targetLatLng;
-        syncSelectedMarkerLabelOverlay();
+        selectStandaloneAssetOptimistic(entry.camera, { focus: false, labelLatLng: targetLatLng });
         openCctvModal(entry.camera);
       });
       spiderfyMarker.addListener('mouseover', () => {
-        setHoveredMarkerLabel({
-          key: `asset:hover:${makeAssetKey(entry.camera.asset_type, entry.camera.id)}`,
-          latLng: targetLatLng,
-          label:
-            entry.camera.title ||
-            entry.camera.asset_name ||
-            entry.camera.cctv_name ||
-            entry.camera.asset_code ||
-            `Asset ${entry.camera.id}`,
-        });
+        setPreviewMarkerLabel(
+          createMarkerLabelRef('asset', makeAssetKey(entry.camera.asset_type, entry.camera.id), {
+            latLng: targetLatLng,
+          })
+        );
       });
       spiderfyMarker.addListener('mouseout', () => {
-        setHoveredMarkerLabel(null);
+        clearPreviewMarkerLabelIfUnlocked();
       });
       state.cctvSpiderfyTempMarkers.push(spiderfyMarker);
       const leg = new window.google.maps.Polyline({
@@ -4323,19 +4424,17 @@
     marker.addListener('click', () => {
       state.cctvSuppressMapClickUntil = Date.now() + 250;
       selectStandaloneAssetOptimistic(camera, { focus: false });
-      state.standaloneAssets.selectedLabelLatLng = camera.latLng || camera.position || null;
-      syncSelectedMarkerLabelOverlay();
       void openCctvModal(camera);
     });
     marker.addListener('mouseover', () => {
-      setHoveredMarkerLabel({
-        key: `asset:hover:${makeAssetKey(camera.asset_type, camera.id)}`,
-        latLng: camera.latLng || camera.position,
-        label: camera.title || camera.asset_name || camera.cctv_name || camera.asset_code || `Asset ${camera.id}`,
-      });
+      setPreviewMarkerLabel(
+        createMarkerLabelRef('asset', makeAssetKey(camera.asset_type, camera.id), {
+          latLng: camera.latLng || camera.position || null,
+        })
+      );
     });
     marker.addListener('mouseout', () => {
-      setHoveredMarkerLabel(null);
+      clearPreviewMarkerLabelIfUnlocked();
     });
     return {
       marker,
@@ -4651,7 +4750,6 @@
             return;
           }
           selectGateAlertOptimistic(gateMeta && gateMeta.gate_id ? gateMeta.gate_id : gateMeta, { focus: false });
-          syncSelectedMarkerLabelOverlay();
           void openGateAlertDetail(gateMeta && gateMeta.gate_id ? gateMeta.gate_id : gateMeta);
         },
       });
@@ -4818,6 +4916,7 @@
       if (state.ui.selectedEntityType === 'gate') {
         state.ui.selectedEntityType = '';
         state.ui.selectedEntityId = null;
+        clearMarkerLabelState({ preserveSosLocked: false });
       }
     }
     syncGateAlertMarkers();
@@ -5340,14 +5439,19 @@
   };
 
   const selectAlert = (sosId, focusOnMap, options = {}) => {
-    state.ui.selectedMarkerLabelDismissed = false;
     const shouldRemoveNotification = options.removeNotification !== false;
     state.selectedSosId = Number(sosId);
     state.incidents.selectedSosId = state.selectedSosId;
     state.ui.selectedEntityType = 'sos';
     state.ui.selectedEntityId = String(sosId);
     state.gateAlerts.selectedGateId = null;
+    state.standaloneAssets.selectedAssetKey = null;
     state.networkArcs.selectedEdgeKey = null;
+    if (options.lockLabel === false) {
+      clearMarkerLabelState();
+    } else {
+      setLockedMarkerLabel(createMarkerLabelRef('sos', state.selectedSosId));
+    }
     if (shouldRemoveNotification) {
       removeNotificationsByTarget('sos', (target) => String(target.sosId) === String(sosId));
     }
@@ -5358,7 +5462,6 @@
   };
 
   const selectGateAlertOptimistic = (gateId, options = {}) => {
-    state.ui.selectedMarkerLabelDismissed = false;
     state.selectedSosId = null;
     state.incidents.selectedSosId = null;
     state.gateAlerts.selectedGateId = String(gateId);
@@ -5367,9 +5470,13 @@
     state.standaloneAssets.selectedAssetKey = null;
     state.networkArcs.selectedEdgeKey = null;
     state.detailRenderKey = '';
+    if (options.lockLabel === false) {
+      clearMarkerLabelState({ preserveSosLocked: false });
+    } else {
+      setLockedMarkerLabel(createMarkerLabelRef('gate', gateId));
+    }
     renderIncidentList();
     syncGateAlertMarkers();
-    syncSelectedMarkerLabelOverlay();
     const gate = state.gateAlerts.items.get(String(gateId));
     if (options.focus && gate && gate.latLng) {
       focusEntityOnMap(gate.latLng, MAP_ZOOM_SOS);
@@ -5380,20 +5487,26 @@
     if (!asset) {
       return;
     }
-    state.ui.selectedMarkerLabelDismissed = false;
     const assetKey = makeAssetKey(asset.asset_type, asset.id);
     state.selectedSosId = null;
     state.incidents.selectedSosId = null;
     state.gateAlerts.selectedGateId = null;
     state.standaloneAssets.selectedAssetKey = assetKey;
-    state.standaloneAssets.selectedLabelLatLng = asset.latLng || asset.position || null;
+    state.standaloneAssets.selectedLabelLatLng =
+      options.labelLatLng || asset.latLng || asset.position || null;
     state.ui.selectedEntityType = 'asset';
     state.ui.selectedEntityId = assetKey;
     state.cctvSelectedCameraId = String(asset.id || '');
     state.networkArcs.selectedEdgeKey = null;
     state.detailRenderKey = '';
+    if (options.lockLabel === false) {
+      clearMarkerLabelState({ preserveSosLocked: false });
+    } else {
+      setLockedMarkerLabel(
+        createMarkerLabelRef('asset', assetKey, { latLng: state.standaloneAssets.selectedLabelLatLng })
+      );
+    }
     renderIncidentList();
-    syncSelectedMarkerLabelOverlay();
     if (options.focus && asset.latLng) {
       focusEntityOnMap(asset.latLng, MAP_ZOOM_SOS);
     }
@@ -5401,7 +5514,6 @@
 
   const clearSelectedAlert = () => {
     stopGateDetailDurationTimer();
-    state.ui.selectedMarkerLabelDismissed = false;
     if (state.ui.selectedEntityType === 'asset') {
       closeCctvModal();
     }
@@ -5414,6 +5526,7 @@
     state.ui.selectedEntityType = '';
     state.ui.selectedEntityId = null;
     state.detailRenderKey = '';
+    clearMarkerLabelState({ preserveSosLocked: false });
     renderAll();
   };
 
@@ -5903,10 +6016,7 @@
           return;
         }
         collapseCctvSpiderfy();
-        if (!state.ui.selectedMarkerLabelDismissed) {
-          state.ui.selectedMarkerLabelDismissed = true;
-          syncSelectedMarkerLabelOverlay();
-        }
+        clearMarkerLabelState();
         if (state.weather.selectedWeatherId) {
           state.weather.selectedWeatherId = null;
           syncWeatherMarkers();
@@ -5975,7 +6085,7 @@
             ? newAlerts.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0]
             : null;
           if (latestAlert) {
-            selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true });
+            selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true, lockLabel: false });
           }
         })
         .catch(() => {});
@@ -5994,11 +6104,7 @@
       return;
     }
     const key = String(event.key || '').toLowerCase();
-    const usesCtrl = event.ctrlKey || event.metaKey;
-    const usesShift = event.shiftKey;
-    const isBlockedShortcut =
-      (usesCtrl && key === 'k') ||
-      (usesShift && ['k', 'h', 'u', 'g', 'f', 'n', 'r', 'l', 'm', 'b'].includes(key));
+    const usesShiftAlt = event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey;
 
     if (key === 'escape') {
       if (sosDispatchModalEl.classList.contains('visible')) {
@@ -6021,13 +6127,40 @@
       return;
     }
 
-    if (!isBlockedShortcut) {
+    if (!usesShiftAlt) {
       return;
     }
 
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (usesShift && key === 'b') {
+    if (key === 'h') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (typeof window.showHelp === 'function') {
+        window.showHelp();
+      }
+      return;
+    }
+
+    if (key === 'k') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (typeof window.openApiBaseUrlConfig === 'function') {
+        void window.openApiBaseUrlConfig();
+      }
+      return;
+    }
+
+    if (key === 'u') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (typeof window.openUpdateFeedConfig === 'function') {
+        void window.openUpdateFeedConfig();
+      }
+      return;
+    }
+
+    if (key === 'b') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
       toggleMapCameraDebugVisibility();
     }
   };
@@ -6222,14 +6355,14 @@
       return;
     }
     sosDispatchSosIdEl.value = String(alert.sos_id);
-    sosIncidentTypeInputEl.value = toCapitalizedWords(
+    sosIncidentTypeInputEl.value = toSentenceCase(
       alert.ticket && alert.ticket.incident_type ? alert.ticket.incident_type : ''
     );
-    sosVehicleTypeInputEl.value = toCapitalizedWords(
+    sosVehicleTypeInputEl.value = toSentenceCase(
       alert.ticket && alert.ticket.vehicle_type ? alert.ticket.vehicle_type : ''
     );
     sosChronologyInputEl.value =
-      toCapitalizedWords(alert.ticket && alert.ticket.initial_chronology ? alert.ticket.initial_chronology : '');
+      toSentenceCase(alert.ticket && alert.ticket.initial_chronology ? alert.ticket.initial_chronology : '');
     setClass(sosDispatchStatusEl, 'api-check-status neutral');
     setText(sosDispatchStatusEl, 'Lengkapi dispatch untuk kejadian terpilih.');
     showModal(sosDispatchModalEl);
@@ -6241,7 +6374,7 @@
       return;
     }
     sosCompleteTicketNoEl.value = String(alert.ticket.ticket_no);
-    sosCompletionNoteInputEl.value = toCapitalizedWords('');
+    sosCompletionNoteInputEl.value = '';
     setClass(sosCompleteStatusEl, 'api-check-status neutral');
     setText(sosCompleteStatusEl, 'Isi catatan penyelesaian untuk ticket terpilih.');
     showModal(sosCompleteModalEl);
@@ -6252,8 +6385,8 @@
     if (!(alert && alert.ticket && alert.ticket.ticket_no)) {
       return;
     }
-    applyAutoCapitalizeValue(sosCompletionNoteInputEl);
-    const completionNote = sosCompletionNoteInputEl.value.trim();
+    applySentenceCaseValue(sosCompletionNoteInputEl);
+    const completionNote = toSentenceCase(sosCompletionNoteInputEl.value);
     if (!completionNote) {
       throw new Error('Catatan penyelesaian wajib diisi.');
     }
@@ -6498,6 +6631,7 @@
       if (state.ui.selectedEntityType === 'gate') {
         state.ui.selectedEntityType = '';
         state.ui.selectedEntityId = null;
+        clearMarkerLabelState({ preserveSosLocked: false });
       }
     }
     const selectedAsset = state.standaloneAssets.selectedAssetKey
@@ -6509,6 +6643,7 @@
       if (state.ui.selectedEntityType === 'asset') {
         state.ui.selectedEntityType = '';
         state.ui.selectedEntityId = null;
+        clearMarkerLabelState({ preserveSosLocked: false });
       }
     }
     void persistAssetMonitoringPrefs();
@@ -6551,6 +6686,9 @@
   });
 
   document.addEventListener('click', (event) => {
+    if (Date.now() < state.cctvSuppressMapClickUntil) {
+      return;
+    }
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (!target) {
       return;
@@ -6584,10 +6722,7 @@
     ) {
       return;
     }
-    if (!state.ui.selectedMarkerLabelDismissed) {
-      state.ui.selectedMarkerLabelDismissed = true;
-      syncSelectedMarkerLabelOverlay();
-    }
+    clearMarkerLabelState();
   });
 
   if (sosWeatherToggleEl) {
@@ -6635,11 +6770,11 @@
         return;
       }
       if (entry.target.type === 'sos') {
-        selectAlert(entry.target.sosId, false);
+        selectAlert(entry.target.sosId, false, { lockLabel: false });
         return;
       }
       if (entry.target.type === 'gate') {
-        selectGateAlertOptimistic(entry.target.gateId, { focus: false });
+        selectGateAlertOptimistic(entry.target.gateId, { focus: false, lockLabel: false });
         void openGateAlertDetail(entry.target.gateId);
         return;
       }
@@ -6648,7 +6783,7 @@
         selectStandaloneAssetOptimistic(asset || {
           asset_type: entry.target.assetType,
           id: entry.target.assetId,
-        }, { focus: false });
+        }, { focus: false, lockLabel: false });
         void openCctvModal(asset || {
           asset_type: entry.target.assetType,
           id: entry.target.assetId,
@@ -6678,11 +6813,11 @@
     }
     const entityType = target.getAttribute('data-entity-type') || '';
     if (entityType === 'sos' && target.dataset.sosId) {
-      selectAlert(target.dataset.sosId, true, { forceFocus: true });
+      selectAlert(target.dataset.sosId, true, { forceFocus: true, lockLabel: false });
       return;
     }
     if (entityType === 'gate' && target.dataset.gateId) {
-      selectGateAlertOptimistic(target.dataset.gateId, { focus: true });
+      selectGateAlertOptimistic(target.dataset.gateId, { focus: true, lockLabel: false });
       void openGateAlertDetail(target.dataset.gateId);
       return;
     }
@@ -6690,7 +6825,7 @@
       const assetKey = makeAssetKey(target.dataset.assetType, target.dataset.assetId);
       const asset = state.standaloneAssets.items.get(assetKey);
       if (asset) {
-        selectStandaloneAssetOptimistic(asset, { focus: true });
+        selectStandaloneAssetOptimistic(asset, { focus: true, lockLabel: false });
         void openCctvModal(asset);
       }
     }
@@ -6706,14 +6841,6 @@
       target.click();
     }
   });
-
-  [
-    sosIncidentTypeInputEl,
-    sosVehicleTypeInputEl,
-    sosChronologyInputEl,
-    sosCompletionNoteInputEl,
-  ].forEach(bindAutoCapitalizeInput);
-
   sosDispatchBtn.addEventListener('click', openDispatchModal);
   sosCompleteBtn.addEventListener('click', openCompleteModal);
   closeSosDetailBtn.addEventListener('click', clearSelectedAlert);
@@ -6721,16 +6848,20 @@
   closeSosCompleteBtn.addEventListener('click', () => hideModal(sosCompleteModalEl));
   closeSosCctvModalBtn.addEventListener('click', closeCctvModal);
 
+  [
+    sosIncidentTypeInputEl,
+    sosVehicleTypeInputEl,
+    sosChronologyInputEl,
+    sosCompletionNoteInputEl,
+  ].forEach(bindSentenceCaseInput);
+
   sosDispatchFormEl.addEventListener('submit', async (event) => {
     event.preventDefault();
-    applyAutoCapitalizeValue(sosIncidentTypeInputEl);
-    applyAutoCapitalizeValue(sosVehicleTypeInputEl);
-    applyAutoCapitalizeValue(sosChronologyInputEl);
     const payload = {
       sos_id: Number(sosDispatchSosIdEl.value),
-      incident_type: sosIncidentTypeInputEl.value.trim(),
-      vehicle_type: sosVehicleTypeInputEl.value.trim(),
-      initial_chronology: sosChronologyInputEl.value.trim(),
+      incident_type: toSentenceCase(sosIncidentTypeInputEl.value),
+      vehicle_type: toSentenceCase(sosVehicleTypeInputEl.value),
+      initial_chronology: toSentenceCase(sosChronologyInputEl.value),
     };
     setClass(sosDispatchStatusEl, 'api-check-status warning');
     setText(sosDispatchStatusEl, 'Mengirim dispatch...');

@@ -519,6 +519,7 @@ const hideModal = (modalEl) => {
 };
 
 const showHelp = () => showModal(helpModalEl);
+window.showHelp = showHelp;
 const hideHelp = () => hideModal(helpModalEl);
 
 const focusAndSelectInput = (inputEl) => {
@@ -1751,6 +1752,12 @@ const restoreWorkspaceState = async () => {
       return;
     }
 
+    const persistedViewMode = String(state.viewMode || '').toLowerCase();
+    if (persistedViewMode === 'asset-monitoring') {
+      renderWelcomeState();
+      return;
+    }
+
     if (state.layout && typeof state.layout === 'object') {
       const layoutType = String(state.layout.type || '5x4');
       if (layoutType === '4x4') {
@@ -2078,9 +2085,9 @@ const renderWelcomeState = () => {
         mencari kamera tertentu, dan menyesuaikan layout sesuai kebutuhan command center.
       </p>
       <div class="welcome-state__actions">
-        <span class="welcome-state__chip">Shift+L Pilih Ruas</span>
+        <span class="welcome-state__chip">Shift+Alt+L Pilih Ruas</span>
         <span class="welcome-state__chip">Ctrl+K Cari Kamera</span>
-        <span class="welcome-state__chip">Shift+H Buka Help</span>
+        <span class="welcome-state__chip">Shift+Alt+H Buka Help</span>
       </div>
       <p class="welcome-state__hint">
         Gunakan menu Help untuk melihat shortcut lengkap dan panduan penggunaan.
@@ -3157,6 +3164,7 @@ const openApiBaseUrlConfig = async () => {
   showModal(apiConfigModalEl);
   focusAndSelectInput(apiBaseUrlInputEl);
 };
+window.openApiBaseUrlConfig = openApiBaseUrlConfig;
 
 const openLayoutConfig = () => {
   syncLayoutControls();
@@ -3193,6 +3201,7 @@ const openUpdateFeedConfig = async () => {
   showModal(updateConfigModalEl);
   focusAndSelectInput(updateFeedUrlInputEl);
 };
+window.openUpdateFeedConfig = openUpdateFeedConfig;
 
 const closeAllTransientUi = () => {
   setToolbarMenuVisible(false);
@@ -3298,60 +3307,10 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (
-    isSosModeActive() &&
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey
-  ) {
-    event.preventDefault();
-    return;
-  }
-
   const typing = isTypingField(event.target);
-  const pressedShiftK =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'k';
-  const pressedShiftH =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'h';
-  const pressedShiftU =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'u';
-  const pressedShiftG =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'g';
-  const pressedShiftF =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'f';
-  const pressedShiftN =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'n';
-  const pressedShiftR =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'r';
+  const inSosMode = isSosModeActive();
+  const pressedAltShift = event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey;
+  const altShiftKey = pressedAltShift ? String(event.key || '').toLowerCase() : '';
   const pressedQuickSearch =
     !event.shiftKey &&
     !event.altKey &&
@@ -3365,50 +3324,6 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (pressedShiftH) {
-    event.preventDefault();
-    showHelp();
-    return;
-  }
-
-  if (pressedShiftU) {
-    event.preventDefault();
-    openUpdateFeedConfig().catch(() => {
-      pickerStatusEl.textContent = 'Failed to open auto update feed configuration.';
-    });
-    return;
-  }
-
-  if (pressedShiftG) {
-    event.preventDefault();
-    openLayoutConfig();
-    return;
-  }
-
-  if (pressedShiftF) {
-    event.preventDefault();
-    enterFocusMode();
-    return;
-  }
-
-  if (pressedShiftN) {
-    event.preventDefault();
-    leaveFocusMode();
-    return;
-  }
-
-  if (pressedShiftR) {
-    event.preventDefault();
-    refreshCurrentStreams();
-    return;
-  }
-
-  if (event.shiftKey && event.key.toLowerCase() === 'm' && !typing) {
-    event.preventDefault();
-    toggleHealthMonitor();
-    return;
-  }
-
   if (pressedQuickSearch && !typing) {
     event.preventDefault();
     openQuickSearch().catch(() => {
@@ -3417,14 +3332,78 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (!pressedShiftK) {
+  if (inSosMode) {
     return;
   }
 
-  event.preventDefault();
-  openApiBaseUrlConfig().catch(() => {
-    pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';
-  });
+  if (!pressedAltShift) {
+    return;
+  }
+
+  if (altShiftKey === 'h') {
+    event.preventDefault();
+    showHelp();
+    return;
+  }
+
+  if (altShiftKey === 'l' && !typing) {
+    event.preventDefault();
+    openBranchPicker().catch((error) => {
+      pickerStatusEl.textContent = error.message || 'Failed to open branch picker.';
+    });
+    return;
+  }
+
+  if (altShiftKey === 'u') {
+    event.preventDefault();
+    openUpdateFeedConfig().catch(() => {
+      pickerStatusEl.textContent = 'Failed to open auto update feed configuration.';
+    });
+    return;
+  }
+
+  if (altShiftKey === 'g') {
+    event.preventDefault();
+    openLayoutConfig();
+    return;
+  }
+
+  if (altShiftKey === 'f') {
+    event.preventDefault();
+    enterFocusMode();
+    return;
+  }
+
+  if (altShiftKey === 'n') {
+    event.preventDefault();
+    leaveFocusMode();
+    return;
+  }
+
+  if (altShiftKey === 'r') {
+    event.preventDefault();
+    refreshCurrentStreams();
+    return;
+  }
+
+  if (altShiftKey === 'm' && !typing) {
+    event.preventDefault();
+    toggleHealthMonitor();
+    return;
+  }
+
+  if (altShiftKey === 'k') {
+    event.preventDefault();
+    openApiBaseUrlConfig().catch(() => {
+      pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';
+    });
+    return;
+  }
+
+  if (altShiftKey === 'x') {
+    event.preventDefault();
+    window.close();
+  }
 });
 
 closePickerBtn.addEventListener('click', () => hideModal(pickerEl));

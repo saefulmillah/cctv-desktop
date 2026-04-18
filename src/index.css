@@ -597,10 +597,6 @@ body.focus-mode .activity-panel {
   flex-wrap: wrap;
 }
 
-.asset-filter-wrap .toolbar-menu-panel {
-  bottom: calc(100% + 10px);
-}
-
 .asset-toolbar-separator {
   display: none;
   width: 1px;
@@ -688,19 +684,22 @@ body.focus-mode .activity-panel {
 
 .toolbar-menu-panel {
   position: absolute;
-  bottom: calc(100% + 12px);
-  right: 0;
-  min-width: 180px;
+  bottom: calc(100% + 10px);
+  right: -15px;
+  bottom: 45px;
+  min-width: 188px;
   display: grid;
-  gap: 6px;
-  padding: 8px;
-  border-radius: 16px;
-  border: 1px solid var(--line);
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(191, 225, 255, 0.38);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 18%),
-    linear-gradient(180deg, rgba(37, 84, 146, 0.96), rgba(28, 67, 118, 0.96));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 20%),
+    linear-gradient(180deg, rgba(42, 94, 161, 0.96), rgba(24, 58, 104, 0.98));
   backdrop-filter: var(--panel-blur);
-  box-shadow: var(--shadow);
+  box-shadow:
+    0 18px 34px rgba(3, 14, 28, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
   transform: translateY(0);
   opacity: 1;
   transition:
@@ -712,8 +711,8 @@ body.focus-mode .activity-panel {
 .asset-filter-popup {
   display: grid;
   gap: 8px;
-  min-width: 160px;
-  padding: 12px;
+  min-width: 188px;
+  padding: 10px;
 }
 
 .toolbar-btn.is-active {
@@ -726,12 +725,24 @@ body.focus-mode .activity-panel {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  min-height: 34px;
-  padding: 0 2px;
-  color: var(--text);
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(231, 243, 255, 0.16);
+  background: rgba(236, 247, 255, 0.06);
+  color: #eef8ff;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.asset-filter-option:hover {
+  background: rgba(236, 247, 255, 0.12);
+  border-color: rgba(30, 216, 222, 0.34);
 }
 
 .asset-filter-option input {
@@ -741,9 +752,20 @@ body.focus-mode .activity-panel {
 }
 
 .toolbar-menu-item {
+  border: 1px solid rgba(231, 243, 255, 0.16);
+  background: rgba(236, 247, 255, 0.06);
+  color: #eef8ff;
   border-radius: 12px;
-  padding: 10px 12px;
+  min-height: 42px;
+  padding: 0 14px;
   text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toolbar-menu-item:hover {
+  background: rgba(236, 247, 255, 0.12);
+  border-color: rgba(30, 216, 222, 0.34);
 }
 
 .hidden {
@@ -1762,8 +1784,8 @@ body.sos-mode .current-branch {
   align-items: center;
   padding: 3px;
   border-radius: 999px;
-  border: 1px solid rgba(234, 245, 255, 0.16);
-  background: rgba(245, 250, 255, 0.07);
+  /* border: 1px solid rgba(234, 245, 255, 0.16); */
+  /* background: rgba(245, 250, 255, 0.07); */
   gap: 4px;
 }
 

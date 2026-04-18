@@ -945,16 +945,6 @@ app.whenReady().then(async () => {
     registerServiceHandlers();
     registerAutoUpdaterHandlers();
     createWindow();
-    registerCloseShortcut();
-    registerBranchListShortcut();
-    registerApiBaseUrlShortcut();
-    registerUpdateFeedConfigShortcut();
-    registerHelpShortcut();
-    registerQuickSearchShortcut();
-    registerLayoutShortcut();
-    registerFocusShortcut();
-    registerNormalModeShortcut();
-    registerReloadShortcut();
     await setupAutoUpdater();
   } catch (error) {
     console.error(`Failed to start local server on port ${PORT}:`, error);
