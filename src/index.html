@@ -85,7 +85,7 @@
     <section id="toolbar" class="toolbar collapsed">
       <div class="toolbar-primary">
         <div class="asset-toolbar-group asset-toolbar-group--actions">
-          <button id="sosMonitorBtn" class="toolbar-btn" type="button">Assets</button>
+          <button id="sosMonitorBtn" class="toolbar-btn" type="button">Go to Asset Monitoring</button>
           <div class="toolbar-menu-wrap">
             <button id="toolbarMenuBtn" class="toolbar-btn" type="button" aria-haspopup="true" aria-expanded="false">
               Menu
@@ -130,14 +130,21 @@
             <input id="sosGateToggle" type="checkbox" checked />
             <span>Gate</span>
           </label>
-          <label class="sos-map-toggle asset-toolbar-control" for="sosNetworkToggle">
-            <input id="sosNetworkToggle" type="checkbox" checked />
-            <span>FO</span>
-          </label>
-          <label class="sos-map-toggle asset-toolbar-control" for="sosAnimatedNetworkToggle" title="Animated trail experiment for network arcs">
-            <input id="sosAnimatedNetworkToggle" type="checkbox" />
-            <span>Network</span>
-          </label>
+          <div class="toolbar-menu-wrap asset-toolbar-control">
+            <button id="foControlBtn" class="toolbar-btn" type="button" aria-haspopup="true" aria-expanded="false">
+              FO
+            </button>
+            <div id="foControlPopup" class="toolbar-menu-panel asset-filter-popup hidden">
+              <label class="asset-filter-option" for="sosNetworkToggle" title="Tampilkan layer fiber optic">
+                <input id="sosNetworkToggle" type="checkbox" checked />
+                <span>FO Layer</span>
+              </label>
+              <label class="asset-filter-option" for="sosAnimatedNetworkToggle" title="Aktifkan animasi data stream">
+                <input id="sosAnimatedNetworkToggle" type="checkbox" />
+                <span>Data Stream</span>
+              </label>
+            </div>
+          </div>
           <label class="sos-map-toggle asset-toolbar-control" for="sosWeatherToggle">
             <input id="sosWeatherToggle" type="checkbox" checked />
             <span>Weather</span>
@@ -184,7 +191,7 @@
                 <button id="sosMapTiltBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button">Tilt</button>
                 <button id="sosMapRotateLeftBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button" aria-label="Rotate Left">Left</button>
                 <button id="sosMapRotateRightBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button" aria-label="Rotate Right">Right</button>
-                <button id="sosMapResetCameraBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button">Reset</button>
+                <button id="sosMapResetCameraBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button">Center Map</button>
               </div>
               <span id="sosConnectionBadge" class="status-pill neutral">Idle</span>
               <button id="sosRefreshBtn" class="toolbar-btn" type="button">Refresh Monitor</button>

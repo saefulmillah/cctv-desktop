@@ -422,6 +422,11 @@ body.focus-mode .activity-panel {
   max-height: 240px;
   overflow: auto;
   padding-right: 6px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(67, 192, 255, 0.45) rgba(190, 213, 236, 0.05);
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
 
 .health-monitor {
@@ -574,6 +579,7 @@ body.focus-mode .activity-panel {
 .toolbar-primary {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   min-width: 0;
   flex: 0 1 auto;
@@ -589,6 +595,10 @@ body.focus-mode .activity-panel {
 
 .asset-toolbar-group--toggles {
   flex-wrap: wrap;
+}
+
+.asset-filter-wrap .toolbar-menu-panel {
+  bottom: calc(100% + 10px);
 }
 
 .asset-toolbar-separator {
@@ -706,6 +716,12 @@ body.focus-mode .activity-panel {
   padding: 12px;
 }
 
+.toolbar-btn.is-active {
+  border-color: rgba(30, 216, 222, 0.44);
+  background: rgba(30, 216, 222, 0.14);
+  color: #f3fdff;
+}
+
 .asset-filter-option {
   display: inline-flex;
   align-items: center;
@@ -739,6 +755,10 @@ body.focus-mode .activity-panel {
 
 .paging-control.hidden {
   display: none;
+}
+
+body.sos-mode .paging-control {
+  display: none !important;
 }
 
 .paging-control {
@@ -1586,8 +1606,8 @@ body.sos-mode .toolbar {
   transform: none;
   width: auto;
   max-width: calc(100vw - 36px);
-  padding: 10px 12px;
-  border-radius: 22px;
+  padding: 8px 10px;
+  border-radius: 20px;
   z-index: 12;
 }
 
@@ -1608,13 +1628,36 @@ body.sos-mode #reloadStreamBtn {
 }
 
 body.sos-mode .toolbar-primary {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   margin-right: 0;
-  gap: 10px;
+  gap: 6px;
 }
 
 body.sos-mode .asset-toolbar-separator {
   display: inline-flex;
+}
+
+body.sos-mode .asset-toolbar-group {
+  gap: 6px;
+}
+
+body.sos-mode .asset-toolbar-group--toggles {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+body.sos-mode .toolbar-btn,
+body.sos-mode .sos-map-toggle,
+body.sos-mode .asset-map-camera-toggle__btn,
+body.sos-mode .asset-map-topbar__select {
+  min-height: 32px;
+  padding-inline: 10px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+body.sos-mode .sos-map-toggle {
+  gap: 8px;
 }
 
 body.sos-mode .current-branch {
@@ -1802,6 +1845,70 @@ body.sos-mode .current-branch {
   line-height: 1.45;
 }
 
+.selected-map-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 220px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  background: rgba(10, 24, 42, 0.92);
+  box-shadow: 0 16px 28px rgba(3, 14, 28, 0.28);
+  color: #eef8ff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.selected-map-label--sos {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-width: 180px;
+  max-width: 260px;
+  padding: 8px 11px;
+  border-radius: 14px;
+  white-space: normal;
+  gap: 3px;
+}
+
+.selected-map-label__line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.selected-map-label__line strong {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.selected-map-label__line--sub {
+  color: rgba(232, 243, 255, 0.92);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.selected-map-label__status-inline {
+  color: #cffff0;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.selected-map-label__sep {
+  opacity: 0.75;
+}
+
 .sos-map-empty {
   position: absolute;
   inset: 0;
@@ -1904,8 +2011,38 @@ body.sos-mode .current-branch {
   min-height: 0;
   margin-top: 12px;
   overflow: auto;
-  padding-right: 4px;
+  padding-right: 6px;
   align-content: start;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(67, 192, 255, 0.45) rgba(190, 213, 236, 0.05);
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+}
+
+.sos-incident-list::-webkit-scrollbar,
+.activity-feed::-webkit-scrollbar {
+  width: 10px;
+}
+
+.sos-incident-list::-webkit-scrollbar-track,
+.activity-feed::-webkit-scrollbar-track {
+  background: rgba(190, 213, 236, 0.05);
+  border-radius: 999px;
+}
+
+.sos-incident-list::-webkit-scrollbar-thumb,
+.activity-feed::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(24, 183, 255, 0.55), rgba(30, 216, 222, 0.32));
+  background-clip: padding-box;
+}
+
+.sos-incident-list::-webkit-scrollbar-thumb:hover,
+.activity-feed::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(74, 206, 255, 0.72), rgba(89, 230, 236, 0.46));
+  background-clip: padding-box;
 }
 
 .sos-incident-list--loading {
@@ -2275,6 +2412,35 @@ body.sos-mode .asset-toolbar-control {
 
 .sos-detail-body {
   margin-top: 14px;
+  max-height: min(48vh, 520px);
+  overflow: auto;
+  padding-right: 6px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(67, 192, 255, 0.45) rgba(190, 213, 236, 0.05);
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 24px), transparent 100%);
+}
+
+.sos-detail-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.sos-detail-body::-webkit-scrollbar-track {
+  background: rgba(190, 213, 236, 0.05);
+  border-radius: 999px;
+}
+
+.sos-detail-body::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(24, 183, 255, 0.55), rgba(30, 216, 222, 0.32));
+  background-clip: padding-box;
+}
+
+.sos-detail-body::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(74, 206, 255, 0.72), rgba(89, 230, 236, 0.46));
+  background-clip: padding-box;
 }
 
 .sos-detail-body__grid {
@@ -3050,10 +3216,15 @@ body.sos-mode .asset-toolbar-control {
   body.sos-mode .toolbar-primary {
     width: 100%;
     gap: 8px;
+    flex-wrap: wrap;
   }
 
   body.sos-mode .asset-toolbar-separator {
     height: 24px;
+  }
+
+  body.sos-mode .asset-toolbar-group--toggles {
+    flex-wrap: wrap;
   }
 
   #sosBranchSelect.asset-map-topbar__select {

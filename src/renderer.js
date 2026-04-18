@@ -541,10 +541,30 @@ const setToolbarVisible = (visible) => {
 
 const setToolbarMenuVisible = (visible) => {
   toolbarMenuPanel.classList.toggle('hidden', !visible);
+  toolbarMenuBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
 };
 
 const toggleToolbarMenu = () => {
-  setToolbarMenuVisible(toolbarMenuPanel.classList.contains('hidden'));
+  const nextVisible = toolbarMenuPanel.classList.contains('hidden');
+  if (nextVisible) {
+    const assetFilterPopupEl = document.getElementById('assetFilterPopup');
+    const assetFilterBtnEl = document.getElementById('assetFilterBtn');
+    const foControlPopupEl = document.getElementById('foControlPopup');
+    const foControlBtnEl = document.getElementById('foControlBtn');
+    if (assetFilterPopupEl) {
+      assetFilterPopupEl.classList.add('hidden');
+    }
+    if (assetFilterBtnEl) {
+      assetFilterBtnEl.setAttribute('aria-expanded', 'false');
+    }
+    if (foControlPopupEl) {
+      foControlPopupEl.classList.add('hidden');
+    }
+    if (foControlBtnEl) {
+      foControlBtnEl.setAttribute('aria-expanded', 'false');
+    }
+  }
+  setToolbarMenuVisible(nextVisible);
 };
 
 const scheduleToolbarAutoHide = () => {
