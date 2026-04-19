@@ -41,6 +41,7 @@
   const sosNetworkToggleEl = $('sosNetworkToggle');
   const sosAnimatedNetworkToggleEl = $('sosAnimatedNetworkToggle');
   const sosWeatherToggleEl = $('sosWeatherToggle');
+  const sosWeatherBubbleToggleEl = $('sosWeatherBubbleToggle');
   const sosMarkerNormalToggleEl = $('sosMarkerNormalToggle');
   const sosMarkerWarningToggleEl = $('sosMarkerWarningToggle');
   const sosMarkerErrorToggleEl = $('sosMarkerErrorToggle');
@@ -48,6 +49,8 @@
   const assetFilterPopup = $('assetFilterPopup');
   const foControlBtn = $('foControlBtn');
   const foControlPopup = $('foControlPopup');
+  const weatherControlBtn = $('weatherControlBtn');
+  const weatherControlPopup = $('weatherControlPopup');
   const toolbarMenuBtnEl = document.getElementById('toolbarMenuBtn');
   const toolbarMenuPanelEl = document.getElementById('toolbarMenuPanel');
   const mapCameraDebugEl = $('mapCameraDebug');
@@ -174,6 +177,7 @@
       cacheByBranch: new Map(),
       meta: null,
       visible: true,
+      expandAllBubbles: false,
       selectedWeatherId: null,
       hasLoaded: false,
       errorMessage: '',
@@ -198,6 +202,7 @@
         cctv: true,
         vms: true,
         gate: true,
+        weather: true,
       },
     },
     ui: {
@@ -486,6 +491,27 @@
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     return `${day}-${month}-${year} ${hours}:${minutes}`;
+  };
+
+  const formatWeatherObservedAt = (value) => {
+    if (!value) {
+      return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    const now = new Date();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    if (
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate()
+    ) {
+      return `Hari ini, ${hours}:${minutes}`;
+    }
+    return toDateTime(value);
   };
 
   const formatGateIssueDuration = (value, now = Date.now()) => {
@@ -1022,14 +1048,174 @@
       <path d="M31 33H15c-4.418 0-8-3.134-8-7s3.582-7 8-7c.803 0 1.58.104 2.314.298C18.82 14.936 22.96 12 27.75 12 33.963 12 39 16.925 39 23c4.418 0 8 3.134 8 7s-3.582 7-8 7Z" fill="#ffffff"/>
     </svg>
   `);
+  const WEATHER_METEOCON_STYLE = 'flat';
+  const WEATHER_METEOCON_BASE_URL = new URL(`./assets/weather/meteocons/${WEATHER_METEOCON_STYLE}/`, window.location.href).href;
+  const WEATHER_METEOCON_FALLBACK_SLUG = 'cloudy';
 
   const formatWeatherTemperature = (value) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${Math.round(numeric)}°` : '-';
   };
 
-  const getWeatherMarkerIconUrl = (weather) =>
+  const normalizeWeatherIconToken = (value) =>
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[_/]+/g, '-')
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+  const isNightWeatherCondition = (weather) => {
+    const token = normalizeWeatherIconToken(
+      `${weather && weather.condition_key ? weather.condition_key : ''} ${weather && weather.weather_label ? weather.weather_label : ''}`
+    );
+    return /(^|-)night($|-)|malam|dini|moon/.test(token);
+  };
+
+  const resolveWeatherMeteoconSlug = (weather) => {
+    const rawToken = normalizeWeatherIconToken(
+      `${weather && weather.condition_key ? weather.condition_key : ''} ${weather && weather.weather_label ? weather.weather_label : ''}`
+    );
+    if (!rawToken) {
+      return WEATHER_METEOCON_FALLBACK_SLUG;
+    }
+
+    const isNight = isNightWeatherCondition(weather);
+    const baseToken = rawToken
+      .replace(/(^|-)weather($|-)/g, '$1')
+      .replace(/(^|-)conditions?($|-)/g, '$1')
+      .replace(/(^|-)condition($|-)/g, '$1')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const asDayNight = (daySlug, nightSlug = '') => (isNight ? nightSlug || daySlug : daySlug);
+
+    if (/thunder|lightning|storm|badai|petir/.test(baseToken)) {
+      if (/heavy|lebat|extreme|severe/.test(baseToken)) {
+        if (/rain|shower|hujan/.test(baseToken)) {
+          return asDayNight('extreme-thunderstorms-day-rain', 'extreme-thunderstorms-night-rain');
+        }
+        return asDayNight('extreme-thunderstorms-day', 'extreme-thunderstorms-night');
+      }
+      if (/rain|shower|hujan/.test(baseToken)) {
+        return asDayNight('thunderstorms-day-rain', 'thunderstorms-night-rain');
+      }
+      return asDayNight('thunderstorms-day', 'thunderstorms-night');
+    }
+
+    if (/hurricane|typhoon|cyclone/.test(baseToken)) {
+      return 'hurricane';
+    }
+    if (/tornado|puting-beliung/.test(baseToken)) {
+      return 'tornado';
+    }
+    if (/hail|hujan-es/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-hail', 'extreme-night-hail')
+        : 'hail';
+    }
+    if (/sleet/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-sleet', 'extreme-night-sleet')
+        : 'sleet';
+    }
+    if (/snow|salju/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-snow', 'extreme-night-snow')
+        : 'snow';
+    }
+    if (/drizzle|gerimis/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-drizzle', 'extreme-night-drizzle')
+        : 'drizzle';
+    }
+    if (/rain|shower|hujan/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-rain', 'extreme-night-rain')
+        : 'rain';
+    }
+    if (/fog|mist|kabut/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-fog', 'extreme-night-fog')
+        : asDayNight('fog-day', 'fog-night');
+    }
+    if (/haze|berkabut/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-haze', 'extreme-night-haze')
+        : asDayNight('haze-day', 'haze-night');
+    }
+    if (/smoke|asap/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-smoke', 'extreme-night-smoke')
+        : 'smoke';
+    }
+    if (/dust|debu/.test(baseToken)) {
+      return asDayNight('dust-day', 'dust-night');
+    }
+    if (/mostly-clear|cerah-berawan/.test(baseToken)) {
+      return asDayNight('mostly-clear-day', 'mostly-clear-night');
+    }
+    if (/partly-cloudy|partly-cloud|sebagian-berawan/.test(baseToken)) {
+      return asDayNight('partly-cloudy-day', 'partly-cloudy-night');
+    }
+    if (/overcast|mendung|mendung-tebal/.test(baseToken)) {
+      return /day|night/.test(baseToken) ? asDayNight('overcast-day', 'overcast-night') : 'overcast';
+    }
+    if (/cloudy|berawan/.test(baseToken)) {
+      return 'cloudy';
+    }
+    if (/clear|sunny|cerah/.test(baseToken)) {
+      return asDayNight('clear-day', 'clear-night');
+    }
+    return WEATHER_METEOCON_FALLBACK_SLUG;
+  };
+
+  const getWeatherMeteoconIconUrl = (weather) =>
+    `${WEATHER_METEOCON_BASE_URL}${resolveWeatherMeteoconSlug(weather)}.svg`;
+
+  const getWeatherMarkerIconUrl = (weather) => getWeatherMeteoconIconUrl(weather);
+
+  const getWeatherMarkerIconFallbackUrl = (weather) =>
     String(weather && weather.icon_url ? weather.icon_url : '').trim() || WEATHER_FALLBACK_ICON_URL;
+
+  const formatWeatherPercent = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}%` : '-';
+  };
+
+  const formatWeatherWind = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)} km/j` : '-';
+  };
+
+  const getWeatherMetricIcon = (kind) => {
+    if (kind === 'wind') {
+      return `
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M2 6.25h7.2c1.2 0 1.95-.62 1.95-1.53 0-.88-.67-1.47-1.52-1.47-.82 0-1.38.42-1.64 1.18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M2 9.1h9.55c1.35 0 2.2.72 2.2 1.78 0 1.03-.8 1.77-1.87 1.77-.93 0-1.58-.48-1.87-1.32" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      `;
+    }
+    if (kind === 'humidity') {
+      return `
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M8 2.05c1.38 2.1 3.7 4.66 3.7 7.13A3.7 3.7 0 0 1 8 12.88a3.7 3.7 0 0 1-3.7-3.7c0-2.47 2.32-5.03 3.7-7.13Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+      `;
+    }
+    return '';
+  };
+
+  const formatWeatherTemperatureDisplay = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}°C` : '-';
+  };
+
+  const getWeatherContextLine = (weather) =>
+    [weather && weather.segment_name ? weather.segment_name : '', weather && weather.corridor_name ? weather.corridor_name : '']
+      .filter(Boolean)
+      .join(' • ') || '-';
 
   const loadOnlyIconDataUris = () => {
     if (state.onlyIconLoaderPromise) {
@@ -1612,7 +1798,7 @@
     if (!(alert && alert.latLng)) {
       return null;
     }
-    const reporterName = getAlertName(alert) || `User ${alert.user_id || '-'}`;
+    const reporterName = String(getAlertName(alert) || `User ${alert.user_id || '-'}`).toUpperCase();
     const dispatched =
       Boolean(alert.ticket && (alert.ticket.dispatched_at || Number(alert.status) === 1));
     return {
@@ -1623,9 +1809,9 @@
         `<div class="selected-map-label__line">` +
         `<strong>${escapeHtml('SOS')}</strong>` +
         `<span class="selected-map-label__sep">&bull;</span>` +
-        `<span>${escapeHtml(formatElapsedSince(alert.created_at))}</span>` +
+        `<span>${escapeHtml(String(formatElapsedSince(alert.created_at)).toUpperCase())}</span>` +
         (dispatched
-          ? `<span class="selected-map-label__sep">&bull;</span><span class="selected-map-label__status-inline">Dispatched</span>`
+          ? `<span class="selected-map-label__sep">&bull;</span><span class="selected-map-label__status-inline">DISPATCHED</span>`
           : '') +
         `</div>` +
         `<div class="selected-map-label__line selected-map-label__line--sub">${escapeHtml(reporterName)}</div>`,
@@ -1636,10 +1822,11 @@
     if (!(gate && gate.latLng && state.gateAlerts.visible && shouldDisplayGateStatus(gate))) {
       return null;
     }
+    const gateLabel = `GT ${String(gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`).trim()}`.toUpperCase();
     return {
       key: `gate:${gate.gate_id}`,
       latLng: gate.latLng,
-      label: gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`,
+      label: gateLabel,
     };
   };
 
@@ -2147,8 +2334,8 @@
           )
         );
         this.element.title = isCluster
-          ? `${Number(this.gate.count || 0)} gate alert`
-          : this.gate.gate_name || this.gate.gate_code || 'Gate Alert';
+          ? `${Number(this.gate.count || 0)} GATE ALERT`
+          : `GT ${String(this.gate.gate_name || this.gate.gate_code || 'Gate Alert').trim()}`.toUpperCase();
         this.element.innerHTML = isCluster
           ? `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><span class="asset-map-cluster__count">${escapeHtml(String(this.gate.count || 0))}</span></span>`
           : isNormalGate
@@ -2228,10 +2415,11 @@
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
         this.element.style.zIndex = String(getWeatherMarkerZIndex(isExpanded));
-        this.element.title = this.weather.point_name || this.weather.segment_name || 'Weather';
+        this.element.title = String(this.weather.point_name || this.weather.segment_name || 'Weather').toUpperCase();
         const weatherLabel = String(this.weather.weather_label || 'Cuaca').trim();
-        const pointName = String(this.weather.point_name || this.weather.segment_name || this.weather.corridor_name || 'Lokasi').trim();
+        const pointName = String(this.weather.point_name || this.weather.segment_name || this.weather.corridor_name || 'Lokasi').trim().toUpperCase();
         const iconUrl = escapeHtml(getWeatherMarkerIconUrl(this.weather));
+        const fallbackIconUrl = escapeHtml(getWeatherMarkerIconFallbackUrl(this.weather));
         const staleBadge = isStale ? '<span class="weather-map-marker__badge">Data lama</span>' : '';
         const renderKey = JSON.stringify({
           isExpanded,
@@ -2239,18 +2427,19 @@
           weatherLabel,
           pointName,
           iconUrl,
-          temperature: formatWeatherTemperature(this.weather.temperature_c),
+          fallbackIconUrl,
+          temperature: formatWeatherTemperatureDisplay(this.weather.temperature_c),
         });
         if (this.renderKey !== renderKey) {
           this.renderKey = renderKey;
           this.element.innerHTML = `
-            <span class="weather-map-marker__pin" aria-hidden="true">
-              <span class="weather-map-marker__icon-wrap">
-                <img class="weather-map-marker__icon" src="${iconUrl}" alt="" aria-hidden="true" />
+              <span class="weather-map-marker__pin" aria-hidden="true">
+                <span class="weather-map-marker__icon-wrap">
+                  <img class="weather-map-marker__icon" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
+                </span>
               </span>
-            </span>
             <span class="weather-map-marker__bubble" aria-hidden="${isExpanded ? 'false' : 'true'}">
-              <span class="weather-map-marker__summary">${escapeHtml(weatherLabel)} &bull; ${escapeHtml(formatWeatherTemperature(this.weather.temperature_c))}</span>
+              <span class="weather-map-marker__summary">${escapeHtml(weatherLabel)} &bull; ${escapeHtml(formatWeatherTemperatureDisplay(this.weather.temperature_c))}</span>
               <strong class="weather-map-marker__location">${escapeHtml(pointName)}</strong>
               ${staleBadge}
             </span>
@@ -2260,7 +2449,7 @@
             iconEl.addEventListener(
               'error',
               () => {
-                iconEl.src = WEATHER_FALLBACK_ICON_URL;
+                iconEl.src = iconEl.getAttribute('data-fallback-src') || WEATHER_FALLBACK_ICON_URL;
               },
               { once: true }
             );
@@ -2357,6 +2546,22 @@
     sosWeatherToggleEl.checked = state.weather.visible;
     sosWeatherToggleEl.indeterminate = false;
     sosWeatherToggleEl.disabled = false;
+    if (sosWeatherBubbleToggleEl) {
+      sosWeatherBubbleToggleEl.checked = Boolean(state.weather.expandAllBubbles);
+      sosWeatherBubbleToggleEl.indeterminate = false;
+      sosWeatherBubbleToggleEl.disabled = !state.weather.visible;
+    }
+  };
+
+  const syncWeatherControlButtonState = () => {
+    if (!weatherControlBtn) {
+      return;
+    }
+    weatherControlBtn.classList.toggle('is-active', Boolean(state.weather.visible));
+    weatherControlBtn.setAttribute(
+      'aria-expanded',
+      weatherControlPopup && !weatherControlPopup.classList.contains('hidden') ? 'true' : 'false'
+    );
   };
 
   const getActiveMarkerFilterCount = () =>
@@ -2406,6 +2611,14 @@
     }
     foControlPopup.classList.toggle('hidden', !visible);
     syncFoControlButtonState();
+  };
+
+  const setWeatherControlPopupVisible = (visible) => {
+    if (!weatherControlPopup) {
+      return;
+    }
+    weatherControlPopup.classList.toggle('hidden', !visible);
+    syncWeatherControlButtonState();
   };
 
   const createMarkerLabelRef = (kind, id, options = {}) => ({
@@ -2669,8 +2882,8 @@
       .filter((alert) => alert && Number(alert.status) !== 2 && isEntityInSelectedBranch(alert.branch_id))
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-  const INCIDENT_FILTER_KEYS = ['sos', 'cctv', 'vms', 'gate'];
-  const INCIDENT_GROUP_ORDER = ['sos', 'gate', 'asset'];
+  const INCIDENT_FILTER_KEYS = ['sos', 'cctv', 'vms', 'gate', 'weather'];
+  const INCIDENT_GROUP_ORDER = ['sos', 'gate', 'asset', 'weather'];
 
   const isIncidentFilterEnabled = (key) => state.incidents.filters[String(key || '').toLowerCase()] !== false;
   const getIncidentAnimationState = () => state.incidents.animation;
@@ -2713,6 +2926,9 @@
     }
     if (state.ui.selectedEntityType === 'asset' && state.standaloneAssets.selectedAssetKey) {
       return `asset:${state.standaloneAssets.selectedAssetKey}`;
+    }
+    if (state.ui.selectedEntityType === 'weather' && state.weather.selectedWeatherId) {
+      return `weather:${state.weather.selectedWeatherId}`;
     }
     return '';
   };
@@ -2799,6 +3015,11 @@
     if (a.group === 'asset' && b.group === 'asset') {
       return String((a.data && a.data.title) || '').localeCompare(String((b.data && b.data.title) || ''));
     }
+    if (a.group === 'weather' && b.group === 'weather') {
+      return String((a.data && (a.data.point_code || a.data.point_name)) || '').localeCompare(
+        String((b.data && (b.data.point_code || b.data.point_name)) || '')
+      );
+    }
     return INCIDENT_GROUP_ORDER.indexOf(a.group) - INCIDENT_GROUP_ORDER.indexOf(b.group);
   };
 
@@ -2823,6 +3044,13 @@
     data: asset,
   });
 
+  const buildWeatherIncidentEntry = (weather) => ({
+    key: `weather:${weather.id}`,
+    group: 'weather',
+    entityType: 'weather',
+    data: weather,
+  });
+
   const getVisibleIncidentEntries = () => {
     const alerts = isIncidentFilterEnabled('sos') ? getVisibleAlerts() : [];
     const gateAlerts = Array.from(state.gateAlerts.items.values())
@@ -2837,10 +3065,19 @@
     const issueAssets = Array.from(state.standaloneAssets.items.values())
       .filter((item) => isAssetVisibleInIncidentList(item))
       .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+    const weatherItems =
+      isIncidentFilterEnabled('weather') && isWeatherLayerActive()
+        ? state.weather.items
+            .filter((item) => item && item.latLng)
+            .sort((a, b) =>
+              String(a.point_code || a.point_name || '').localeCompare(String(b.point_code || b.point_name || ''))
+            )
+        : [];
     return [
       ...alerts.map(buildSosIncidentEntry),
       ...gateAlerts.map(buildGateIncidentEntry),
       ...issueAssets.map(buildAssetIncidentEntry),
+      ...weatherItems.map(buildWeatherIncidentEntry),
     ];
   };
 
@@ -2954,6 +3191,45 @@
       `;
     }
 
+    if (entry.entityType === 'weather') {
+      const weather = entry.data;
+      const iconUrl = escapeHtml(getWeatherMarkerIconUrl(weather));
+      const fallbackIconUrl = escapeHtml(getWeatherMarkerIconFallbackUrl(weather));
+      const weatherLabel = escapeHtml(weather.weather_label || 'Cuaca');
+      const pointName = escapeHtml(weather.point_name || '-');
+      const contextLine = escapeHtml(getWeatherContextLine(weather));
+      const observedAt = escapeHtml(formatWeatherObservedAt(weather.observed_at || '-'));
+      return `
+        <article class="sos-incident-item sos-incident-item--summary sos-incident-item--weather ${state.ui.selectedEntityType === 'weather' && String(state.ui.selectedEntityId) === String(weather.id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="weather" data-weather-id="${weather.id}" ${interactionAttrs} aria-label="Pilih weather point ${escapeHtml(weather.point_name || weather.point_code || weather.id)}">
+          <div class="sos-weather-incident__top">
+            <span class="sos-weather-incident__icon">
+              <img class="sos-weather-incident__icon-img" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
+            </span>
+            <div class="sos-weather-incident__body">
+              <strong class="sos-weather-incident__label">${weatherLabel}</strong>
+              <span class="sos-weather-incident__point">${pointName}</span>
+              <span class="sos-weather-incident__location">${contextLine}</span>
+            </div>
+            <div class="sos-weather-incident__temp">${escapeHtml(formatWeatherTemperatureDisplay(weather.temperature_c))}</div>
+          </div>
+          <div class="sos-weather-incident__footer">
+            <div class="sos-weather-incident__metric">
+              <span class="sos-weather-incident__metric-label">Kecepatan Angin</span>
+              <strong class="sos-weather-incident__metric-value">${getWeatherMetricIcon('wind')}<span>${escapeHtml(formatWeatherWind(weather.wind_kph))}</span></strong>
+            </div>
+            <div class="sos-weather-incident__metric">
+              <span class="sos-weather-incident__metric-label">Kelembapan</span>
+              <strong class="sos-weather-incident__metric-value">${getWeatherMetricIcon('humidity')}<span>${escapeHtml(formatWeatherPercent(weather.humidity_pct))}</span></strong>
+            </div>
+            <div class="sos-weather-incident__metric">
+              <span class="sos-weather-incident__metric-label">Waktu Observasi</span>
+              <strong class="sos-weather-incident__metric-value">${observedAt}</strong>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
     const asset = entry.data;
     const assetKey = makeAssetKey(asset.asset_type, asset.id);
     return `
@@ -2997,6 +3273,16 @@
       }
       const asset = state.standaloneAssets.items.get(state.standaloneAssets.selectedAssetKey);
       return isAssetVisibleInIncidentList(asset);
+    }
+    if (state.ui.selectedEntityType === 'weather') {
+      return (
+        isIncidentFilterEnabled('weather') &&
+        isWeatherLayerActive() &&
+        Boolean(
+          state.weather.selectedWeatherId &&
+            state.weather.items.some((item) => String(item.id) === String(state.weather.selectedWeatherId))
+        )
+      );
     }
     return true;
   };
@@ -3047,7 +3333,8 @@
   const isWeatherLayerActive = () => state.weather.visible;
   const isWeatherMarkerExpanded = (weatherId) =>
     isWeatherLayerActive() &&
-    String(state.weather.selectedWeatherId || '') === String(weatherId || '');
+    (Boolean(state.weather.expandAllBubbles) ||
+      String(state.weather.selectedWeatherId || '') === String(weatherId || ''));
   const isViewportCullingActive = () => isAllBranchesSelected();
   const getViewportBoundsWithPadding = (paddingRatio = 0.08) => {
     if (!state.map || typeof state.map.getBounds !== 'function') {
@@ -3354,7 +3641,8 @@
           item.showInSummary !== false &&
           isAssetIssueStatus(item.status) &&
           isStandaloneAssetTypeVisible(item)
-      ).length;
+      ).length +
+      (isWeatherLayerActive() && isIncidentFilterEnabled('weather') ? state.weather.items.length : 0);
     const arcCount =
       state.networkArcs.visible && Array.isArray(state.networkArcs.items)
         ? state.networkArcs.items.length
@@ -3388,6 +3676,7 @@
     syncWeatherToggleState();
     syncAssetFilterButtonState();
     syncFoControlButtonState();
+    syncWeatherControlButtonState();
     const selectedBranch = getSelectedBranch();
     const branchLabel = isAllBranchesSelected()
       ? 'Semua Branch'
@@ -3446,11 +3735,27 @@
         return '';
       }
       const title =
-        group === 'sos' ? 'SOS' : group === 'gate' ? 'Gate Alert Summary' : 'Asset Offline Summary';
+        group === 'sos'
+          ? 'SOS'
+          : group === 'gate'
+            ? 'Gate Alert Summary'
+            : group === 'asset'
+              ? 'Asset Offline Summary'
+              : 'Weather';
       return `<section class="sos-incident-group"><div class="sos-incident-group__title">${title}</div>${items}</section>`;
     })
       .filter(Boolean)
       .join('');
+    sosIncidentListEl.querySelectorAll('.sos-weather-incident__icon-img').forEach((img) => {
+      img.addEventListener(
+        'error',
+        () => {
+          const fallbackSrc = img.getAttribute('data-fallback-src') || WEATHER_FALLBACK_ICON_URL;
+          img.src = fallbackSrc;
+        },
+        { once: true }
+      );
+    });
   };
 
   const renderDetailPanel = () => {
@@ -4770,6 +5075,26 @@
         ? null
         : String(weatherId || '');
     state.weather.selectedWeatherId = nextId;
+    if (nextId) {
+      if (state.ui.selectedEntityType === 'asset') {
+        closeCctvModal();
+      }
+      state.selectedSosId = null;
+      state.incidents.selectedSosId = null;
+      state.gateAlerts.selectedGateId = null;
+      state.standaloneAssets.selectedAssetKey = null;
+      state.cctvSelectedCameraId = '';
+      state.networkArcs.selectedEdgeKey = null;
+      state.ui.selectedEntityType = 'weather';
+      state.ui.selectedEntityId = nextId;
+      state.detailRenderKey = '';
+      clearMarkerLabelState({ preserveSosLocked: false });
+    } else if (state.ui.selectedEntityType === 'weather') {
+      state.ui.selectedEntityType = '';
+      state.ui.selectedEntityId = null;
+    }
+    renderIncidentList();
+    renderDetailPanel();
     syncWeatherMarkers();
   };
 
@@ -4818,7 +5143,13 @@
       state.weather.items = [];
       state.weather.meta = null;
       state.weather.selectedWeatherId = null;
+      if (state.ui.selectedEntityType === 'weather') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+      }
       syncWeatherMarkers();
+      renderSummary();
+      renderIncidentList();
       return;
     }
     const branchKey = getWeatherBranchKey();
@@ -4826,6 +5157,8 @@
     state.weather.items = cached && Array.isArray(cached.items) ? cached.items : [];
     state.weather.meta = cached && cached.meta ? cached.meta : null;
     syncWeatherMarkers();
+    renderSummary();
+    renderIncidentList();
     try {
       const response = await window.cameraService.getMapWeather(
         isAllBranchesSelected() ? {} : { branch_id: branch.id }
@@ -4851,13 +5184,25 @@
         !items.some((item) => String(item.id) === String(state.weather.selectedWeatherId))
       ) {
         state.weather.selectedWeatherId = null;
+        if (state.ui.selectedEntityType === 'weather') {
+          state.ui.selectedEntityType = '';
+          state.ui.selectedEntityId = null;
+        }
       }
       syncWeatherMarkers();
+      renderSummary();
+      renderIncidentList();
     } catch (error) {
       state.weather.errorMessage = error && error.message ? error.message : 'Gagal memuat marker weather.';
       state.weather.hasLoaded = true;
       state.weather.selectedWeatherId = null;
+      if (state.ui.selectedEntityType === 'weather') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+      }
       syncWeatherMarkers();
+      renderSummary();
+      renderIncidentList();
     }
   };
 
@@ -5447,6 +5792,7 @@
     state.gateAlerts.selectedGateId = null;
     state.standaloneAssets.selectedAssetKey = null;
     state.networkArcs.selectedEdgeKey = null;
+    state.weather.selectedWeatherId = null;
     if (options.lockLabel === false) {
       clearMarkerLabelState();
     } else {
@@ -5469,6 +5815,7 @@
     state.ui.selectedEntityId = String(gateId);
     state.standaloneAssets.selectedAssetKey = null;
     state.networkArcs.selectedEdgeKey = null;
+    state.weather.selectedWeatherId = null;
     state.detailRenderKey = '';
     if (options.lockLabel === false) {
       clearMarkerLabelState({ preserveSosLocked: false });
@@ -5498,6 +5845,7 @@
     state.ui.selectedEntityId = assetKey;
     state.cctvSelectedCameraId = String(asset.id || '');
     state.networkArcs.selectedEdgeKey = null;
+    state.weather.selectedWeatherId = null;
     state.detailRenderKey = '';
     if (options.lockLabel === false) {
       clearMarkerLabelState({ preserveSosLocked: false });
@@ -5523,6 +5871,7 @@
     state.standaloneAssets.selectedAssetKey = null;
     state.cctvSelectedCameraId = '';
     state.networkArcs.selectedEdgeKey = null;
+    state.weather.selectedWeatherId = null;
     state.ui.selectedEntityType = '';
     state.ui.selectedEntityId = null;
     state.detailRenderKey = '';
@@ -6019,6 +6368,11 @@
         clearMarkerLabelState();
         if (state.weather.selectedWeatherId) {
           state.weather.selectedWeatherId = null;
+          if (state.ui.selectedEntityType === 'weather') {
+            state.ui.selectedEntityType = '';
+            state.ui.selectedEntityId = null;
+            renderIncidentList();
+          }
           syncWeatherMarkers();
         }
       });
@@ -6200,6 +6554,9 @@
       if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'weatherVisible')) {
         state.weather.visible = Boolean(assetMonitoringPrefs.weatherVisible);
       }
+      if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'weatherExpandAllBubbles')) {
+        state.weather.expandAllBubbles = Boolean(assetMonitoringPrefs.weatherExpandAllBubbles);
+      }
       if (assetMonitoringPrefs && assetMonitoringPrefs.markerStatusFilters && typeof assetMonitoringPrefs.markerStatusFilters === 'object') {
         state.markerStatusFilters = {
           normal: assetMonitoringPrefs.markerStatusFilters.normal !== false,
@@ -6250,6 +6607,7 @@
           networkVisible: state.networkArcs.visible,
           animatedNetworkArcsEnabled: state.networkArcs.experimentalEnabled,
           weatherVisible: state.weather.visible,
+          weatherExpandAllBubbles: state.weather.expandAllBubbles,
           markerStatusFilters: {
             ...state.markerStatusFilters,
           },
@@ -6593,6 +6951,7 @@
       event.stopPropagation();
       setToolbarMenuPanelVisible(false);
       setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
       setAssetFilterPopupVisible(!(assetFilterPopup && !assetFilterPopup.classList.contains('hidden')));
     });
   }
@@ -6609,12 +6968,30 @@
       event.stopPropagation();
       setToolbarMenuPanelVisible(false);
       setAssetFilterPopupVisible(false);
+      setWeatherControlPopupVisible(false);
       setFoControlPopupVisible(!(foControlPopup && !foControlPopup.classList.contains('hidden')));
     });
   }
 
   if (foControlPopup) {
     foControlPopup.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  }
+
+  if (weatherControlBtn) {
+    weatherControlBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setToolbarMenuPanelVisible(false);
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(!(weatherControlPopup && !weatherControlPopup.classList.contains('hidden')));
+    });
+  }
+
+  if (weatherControlPopup) {
+    weatherControlPopup.addEventListener('click', (event) => {
       event.stopPropagation();
     });
   }
@@ -6686,6 +7063,16 @@
   });
 
   document.addEventListener('click', (event) => {
+    if (!weatherControlPopup || weatherControlPopup.classList.contains('hidden')) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target || (!weatherControlPopup.contains(target) && !(weatherControlBtn && weatherControlBtn.contains(target)))) {
+      setWeatherControlPopupVisible(false);
+    }
+  });
+
+  document.addEventListener('click', (event) => {
     if (Date.now() < state.cctvSuppressMapClickUntil) {
       return;
     }
@@ -6696,15 +7083,24 @@
     if (toolbarMenuBtnEl && toolbarMenuBtnEl.contains(target)) {
       setAssetFilterPopupVisible(false);
       setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
       return;
     }
     if (assetFilterBtn && assetFilterBtn.contains(target)) {
       setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
       setToolbarMenuPanelVisible(false);
       return;
     }
     if (foControlBtn && foControlBtn.contains(target)) {
       setAssetFilterPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setToolbarMenuPanelVisible(false);
+      return;
+    }
+    if (weatherControlBtn && weatherControlBtn.contains(target)) {
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
       setToolbarMenuPanelVisible(false);
     }
   });
@@ -6730,15 +7126,23 @@
       state.weather.visible = Boolean(sosWeatherToggleEl.checked);
       if (!state.weather.visible) {
         state.weather.selectedWeatherId = null;
+        if (state.ui.selectedEntityType === 'weather') {
+          state.ui.selectedEntityType = '';
+          state.ui.selectedEntityId = null;
+        }
         clearWeatherMarkers();
+        renderSummary();
         renderAssetToolbar();
+        renderIncidentList();
         updateMapEmptyState('');
         void persistAssetMonitoringPrefs();
         return;
       }
       void loadWeatherMarkers()
         .then(() => {
+          renderSummary();
           renderAssetToolbar();
+          renderIncidentList();
           updateMapEmptyState('');
         })
         .catch((error) => {
@@ -6748,6 +7152,15 @@
           renderAssetToolbar();
           updateMapEmptyState('');
         });
+      void persistAssetMonitoringPrefs();
+    });
+  }
+
+  if (sosWeatherBubbleToggleEl) {
+    sosWeatherBubbleToggleEl.addEventListener('change', () => {
+      state.weather.expandAllBubbles = Boolean(sosWeatherBubbleToggleEl.checked);
+      syncWeatherMarkers();
+      renderAssetToolbar();
       void persistAssetMonitoringPrefs();
     });
   }
@@ -6828,6 +7241,10 @@
         selectStandaloneAssetOptimistic(asset, { focus: true, lockLabel: false });
         void openCctvModal(asset);
       }
+      return;
+    }
+    if (entityType === 'weather' && target.dataset.weatherId) {
+      selectWeatherMarker(target.dataset.weatherId);
     }
   });
 

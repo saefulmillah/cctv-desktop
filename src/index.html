@@ -145,10 +145,21 @@
               </label>
             </div>
           </div>
-          <label class="sos-map-toggle asset-toolbar-control" for="sosWeatherToggle">
-            <input id="sosWeatherToggle" type="checkbox" checked />
-            <span>Weather</span>
-          </label>
+          <div class="toolbar-menu-wrap asset-toolbar-control">
+            <button id="weatherControlBtn" class="toolbar-btn" type="button" aria-haspopup="true" aria-expanded="false">
+              Weather
+            </button>
+            <div id="weatherControlPopup" class="toolbar-menu-panel asset-filter-popup hidden">
+              <label class="asset-filter-option" for="sosWeatherToggle" title="Tampilkan layer weather">
+                <input id="sosWeatherToggle" type="checkbox" checked />
+                <span>Weather</span>
+              </label>
+              <label class="asset-filter-option" for="sosWeatherBubbleToggle" title="Expand semua bubble weather">
+                <input id="sosWeatherBubbleToggle" type="checkbox" />
+                <span>Bubble Weather</span>
+              </label>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -246,6 +257,7 @@
               <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="cctv" aria-pressed="true">CCTV</button>
               <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="vms" aria-pressed="true">VMS</button>
               <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="gate" aria-pressed="true">Gate</button>
+              <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="weather" aria-pressed="true">Weather</button>
             </div>
             <div id="sosIncidentListLoading" class="sidebar-map-loading sidebar-section-hidden sos-incident-list-loading" aria-live="polite">
               <div class="sidebar-map-loading__pulse"></div>

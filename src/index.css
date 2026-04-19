@@ -1676,6 +1676,7 @@ body.sos-mode .asset-map-topbar__select {
   padding-inline: 10px;
   font-size: 10px;
   letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 body.sos-mode .sos-map-toggle {
@@ -2002,6 +2003,7 @@ body.sos-mode .current-branch {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;
+  text-transform: uppercase;
   cursor: pointer;
   transition:
     border-color 0.18s ease,
@@ -2195,6 +2197,118 @@ body.sos-mode .current-branch {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+}
+
+.sos-incident-item--weather {
+  min-height: 0;
+  gap: 16px;
+  color: var(--text);
+}
+
+.sos-weather-incident__top {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.sos-weather-incident__body {
+  display: grid;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sos-weather-incident__label {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.sos-weather-incident__point {
+  color: #eef8ff;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.sos-weather-incident__location {
+  color: rgba(215, 236, 255, 0.78);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.sos-weather-incident__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 78px;
+  height: 78px;
+  flex: 0 0 auto;
+  border-radius: 20px;
+  background: transparent;
+}
+
+.sos-weather-incident__icon-img {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.sos-weather-incident__temp {
+  color: #ffffff;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.sos-weather-incident__footer {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.sos-weather-incident__metric {
+  display: grid;
+  gap: 4px;
+}
+
+.sos-weather-incident__metric-label {
+  color: rgba(215, 236, 255, 0.72);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.sos-weather-incident__metric-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 200;
+  line-height: 1.25;
+  text-transform: capitalize;
+}
+
+.sos-weather-incident__metric-value svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: rgba(147, 197, 253, 0.92);
+}
+
+.sos-incident-item--weather .sos-incident-item__label,
+.sos-incident-item--weather .sos-incident-item__value,
+.sos-incident-item--weather .sos-incident-item__phone,
+.sos-incident-item--weather span,
+.sos-incident-item--weather strong {
+  color: inherit;
 }
 
 .sos-whatsapp-btn {
@@ -2916,8 +3030,8 @@ body.sos-mode .asset-toolbar-control {
 .weather-map-marker {
   position: absolute;
   display: block;
-  width: 42px;
-  height: 42px;
+  width: 50px;
+  height: 50px;
   border: 0;
   padding: 0;
   background: transparent;
@@ -2932,12 +3046,12 @@ body.sos-mode .asset-toolbar-control {
 
 .weather-map-marker__pin {
   position: relative;
-  width: 42px;
-  height: 42px;
+  width: 50px;
+  height: 50px;
   flex: 0 0 auto;
   filter: drop-shadow(0 10px 16px rgba(10, 38, 92, 0.24));
   border-radius: 999px;
-  background: linear-gradient(180deg, #2b7bff 0%, #1a56e5 100%);
+  background: linear-gradient(180deg, #3dbbf3 0%, #8ccfed 100%);
   display: grid;
   place-items: center;
   box-shadow:
@@ -2947,29 +3061,29 @@ body.sos-mode .asset-toolbar-control {
 
 .weather-map-marker__icon-wrap {
   position: relative;
-  width: 30px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   overflow: hidden;
 }
 
 .weather-map-marker__icon {
-  width: 22px;
-  height: 22px;
+  width: 44px;
+  height: 44px;
   object-fit: contain;
   pointer-events: none;
 }
 
 .weather-map-marker__bubble {
   position: absolute;
-  left: 52px;
+  left: 58px;
   top: 50%;
   display: inline-grid;
-  gap: 2px;
+  /* gap: 2px; */
   min-width: 230px;
   max-width: 320px;
-  padding: 10px 16px;
+  padding: 8px 16px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.98);
   box-shadow:
@@ -3032,7 +3146,7 @@ body.sos-mode .asset-toolbar-control {
 }
 
 .weather-map-marker.is-stale .weather-map-marker__pin {
-  background: linear-gradient(180deg, #4d8cff 0%, #315fc9 100%);
+  background: linear-gradient(180deg, #3dbbf3 0%, #8ccfed 100%);
 }
 
 @keyframes mapMarkerPopIn {
