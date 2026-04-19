@@ -29,7 +29,10 @@
   const sosMapEl = $('sosMap');
   const sosMapLoadingEl = $('sosMapLoading');
   const sosMapEmptyEl = $('sosMapEmpty');
-  const sosBranchSelectEl = $('sosBranchSelect');
+  const sosBranchControlBtn = $('sosBranchControlBtn');
+  const sosBranchControlLabelEl = $('sosBranchControlLabel');
+  const sosBranchControlPopup = $('sosBranchControlPopup');
+  const sosBranchControlOptionsEl = $('sosBranchControlOptions');
   const sosMapNormalBtn = $('sosMapNormalBtn');
   const sosMapTiltBtn = $('sosMapTiltBtn');
   const sosMapRotateLeftBtn = $('sosMapRotateLeftBtn');
@@ -1048,9 +1051,20 @@
       <path d="M31 33H15c-4.418 0-8-3.134-8-7s3.582-7 8-7c.803 0 1.58.104 2.314.298C18.82 14.936 22.96 12 27.75 12 33.963 12 39 16.925 39 23c4.418 0 8 3.134 8 7s-3.582 7-8 7Z" fill="#ffffff"/>
     </svg>
   `);
-  const WEATHER_METEOCON_STYLE = 'flat';
-  const WEATHER_METEOCON_BASE_URL = new URL(`./assets/weather/meteocons/${WEATHER_METEOCON_STYLE}/`, window.location.href).href;
   const WEATHER_METEOCON_FALLBACK_SLUG = 'cloudy';
+  const WEATHER_METEOCON_STYLE_BASE_URLS = {
+    flat: new URL('./assets/weather/meteocons/flat/', window.location.href).href,
+    fill: new URL('./assets/weather/meteocons/fill/', window.location.href).href,
+  };
+  const DEFAULT_WEATHER_ICON_APPEARANCE = {
+    weatherIconStyle: 'flat',
+    weatherIconMonochromeColor: '#FFFFFF',
+    weatherIconAnimated: true,
+  };
+  const weatherIconSvgTextCache = new Map();
+  const weatherIconSvgMarkupCache = new Map();
+  const weatherIconSvgMarkupPromiseCache = new Map();
+  let weatherIconRefreshTimer = 0;
 
   const formatWeatherTemperature = (value) => {
     const numeric = Number(value);
@@ -1065,6 +1079,89 @@
       .replace(/[^a-z0-9-]+/g, '-')
       .replace(/-{2,}/g, '-')
       .replace(/^-+|-+$/g, '');
+
+  const normalizeHexColor = (value, fallback = '#FFFFFF') => {
+    const raw = String(value || '').trim();
+    const normalized = raw.startsWith('#') ? raw.slice(1) : raw;
+    return /^[0-9a-fA-F]{6}$/.test(normalized) ? `#${normalized.toUpperCase()}` : fallback;
+  };
+
+  const normalizeWeatherIconAppearance = (value) => {
+    const source = value && typeof value === 'object' ? value : {};
+    const requestedStyle = String(source.weatherIconStyle || DEFAULT_WEATHER_ICON_APPEARANCE.weatherIconStyle)
+      .trim()
+      .toLowerCase();
+    return {
+      weatherIconStyle: ['flat', 'fill', 'monochrome', 'monochrome-color'].includes(requestedStyle)
+        ? requestedStyle
+        : DEFAULT_WEATHER_ICON_APPEARANCE.weatherIconStyle,
+      weatherIconMonochromeColor: normalizeHexColor(
+        source.weatherIconMonochromeColor,
+        DEFAULT_WEATHER_ICON_APPEARANCE.weatherIconMonochromeColor
+      ),
+      weatherIconAnimated:
+        source.weatherIconAnimated === undefined
+          ? DEFAULT_WEATHER_ICON_APPEARANCE.weatherIconAnimated
+          : Boolean(source.weatherIconAnimated),
+    };
+  };
+
+  const getWeatherIconAppearance = () =>
+    normalizeWeatherIconAppearance(window.__APP_APPEARANCE || DEFAULT_WEATHER_ICON_APPEARANCE);
+
+  const getWeatherSourceStyle = (appearance) => {
+    const normalized = normalizeWeatherIconAppearance(appearance);
+    return normalized.weatherIconStyle === 'fill' ? 'fill' : 'flat';
+  };
+
+  const buildWeatherMeteoconSourceUrl = (weather, appearance) =>
+    `${WEATHER_METEOCON_STYLE_BASE_URLS[getWeatherSourceStyle(appearance)]}${resolveWeatherMeteoconSlug(weather)}.svg`;
+
+  const stripWeatherSvgAnimation = (svgText) =>
+    String(svgText || '')
+      .replace(/<animateTransform[^>]*\/>/gi, '')
+      .replace(/<animateTransform[\s\S]*?<\/animateTransform>/gi, '')
+      .replace(/<animateMotion[^>]*\/>/gi, '')
+      .replace(/<animateMotion[\s\S]*?<\/animateMotion>/gi, '')
+      .replace(/<animate[^>]*\/>/gi, '')
+      .replace(/<animate[\s\S]*?<\/animate>/gi, '')
+      .replace(/<set[^>]*\/>/gi, '')
+      .replace(/<set[\s\S]*?<\/set>/gi, '')
+      .replace(/\s(begin|dur|repeatCount|keyTimes|keySplines|calcMode|values|keyPoints)="[^"]*"/gi, '');
+
+  const recolorWeatherSvg = (svgText, color) => {
+    const normalizedColor = normalizeHexColor(color, '#FFFFFF');
+    return String(svgText || '')
+      .replace(/fill="(?!none)[^"]*"/gi, `fill="${normalizedColor}"`)
+      .replace(/stroke="(?!none)[^"]*"/gi, `stroke="${normalizedColor}"`);
+  };
+
+  const addClassToWeatherSvgRoot = (svgText, className) => {
+    const svgClass = String(className || '').trim();
+    if (!svgClass) {
+      return String(svgText || '');
+    }
+    return String(svgText || '').replace(/<svg\b([^>]*)>/i, (match, attrs) => {
+      if (/class="/i.test(attrs)) {
+        return `<svg${attrs.replace(/class="([^"]*)"/i, (_full, existing) => ` class="${existing} ${svgClass}"`)}>`;
+      }
+      return `<svg class="${svgClass}"${attrs}>`;
+    });
+  };
+
+  const scheduleWeatherIconRefresh = () => {
+    if (weatherIconRefreshTimer) {
+      return;
+    }
+    weatherIconRefreshTimer = window.setTimeout(() => {
+      weatherIconRefreshTimer = 0;
+      if (!state.isActive) {
+        return;
+      }
+      syncWeatherMarkers();
+      renderIncidentList();
+    }, 30);
+  };
 
   const isNightWeatherCondition = (weather) => {
     const token = normalizeWeatherIconToken(
@@ -1170,13 +1267,84 @@
     return WEATHER_METEOCON_FALLBACK_SLUG;
   };
 
-  const getWeatherMeteoconIconUrl = (weather) =>
-    `${WEATHER_METEOCON_BASE_URL}${resolveWeatherMeteoconSlug(weather)}.svg`;
+  const getWeatherMeteoconIconUrl = (weather) => buildWeatherMeteoconSourceUrl(weather, getWeatherIconAppearance());
 
   const getWeatherMarkerIconUrl = (weather) => getWeatherMeteoconIconUrl(weather);
 
   const getWeatherMarkerIconFallbackUrl = (weather) =>
     String(weather && weather.icon_url ? weather.icon_url : '').trim() || WEATHER_FALLBACK_ICON_URL;
+
+  const loadRawWeatherSvgText = async (weather, appearance) => {
+    const sourceUrl = buildWeatherMeteoconSourceUrl(weather, appearance);
+    if (weatherIconSvgTextCache.has(sourceUrl)) {
+      return weatherIconSvgTextCache.get(sourceUrl);
+    }
+    const response = await window.fetch(sourceUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load weather icon: ${sourceUrl}`);
+    }
+    const svgText = await response.text();
+    weatherIconSvgTextCache.set(sourceUrl, svgText);
+    return svgText;
+  };
+
+  const buildWeatherSvgCacheKey = (weather, appearance) => {
+    const normalizedAppearance = normalizeWeatherIconAppearance(appearance);
+    return JSON.stringify({
+      slug: resolveWeatherMeteoconSlug(weather),
+      sourceStyle: getWeatherSourceStyle(normalizedAppearance),
+      style: normalizedAppearance.weatherIconStyle,
+      color: normalizedAppearance.weatherIconMonochromeColor,
+      animated: normalizedAppearance.weatherIconAnimated,
+    });
+  };
+
+  const buildWeatherIconMarkup = async (weather, className = '') => {
+    const appearance = getWeatherIconAppearance();
+    const cacheKey = `${buildWeatherSvgCacheKey(weather, appearance)}::${String(className || '')}`;
+    if (weatherIconSvgMarkupCache.has(cacheKey)) {
+      return weatherIconSvgMarkupCache.get(cacheKey);
+    }
+    if (!weatherIconSvgMarkupPromiseCache.has(cacheKey)) {
+      weatherIconSvgMarkupPromiseCache.set(
+        cacheKey,
+        (async () => {
+          let svgText = await loadRawWeatherSvgText(weather, appearance);
+          if (!appearance.weatherIconAnimated) {
+            svgText = stripWeatherSvgAnimation(svgText);
+          }
+          if (
+            appearance.weatherIconStyle === 'monochrome' ||
+            appearance.weatherIconStyle === 'monochrome-color'
+          ) {
+            const monoColor =
+              appearance.weatherIconStyle === 'monochrome-color'
+                ? appearance.weatherIconMonochromeColor
+                : '#FFFFFF';
+            svgText = recolorWeatherSvg(svgText, monoColor);
+          }
+          const markup = addClassToWeatherSvgRoot(svgText, className);
+          weatherIconSvgMarkupCache.set(cacheKey, markup);
+          weatherIconSvgMarkupPromiseCache.delete(cacheKey);
+          scheduleWeatherIconRefresh();
+          return markup;
+        })().catch((error) => {
+          weatherIconSvgMarkupPromiseCache.delete(cacheKey);
+          throw error;
+        })
+      );
+    }
+    return weatherIconSvgMarkupPromiseCache.get(cacheKey);
+  };
+
+  const getWeatherIconMarkupSync = (weather, className = '') => {
+    const cacheKey = `${buildWeatherSvgCacheKey(weather, getWeatherIconAppearance())}::${String(className || '')}`;
+    if (!weatherIconSvgMarkupCache.has(cacheKey)) {
+      void buildWeatherIconMarkup(weather, className).catch(() => {});
+      return '';
+    }
+    return weatherIconSvgMarkupCache.get(cacheKey) || '';
+  };
 
   const formatWeatherPercent = (value) => {
     const numeric = Number(value);
@@ -1322,6 +1490,20 @@
     };
   };
 
+  const getActiveAppFontFamilyStack = () => {
+    const fromWindow = String(window.__APP_FONT_FAMILY_STACK || '').trim();
+    if (fromWindow) {
+      return fromWindow;
+    }
+    const fromCss = String(
+      window.getComputedStyle(document.documentElement).getPropertyValue('--font-family-base') || ''
+    ).trim();
+    if (fromCss) {
+      return fromCss;
+    }
+    return "'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
+  };
+
   const buildClusterCountBadgeSvg = (count, size) => {
     const displayCount = String(Number(count || 0));
     const badgeWidth = Math.min(size - 2, Math.max(18, displayCount.length * 7 + 10));
@@ -1331,7 +1513,7 @@
     const y = 1;
     return `
       <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="#E63946" />
-      <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${fontSize}" font-weight="800">${displayCount}</text>
+      <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="${getActiveAppFontFamilyStack()}" font-size="${fontSize}" font-weight="800">${displayCount}</text>
     `;
   };
 
@@ -1371,7 +1553,7 @@
         y="${size / 2 + 5.5}"
         text-anchor="middle"
         fill="#ffffff"
-        font-family="Segoe UI, Arial, sans-serif"
+        font-family="${getActiveAppFontFamilyStack()}"
         font-size="${fontSize}"
         font-weight="800"
       >${displayCount}</text>
@@ -2420,14 +2602,17 @@
         const pointName = String(this.weather.point_name || this.weather.segment_name || this.weather.corridor_name || 'Lokasi').trim().toUpperCase();
         const iconUrl = escapeHtml(getWeatherMarkerIconUrl(this.weather));
         const fallbackIconUrl = escapeHtml(getWeatherMarkerIconFallbackUrl(this.weather));
+        const inlineIconMarkup = getWeatherIconMarkupSync(this.weather, 'weather-map-marker__icon-svg');
+        const iconContent = inlineIconMarkup
+          ? inlineIconMarkup
+          : `<img class="weather-map-marker__icon" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />`;
         const staleBadge = isStale ? '<span class="weather-map-marker__badge">Data lama</span>' : '';
         const renderKey = JSON.stringify({
           isExpanded,
           isStale,
           weatherLabel,
           pointName,
-          iconUrl,
-          fallbackIconUrl,
+          iconKey: inlineIconMarkup ? `inline:${buildWeatherSvgCacheKey(this.weather, getWeatherIconAppearance())}` : iconUrl,
           temperature: formatWeatherTemperatureDisplay(this.weather.temperature_c),
         });
         if (this.renderKey !== renderKey) {
@@ -2435,7 +2620,7 @@
           this.element.innerHTML = `
               <span class="weather-map-marker__pin" aria-hidden="true">
                 <span class="weather-map-marker__icon-wrap">
-                  <img class="weather-map-marker__icon" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
+                  ${iconContent}
                 </span>
               </span>
             <span class="weather-map-marker__bubble" aria-hidden="${isExpanded ? 'false' : 'true'}">
@@ -2564,6 +2749,16 @@
     );
   };
 
+  const syncBranchControlButtonState = () => {
+    if (!sosBranchControlBtn) {
+      return;
+    }
+    sosBranchControlBtn.setAttribute(
+      'aria-expanded',
+      sosBranchControlPopup && !sosBranchControlPopup.classList.contains('hidden') ? 'true' : 'false'
+    );
+  };
+
   const getActiveMarkerFilterCount = () =>
     ['normal', 'warning', 'error'].filter((key) => Boolean(state.markerStatusFilters[key])).length;
 
@@ -2619,6 +2814,14 @@
     }
     weatherControlPopup.classList.toggle('hidden', !visible);
     syncWeatherControlButtonState();
+  };
+
+  const setBranchControlPopupVisible = (visible) => {
+    if (!sosBranchControlPopup) {
+      return;
+    }
+    sosBranchControlPopup.classList.toggle('hidden', !visible);
+    syncBranchControlButtonState();
   };
 
   const createMarkerLabelRef = (kind, id, options = {}) => ({
@@ -3195,6 +3398,10 @@
       const weather = entry.data;
       const iconUrl = escapeHtml(getWeatherMarkerIconUrl(weather));
       const fallbackIconUrl = escapeHtml(getWeatherMarkerIconFallbackUrl(weather));
+      const inlineIconMarkup = getWeatherIconMarkupSync(weather, 'sos-weather-incident__icon-svg');
+      const iconContent = inlineIconMarkup
+        ? inlineIconMarkup
+        : `<img class="sos-weather-incident__icon-img" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />`;
       const weatherLabel = escapeHtml(weather.weather_label || 'Cuaca');
       const pointName = escapeHtml(weather.point_name || '-');
       const contextLine = escapeHtml(getWeatherContextLine(weather));
@@ -3203,7 +3410,7 @@
         <article class="sos-incident-item sos-incident-item--summary sos-incident-item--weather ${state.ui.selectedEntityType === 'weather' && String(state.ui.selectedEntityId) === String(weather.id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="weather" data-weather-id="${weather.id}" ${interactionAttrs} aria-label="Pilih weather point ${escapeHtml(weather.point_name || weather.point_code || weather.id)}">
           <div class="sos-weather-incident__top">
             <span class="sos-weather-incident__icon">
-              <img class="sos-weather-incident__icon-img" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
+              ${iconContent}
             </span>
             <div class="sos-weather-incident__body">
               <strong class="sos-weather-incident__label">${weatherLabel}</strong>
@@ -3651,22 +3858,57 @@
   };
 
   const renderBranchOptions = () => {
-    if (!sosBranchSelectEl) {
+    if (!sosBranchControlOptionsEl || !sosBranchControlLabelEl) {
       return;
     }
     const branches = Array.isArray(state.mapContext.availableBranches) ? state.mapContext.availableBranches : [];
     const selectedBranch = getSelectedBranch();
     const selectedId = selectedBranch && selectedBranch.id ? String(selectedBranch.id) : '';
-    sosBranchSelectEl.innerHTML = [
-      '<option value="">Pilih branch</option>',
-      `<option value="${ALL_BRANCHES_OPTION}" ${selectedId === ALL_BRANCHES_OPTION ? 'selected' : ''}>Semua Branch</option>`,
-      ...branches.map(
-        (branch) =>
-          `<option value="${escapeHtml(branch.id)}" ${
-            String(branch.id) === selectedId ? 'selected' : ''
-          }>${escapeHtml(branch.branch_name || branch.branch_code || branch.id)}</option>`
-      ),
+    const selectedLabel = isAllBranchesSelected()
+      ? 'Semua Branch'
+      : selectedBranch
+        ? selectedBranch.branch_name || selectedBranch.branch_code || selectedBranch.id
+        : 'Pilih Branch';
+    setText(sosBranchControlLabelEl, selectedLabel);
+    sosBranchControlOptionsEl.innerHTML = [
+      `<button type="button" class="asset-filter-option asset-map-topbar__branch-option ${selectedId === ALL_BRANCHES_OPTION ? 'is-selected' : ''}" data-branch-option="${ALL_BRANCHES_OPTION}" role="menuitemradio" aria-checked="${selectedId === ALL_BRANCHES_OPTION ? 'true' : 'false'}"><span>Semua Branch</span></button>`,
+      ...branches.map((branch) => {
+        const branchId = String(branch.id);
+        const branchLabel = branch.branch_name || branch.branch_code || branch.id;
+        return `<button type="button" class="asset-filter-option asset-map-topbar__branch-option ${branchId === selectedId ? 'is-selected' : ''}" data-branch-option="${escapeHtml(branchId)}" role="menuitemradio" aria-checked="${branchId === selectedId ? 'true' : 'false'}"><span>${escapeHtml(branchLabel)}</span></button>`;
+      }),
     ].join('');
+    syncBranchControlButtonState();
+  };
+
+  const applySelectedMonitoringBranch = (nextBranchId) => {
+    debugLog('branchSelect:change', {
+      previousBranchId:
+        state.mapContext.selectedBranch && state.mapContext.selectedBranch.id
+          ? String(state.mapContext.selectedBranch.id)
+          : '',
+      nextBranchId,
+    });
+    state.mapContext.selectedBranch =
+      nextBranchId === ALL_BRANCHES_OPTION
+        ? {
+            id: ALL_BRANCHES_OPTION,
+            branch_name: 'Semua Branch',
+            branch_code: 'ALL',
+          }
+        : state.mapContext.availableBranches.find((branch) => String(branch.id) === nextBranchId) || null;
+    if (nextBranchId === ALL_BRANCHES_OPTION) {
+      state.weather.visible = false;
+    }
+    resetIncidentListAnimationState();
+    resetStandaloneLayerState();
+    resetNetworkLayerState();
+    resetWeatherLayerState();
+    renderBranchOptions();
+    void persistAssetMonitoringPrefs();
+    void refreshDashboard().catch((error) => {
+      setConnectionBadge(error.message || 'Gagal mengganti branch monitoring.', 'danger');
+    });
   };
 
   const renderAssetToolbar = () => {
@@ -3677,6 +3919,7 @@
     syncAssetFilterButtonState();
     syncFoControlButtonState();
     syncWeatherControlButtonState();
+    syncBranchControlButtonState();
     const selectedBranch = getSelectedBranch();
     const branchLabel = isAllBranchesSelected()
       ? 'Semua Branch'
@@ -6682,6 +6925,8 @@
     state.isActive = false;
     setAssetFilterPopupVisible(false);
     setFoControlPopupVisible(false);
+    setWeatherControlPopupVisible(false);
+    setBranchControlPopupVisible(false);
     document.body.classList.remove('sos-mode');
     sosDashboardEl.classList.add('hidden');
     cameraGridEl.classList.remove('hidden');
@@ -6794,38 +7039,6 @@
       setConnectionBadge(error.message || 'Refresh asset monitoring gagal.', 'danger');
     });
   });
-
-  if (sosBranchSelectEl) {
-    sosBranchSelectEl.addEventListener('change', () => {
-      const nextBranchId = String(sosBranchSelectEl.value || '');
-      debugLog('branchSelect:change', {
-        previousBranchId:
-          state.mapContext.selectedBranch && state.mapContext.selectedBranch.id
-            ? String(state.mapContext.selectedBranch.id)
-            : '',
-        nextBranchId,
-      });
-      state.mapContext.selectedBranch =
-        nextBranchId === ALL_BRANCHES_OPTION
-          ? {
-              id: ALL_BRANCHES_OPTION,
-              branch_name: 'Semua Branch',
-              branch_code: 'ALL',
-            }
-          : state.mapContext.availableBranches.find((branch) => String(branch.id) === nextBranchId) || null;
-      if (nextBranchId === ALL_BRANCHES_OPTION) {
-        state.weather.visible = false;
-      }
-      resetIncidentListAnimationState();
-      resetStandaloneLayerState();
-      resetNetworkLayerState();
-      resetWeatherLayerState();
-      void persistAssetMonitoringPrefs();
-      void refreshDashboard().catch((error) => {
-        setConnectionBadge(error.message || 'Gagal mengganti branch monitoring.', 'danger');
-      });
-    });
-  }
 
   if (sosMapNormalBtn) {
     sosMapNormalBtn.addEventListener('click', () => {
@@ -6996,6 +7209,38 @@
     });
   }
 
+  if (sosBranchControlBtn) {
+    sosBranchControlBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setToolbarMenuPanelVisible(false);
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setBranchControlPopupVisible(!(sosBranchControlPopup && !sosBranchControlPopup.classList.contains('hidden')));
+    });
+  }
+
+  if (sosBranchControlPopup) {
+    sosBranchControlPopup.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  }
+
+  if (sosBranchControlOptionsEl) {
+    sosBranchControlOptionsEl.addEventListener('click', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest('[data-branch-option]') : null;
+      if (!target) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const nextBranchId = String(target.getAttribute('data-branch-option') || '');
+      setBranchControlPopupVisible(false);
+      applySelectedMonitoringBranch(nextBranchId);
+    });
+  }
+
   const handleMarkerStatusFilterChange = () => {
     state.markerStatusFilters.normal = sosMarkerNormalToggleEl ? Boolean(sosMarkerNormalToggleEl.checked) : true;
     state.markerStatusFilters.warning = sosMarkerWarningToggleEl ? Boolean(sosMarkerWarningToggleEl.checked) : true;
@@ -7073,6 +7318,16 @@
   });
 
   document.addEventListener('click', (event) => {
+    if (!sosBranchControlPopup || sosBranchControlPopup.classList.contains('hidden')) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target || (!sosBranchControlPopup.contains(target) && !(sosBranchControlBtn && sosBranchControlBtn.contains(target)))) {
+      setBranchControlPopupVisible(false);
+    }
+  });
+
+  document.addEventListener('click', (event) => {
     if (Date.now() < state.cctvSuppressMapClickUntil) {
       return;
     }
@@ -7084,23 +7339,34 @@
       setAssetFilterPopupVisible(false);
       setFoControlPopupVisible(false);
       setWeatherControlPopupVisible(false);
+      setBranchControlPopupVisible(false);
       return;
     }
     if (assetFilterBtn && assetFilterBtn.contains(target)) {
       setFoControlPopupVisible(false);
       setWeatherControlPopupVisible(false);
+      setBranchControlPopupVisible(false);
       setToolbarMenuPanelVisible(false);
       return;
     }
     if (foControlBtn && foControlBtn.contains(target)) {
       setAssetFilterPopupVisible(false);
       setWeatherControlPopupVisible(false);
+      setBranchControlPopupVisible(false);
       setToolbarMenuPanelVisible(false);
       return;
     }
     if (weatherControlBtn && weatherControlBtn.contains(target)) {
       setAssetFilterPopupVisible(false);
       setFoControlPopupVisible(false);
+      setBranchControlPopupVisible(false);
+      setToolbarMenuPanelVisible(false);
+      return;
+    }
+    if (sosBranchControlBtn && sosBranchControlBtn.contains(target)) {
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
       setToolbarMenuPanelVisible(false);
     }
   });
@@ -7164,6 +7430,16 @@
       void persistAssetMonitoringPrefs();
     });
   }
+
+  window.addEventListener('app-appearance-change', () => {
+    weatherIconSvgMarkupCache.clear();
+    weatherIconSvgMarkupPromiseCache.clear();
+    if (!state.isActive) {
+      return;
+    }
+    syncWeatherMarkers();
+    renderIncidentList();
+  });
 
   sosNotificationListEl.addEventListener('click', (event) => {
     const closeButton =

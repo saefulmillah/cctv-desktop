@@ -115,3 +115,8 @@ contextBridge.exposeInMainWorld('appState', {
   saveWorkspaceState: (payload) => ipcRenderer.invoke('app-state:save-workspace', payload),
   clearWorkspaceState: () => ipcRenderer.invoke('app-state:clear-workspace'),
 });
+
+contextBridge.exposeInMainWorld('appConfig', {
+  getAppearance: () => ipcRenderer.invoke('app-config:get-appearance'),
+  setAppearance: (payload) => ipcRenderer.invoke('app-config:set-appearance', payload),
+});

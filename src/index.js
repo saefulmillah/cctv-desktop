@@ -21,8 +21,11 @@ const PORT = 3005;
 const SRC_DIR = __dirname;
 const CONFIG_FILE_NAME = 'app-config.json';
 const WORKSPACE_STATE_KEY = 'WORKSPACE_STATE';
+const UI_APPEARANCE_KEY = 'UI_APPEARANCE';
 const APP_PACKAGE_JSON_PATH = path.resolve(__dirname, '..', 'package.json');
 const { promises: fsPromises } = fs;
+const SUPPORTED_FONT_FAMILIES = new Set(['inter', 'sora', 'nunito', 'rajdhani']);
+const SUPPORTED_WEATHER_ICON_STYLES = new Set(['flat', 'fill', 'monochrome', 'monochrome-color']);
 
 const MIME_TYPES = {
   '.css': 'text/css',
@@ -119,6 +122,39 @@ const clearPersistedWorkspaceState = async () => {
   const nextConfig = { ...config };
   delete nextConfig[WORKSPACE_STATE_KEY];
   await writeConfig(nextConfig);
+};
+
+const normalizeUiAppearance = (payload) => {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const requestedFontFamily = String(source.fontFamily || '').trim().toLowerCase();
+  const requestedWeatherIconStyle = String(source.weatherIconStyle || '').trim().toLowerCase();
+  const normalizeHexColor = (value) => {
+    const raw = String(value || '').trim();
+    const normalized = raw.startsWith('#') ? raw.slice(1) : raw;
+    return /^[0-9a-fA-F]{6}$/.test(normalized) ? `#${normalized.toUpperCase()}` : '#FFFFFF';
+  };
+  return {
+    fontFamily: SUPPORTED_FONT_FAMILIES.has(requestedFontFamily) ? requestedFontFamily : 'inter',
+    weatherIconStyle: SUPPORTED_WEATHER_ICON_STYLES.has(requestedWeatherIconStyle)
+      ? requestedWeatherIconStyle
+      : 'flat',
+    weatherIconMonochromeColor: normalizeHexColor(source.weatherIconMonochromeColor),
+    weatherIconAnimated:
+      source.weatherIconAnimated === undefined ? true : Boolean(source.weatherIconAnimated),
+  };
+};
+
+const getPersistedUiAppearance = async () => {
+  const config = await readConfig();
+  return normalizeUiAppearance(config[UI_APPEARANCE_KEY]);
+};
+
+const persistUiAppearance = async (appearance) => {
+  const config = await readConfig();
+  await writeConfig({
+    ...config,
+    [UI_APPEARANCE_KEY]: normalizeUiAppearance(appearance),
+  });
 };
 
 const parseGitHubRepoFromPackageJson = () => {
@@ -633,6 +669,28 @@ const registerServiceHandlers = () => {
       return {
         status: 200,
         data: null,
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+  ipcMain.handle('app-config:get-appearance', async () => {
+    try {
+      return {
+        status: 200,
+        data: await getPersistedUiAppearance(),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+  ipcMain.handle('app-config:set-appearance', async (_event, payload) => {
+    try {
+      const nextAppearance = normalizeUiAppearance(payload);
+      await persistUiAppearance(nextAppearance);
+      return {
+        status: 200,
+        data: nextAppearance,
       };
     } catch (error) {
       return toIpcError(error);

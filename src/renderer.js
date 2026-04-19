@@ -7,6 +7,7 @@ const quickSearchBtn = document.getElementById('quickSearchBtn');
 const layoutConfigBtn = document.getElementById('layoutConfigBtn');
 const focusModeBtn = document.getElementById('focusModeBtn');
 const normalModeBtn = document.getElementById('normalModeBtn');
+const menuAppearanceBtn = document.getElementById('menuAppearanceBtn');
 const menuApiConfigBtn = document.getElementById('menuApiConfigBtn');
 const menuUpdateInfoBtn = document.getElementById('menuUpdateInfoBtn');
 const menuHelpBtn = document.getElementById('menuHelpBtn');
@@ -58,6 +59,13 @@ const apiTokenStatusEl = document.getElementById('apiTokenStatus');
 const apiTokenExpiryEl = document.getElementById('apiTokenExpiry');
 const checkApiConfigBtn = document.getElementById('checkApiConfigBtn');
 const apiCheckStatusEl = document.getElementById('apiCheckStatus');
+const appearanceConfigModalEl = document.getElementById('appearanceConfigModal');
+const closeAppearanceConfigBtn = document.getElementById('closeAppearanceConfigBtn');
+const appearanceConfigFormEl = document.getElementById('appearanceConfigForm');
+const appearanceFontFamilySelectEl = document.getElementById('appearanceFontFamilySelect');
+const appearanceWeatherIconStyleSelectEl = document.getElementById('appearanceWeatherIconStyleSelect');
+const appearanceWeatherIconColorInputEl = document.getElementById('appearanceWeatherIconColorInput');
+const appearanceWeatherIconAnimatedEl = document.getElementById('appearanceWeatherIconAnimated');
 const layoutConfigModalEl = document.getElementById('layoutConfigModal');
 const closeLayoutConfigBtn = document.getElementById('closeLayoutConfigBtn');
 const layoutConfigFormEl = document.getElementById('layoutConfigForm');
@@ -98,6 +106,7 @@ let activeBranch = null;
 let activePage = 1;
 let totalPages = 1;
 let lastApiConfigOpenAt = 0;
+let lastAppearanceConfigOpenAt = 0;
 let lastUpdateConfigOpenAt = 0;
 let toolbarVisible = false;
 let isCheckingUpdate = false;
@@ -247,6 +256,59 @@ const setApiBaseUrlText = (value) => {
 const setInstalledVersionText = (value) => {
   const nextValue = `Version: ${value || '-'}`;
   setTextIfChanged(activityVersionEl, nextValue);
+};
+
+const normalizeAppearanceConfig = (payload) => {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const requestedFontFamily = String(source.fontFamily || '').trim().toLowerCase();
+  const requestedWeatherIconStyle = String(source.weatherIconStyle || '').trim().toLowerCase();
+  const rawMonochromeColor = String(source.weatherIconMonochromeColor || '').trim();
+  const normalizedColorValue = rawMonochromeColor.startsWith('#')
+    ? rawMonochromeColor.slice(1)
+    : rawMonochromeColor;
+  return {
+    fontFamily: APP_FONT_FAMILIES[requestedFontFamily] ? requestedFontFamily : DEFAULT_APPEARANCE_CONFIG.fontFamily,
+    weatherIconStyle: WEATHER_ICON_STYLES.has(requestedWeatherIconStyle)
+      ? requestedWeatherIconStyle
+      : DEFAULT_APPEARANCE_CONFIG.weatherIconStyle,
+    weatherIconMonochromeColor: /^[0-9a-fA-F]{6}$/.test(normalizedColorValue)
+      ? `#${normalizedColorValue.toUpperCase()}`
+      : DEFAULT_APPEARANCE_CONFIG.weatherIconMonochromeColor,
+    weatherIconAnimated:
+      source.weatherIconAnimated === undefined
+        ? DEFAULT_APPEARANCE_CONFIG.weatherIconAnimated
+        : Boolean(source.weatherIconAnimated),
+  };
+};
+
+const getAppFontFamilyStack = (fontFamily) =>
+  APP_FONT_FAMILIES[String(fontFamily || '').trim().toLowerCase()] ||
+  APP_FONT_FAMILIES[DEFAULT_APPEARANCE_CONFIG.fontFamily];
+
+const applyAppearanceConfig = (payload) => {
+  currentAppearanceConfig = normalizeAppearanceConfig(payload);
+  const fontStack = getAppFontFamilyStack(currentAppearanceConfig.fontFamily);
+  document.documentElement.style.setProperty('--font-family-base', fontStack);
+  window.__APP_FONT_FAMILY_STACK = fontStack;
+  window.__APP_APPEARANCE = { ...currentAppearanceConfig };
+  if (appearanceFontFamilySelectEl) {
+    appearanceFontFamilySelectEl.value = currentAppearanceConfig.fontFamily;
+  }
+  if (appearanceWeatherIconStyleSelectEl) {
+    appearanceWeatherIconStyleSelectEl.value = currentAppearanceConfig.weatherIconStyle;
+  }
+  if (appearanceWeatherIconColorInputEl) {
+    appearanceWeatherIconColorInputEl.value = currentAppearanceConfig.weatherIconMonochromeColor;
+    appearanceWeatherIconColorInputEl.disabled = currentAppearanceConfig.weatherIconStyle !== 'monochrome-color';
+  }
+  if (appearanceWeatherIconAnimatedEl) {
+    appearanceWeatherIconAnimatedEl.checked = Boolean(currentAppearanceConfig.weatherIconAnimated);
+  }
+  window.dispatchEvent(
+    new CustomEvent('app-appearance-change', {
+      detail: { ...currentAppearanceConfig },
+    })
+  );
 };
 
 const getUpdateTone = (state) => {
@@ -544,6 +606,24 @@ const setToolbarMenuVisible = (visible) => {
   toolbarMenuPanel.classList.toggle('hidden', !visible);
   toolbarMenuBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
 };
+
+const DEFAULT_APPEARANCE_CONFIG = {
+  fontFamily: 'inter',
+  weatherIconStyle: 'flat',
+  weatherIconMonochromeColor: '#FFFFFF',
+  weatherIconAnimated: true,
+};
+
+const APP_FONT_FAMILIES = {
+  inter: "'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+  sora: "'Sora', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+  nunito: "'Nunito', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+  rajdhani: "'Rajdhani', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+};
+
+const WEATHER_ICON_STYLES = new Set(['flat', 'fill', 'monochrome', 'monochrome-color']);
+
+let currentAppearanceConfig = { ...DEFAULT_APPEARANCE_CONFIG };
 
 const toggleToolbarMenu = () => {
   const nextVisible = toolbarMenuPanel.classList.contains('hidden');
@@ -3166,6 +3246,42 @@ const openApiBaseUrlConfig = async () => {
 };
 window.openApiBaseUrlConfig = openApiBaseUrlConfig;
 
+const openAppearanceConfig = async () => {
+  const now = Date.now();
+  if (now - lastAppearanceConfigOpenAt < 300) {
+    return;
+  }
+  lastAppearanceConfigOpenAt = now;
+
+  if (window.appConfig && typeof window.appConfig.getAppearance === 'function') {
+    const response = await window.appConfig.getAppearance();
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Failed to load appearance configuration.');
+    }
+    applyAppearanceConfig(response.data || DEFAULT_APPEARANCE_CONFIG);
+  } else {
+    applyAppearanceConfig(currentAppearanceConfig);
+  }
+
+  showModal(appearanceConfigModalEl);
+  if (appearanceFontFamilySelectEl) {
+    appearanceFontFamilySelectEl.focus();
+  }
+};
+
+const loadAppearanceConfig = async () => {
+  if (!window.appConfig || typeof window.appConfig.getAppearance !== 'function') {
+    applyAppearanceConfig(DEFAULT_APPEARANCE_CONFIG);
+    return;
+  }
+  const response = await window.appConfig.getAppearance();
+  if (response.status >= 400) {
+    throw new Error(response.message || 'Failed to load appearance configuration.');
+  }
+  applyAppearanceConfig(response.data || DEFAULT_APPEARANCE_CONFIG);
+};
+window.openAppearanceConfig = openAppearanceConfig;
+
 const openLayoutConfig = () => {
   syncLayoutControls();
   showModal(layoutConfigModalEl);
@@ -3207,6 +3323,7 @@ const closeAllTransientUi = () => {
   setToolbarMenuVisible(false);
   hideModal(pickerEl);
   hideModal(searchModalEl);
+  hideModal(appearanceConfigModalEl);
   hideModal(layoutConfigModalEl);
   hideModal(apiConfigModalEl);
   hideModal(updateConfigModalEl);
@@ -3408,6 +3525,7 @@ document.addEventListener('keydown', (event) => {
 
 closePickerBtn.addEventListener('click', () => hideModal(pickerEl));
 closeSearchBtn.addEventListener('click', () => hideModal(searchModalEl));
+closeAppearanceConfigBtn.addEventListener('click', () => hideModal(appearanceConfigModalEl));
 closeLayoutConfigBtn.addEventListener('click', () => hideModal(layoutConfigModalEl));
 toolbarMenuBtn.addEventListener('click', (event) => {
   event.stopPropagation();
@@ -3426,6 +3544,12 @@ quickSearchBtn.addEventListener('click', () => {
 layoutConfigBtn.addEventListener('click', openLayoutConfig);
 focusModeBtn.addEventListener('click', enterFocusMode);
 normalModeBtn.addEventListener('click', leaveFocusMode);
+menuAppearanceBtn.addEventListener('click', () => {
+  setToolbarMenuVisible(false);
+  openAppearanceConfig().catch(() => {
+    pickerStatusEl.textContent = 'Failed to open appearance configuration.';
+  });
+});
 menuApiConfigBtn.addEventListener('click', () => {
   setToolbarMenuVisible(false);
   openApiBaseUrlConfig().catch(() => {
@@ -3464,7 +3588,7 @@ document.addEventListener('click', (event) => {
     }
   }
 
-  [pickerEl, searchModalEl, layoutConfigModalEl, apiConfigModalEl, updateConfigModalEl, helpModalEl].forEach((modalEl) => {
+  [pickerEl, searchModalEl, appearanceConfigModalEl, layoutConfigModalEl, apiConfigModalEl, updateConfigModalEl, helpModalEl].forEach((modalEl) => {
     if (event.target === modalEl) {
       hideModal(modalEl);
     }
@@ -3499,6 +3623,99 @@ apiAuthTokenInputEl.addEventListener('input', () => {
   setApiCheckStatus('Click Check URL to validate the current API address.', 'neutral');
   updateApiTokenInfo(apiAuthTokenInputEl.value);
 });
+
+appearanceConfigFormEl.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const nextAppearance = normalizeAppearanceConfig({
+    fontFamily: appearanceFontFamilySelectEl.value,
+    weatherIconStyle: appearanceWeatherIconStyleSelectEl ? appearanceWeatherIconStyleSelectEl.value : DEFAULT_APPEARANCE_CONFIG.weatherIconStyle,
+    weatherIconMonochromeColor: appearanceWeatherIconColorInputEl ? appearanceWeatherIconColorInputEl.value : DEFAULT_APPEARANCE_CONFIG.weatherIconMonochromeColor,
+    weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : DEFAULT_APPEARANCE_CONFIG.weatherIconAnimated,
+  });
+
+  if (!window.appConfig || typeof window.appConfig.setAppearance !== 'function') {
+    applyAppearanceConfig(nextAppearance);
+    hideModal(appearanceConfigModalEl);
+    addActivity('Appearance updated', `Font set to ${nextAppearance.fontFamily}.`, 'success');
+    return;
+  }
+
+  const response = await window.appConfig.setAppearance(nextAppearance);
+  if (response.status >= 400) {
+    pickerStatusEl.textContent = response.message || 'Failed to save appearance configuration.';
+    addActivity('Appearance update failed', response.message || 'Failed to save font setting.', 'danger');
+    return;
+  }
+
+  applyAppearanceConfig(response.data || nextAppearance);
+  hideModal(appearanceConfigModalEl);
+  addActivity('Appearance updated', `Font set to ${String(nextAppearance.fontFamily || '').toUpperCase()}.`, 'success');
+});
+
+if (appearanceWeatherIconStyleSelectEl && appearanceWeatherIconColorInputEl) {
+  appearanceWeatherIconStyleSelectEl.addEventListener('change', () => {
+    const nextAppearance = normalizeAppearanceConfig({
+      ...currentAppearanceConfig,
+      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
+      weatherIconMonochromeColor: appearanceWeatherIconColorInputEl.value,
+      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
+    });
+    applyAppearanceConfig(nextAppearance);
+  });
+}
+
+if (appearanceWeatherIconColorInputEl) {
+  const isValidAppearanceHexColor = (value) => {
+    const raw = String(value || '').trim();
+    const normalized = raw.startsWith('#') ? raw.slice(1) : raw;
+    return /^[0-9a-fA-F]{6}$/.test(normalized);
+  };
+
+  appearanceWeatherIconColorInputEl.addEventListener('input', () => {
+    if (!appearanceWeatherIconStyleSelectEl || appearanceWeatherIconStyleSelectEl.value !== 'monochrome-color') {
+      return;
+    }
+    const typedValue = String(appearanceWeatherIconColorInputEl.value || '').trim();
+    if (!isValidAppearanceHexColor(typedValue)) {
+      return;
+    }
+    const nextAppearance = normalizeAppearanceConfig({
+      ...currentAppearanceConfig,
+      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
+      weatherIconMonochromeColor: typedValue,
+      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
+    });
+    applyAppearanceConfig(nextAppearance);
+  });
+
+  appearanceWeatherIconColorInputEl.addEventListener('blur', () => {
+    if (!appearanceWeatherIconStyleSelectEl || appearanceWeatherIconStyleSelectEl.value !== 'monochrome-color') {
+      return;
+    }
+    const typedValue = String(appearanceWeatherIconColorInputEl.value || '').trim();
+    const nextAppearance = normalizeAppearanceConfig({
+      ...currentAppearanceConfig,
+      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
+      weatherIconMonochromeColor: isValidAppearanceHexColor(typedValue)
+        ? typedValue
+        : currentAppearanceConfig.weatherIconMonochromeColor,
+      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
+    });
+    applyAppearanceConfig(nextAppearance);
+  });
+}
+
+if (appearanceWeatherIconAnimatedEl) {
+  appearanceWeatherIconAnimatedEl.addEventListener('change', () => {
+    const nextAppearance = normalizeAppearanceConfig({
+      ...currentAppearanceConfig,
+      weatherIconStyle: appearanceWeatherIconStyleSelectEl ? appearanceWeatherIconStyleSelectEl.value : currentAppearanceConfig.weatherIconStyle,
+      weatherIconMonochromeColor: appearanceWeatherIconColorInputEl ? appearanceWeatherIconColorInputEl.value : currentAppearanceConfig.weatherIconMonochromeColor,
+      weatherIconAnimated: appearanceWeatherIconAnimatedEl.checked,
+    });
+    applyAppearanceConfig(nextAppearance);
+  });
+}
 
 apiConfigFormEl.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -3688,6 +3905,7 @@ setPagingVisible(false);
 setReloadButtonState(false);
 setToolbarMenuVisible(false);
 setToolbarVisible(false);
+applyAppearanceConfig(DEFAULT_APPEARANCE_CONFIG);
 if (ACTIVE_UI_THEME) {
   document.body.classList.add(ACTIVE_UI_THEME);
 }
@@ -3709,6 +3927,10 @@ window.appInfo
 restoreWorkspaceState().catch((error) => {
   addActivity('Workspace restore failed', error.message || 'Failed to restore workspace state.', 'warning');
   renderWelcomeState();
+});
+
+loadAppearanceConfig().catch((error) => {
+  addActivity('Appearance restore failed', error.message || 'Failed to restore appearance setting.', 'warning');
 });
 
 window.setTimeout(ensureGridHasVisibleContent, 250);

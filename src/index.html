@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HK Toll Vision</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Nunito:wght@400;500;600;700;800&family=Rajdhani:wght@400;500;600;700&family=Sora:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="index.css" />
   </head>
   <body class="normal-mode">
@@ -91,6 +97,7 @@
               Menu
             </button>
             <div id="toolbarMenuPanel" class="toolbar-menu-panel hidden">
+              <button id="menuAppearanceBtn" class="toolbar-menu-item" type="button">Appearance</button>
               <button id="menuApiConfigBtn" class="toolbar-menu-item" type="button">Config API</button>
               <button id="menuUpdateInfoBtn" class="toolbar-menu-item" type="button">Update Info</button>
               <button id="menuHelpBtn" class="toolbar-menu-item" type="button">Help</button>
@@ -194,9 +201,14 @@
               <p id="assetMapSubtitle" class="asset-map-topbar__subtitle">Pantau gate alert, CCTV, VMS, dan insiden dari satu peta.</p>
             </div>
             <div class="asset-map-topbar__controls">
-              <select id="sosBranchSelect" class="asset-map-topbar__select toolbar-btn">
-                <option value="">Pilih branch</option>
-              </select>
+              <div class="toolbar-menu-wrap asset-map-topbar__branch-wrap">
+                <button id="sosBranchControlBtn" class="toolbar-btn asset-map-topbar__branch-btn" type="button" aria-haspopup="true" aria-expanded="false">
+                  <span id="sosBranchControlLabel" class="asset-map-topbar__branch-label">Pilih branch</span>
+                </button>
+                <div id="sosBranchControlPopup" class="toolbar-menu-panel asset-filter-popup asset-map-topbar__branch-popup hidden" role="menu" aria-label="Pilih branch asset monitoring">
+                  <div id="sosBranchControlOptions" class="asset-map-topbar__branch-options"></div>
+                </div>
+              </div>
               <div class="asset-map-camera-toggle" role="group" aria-label="Map camera mode">
                 <button id="sosMapNormalBtn" class="toolbar-btn asset-map-camera-toggle__btn is-active" type="button">Normal</button>
                 <button id="sosMapTiltBtn" class="toolbar-btn asset-map-camera-toggle__btn" type="button">Tilt</button>
@@ -363,6 +375,50 @@
           <div class="api-config-actions">
             <button id="checkApiConfigBtn" type="button">Check URL</button>
             <button id="saveApiConfigBtn" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="appearanceConfigModal" class="overlay-modal" aria-hidden="true">
+      <div class="overlay-modal__content">
+        <div class="overlay-modal__header">
+          <div>
+            <p class="eyebrow">Appearance</p>
+            <h2>Font Style</h2>
+          </div>
+          <button id="closeAppearanceConfigBtn" type="button">Close</button>
+        </div>
+        <p class="picker-status">
+          Choose the primary UI font for CCTV Monitoring and Asset Monitoring.
+        </p>
+        <form id="appearanceConfigForm" class="api-config-form">
+          <select id="appearanceFontFamilySelect" class="api-config-input">
+            <option value="inter">Inter</option>
+            <option value="sora">Sora</option>
+            <option value="nunito">Nunito</option>
+            <option value="rajdhani">Rajdhani</option>
+          </select>
+          <select id="appearanceWeatherIconStyleSelect" class="api-config-input">
+            <option value="flat">Weather Icon: Flat</option>
+            <option value="fill">Weather Icon: Fill</option>
+            <option value="monochrome">Weather Icon: Monochrome</option>
+            <option value="monochrome-color">Weather Icon: Monochrome Color</option>
+          </select>
+          <input
+            id="appearanceWeatherIconColorInput"
+            class="api-config-input"
+            type="text"
+            inputmode="text"
+            maxlength="7"
+            placeholder="#FFFFFF"
+          />
+          <label class="update-config-checkbox-label">
+            <input id="appearanceWeatherIconAnimated" type="checkbox" checked />
+            Weather Icon Animation
+          </label>
+          <div class="api-config-actions">
+            <button id="saveAppearanceConfigBtn" type="submit">Apply</button>
           </div>
         </form>
       </div>
