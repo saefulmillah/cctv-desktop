@@ -1062,8 +1062,8 @@
     weatherIconAnimated: true,
   };
   const weatherIconSvgTextCache = new Map();
-  const weatherIconSvgMarkupCache = new Map();
-  const weatherIconSvgMarkupPromiseCache = new Map();
+  const weatherIconSourceCache = new Map();
+  const weatherIconSourcePromiseCache = new Map();
   let weatherIconRefreshTimer = 0;
 
   const formatWeatherTemperature = (value) => {
@@ -1134,19 +1134,6 @@
     return String(svgText || '')
       .replace(/fill="(?!none)[^"]*"/gi, `fill="${normalizedColor}"`)
       .replace(/stroke="(?!none)[^"]*"/gi, `stroke="${normalizedColor}"`);
-  };
-
-  const addClassToWeatherSvgRoot = (svgText, className) => {
-    const svgClass = String(className || '').trim();
-    if (!svgClass) {
-      return String(svgText || '');
-    }
-    return String(svgText || '').replace(/<svg\b([^>]*)>/i, (match, attrs) => {
-      if (/class="/i.test(attrs)) {
-        return `<svg${attrs.replace(/class="([^"]*)"/i, (_full, existing) => ` class="${existing} ${svgClass}"`)}>`;
-      }
-      return `<svg class="${svgClass}"${attrs}>`;
-    });
   };
 
   const scheduleWeatherIconRefresh = () => {
@@ -1299,14 +1286,22 @@
     });
   };
 
-  const buildWeatherIconMarkup = async (weather, className = '') => {
+  const buildWeatherIconSource = async (weather) => {
     const appearance = getWeatherIconAppearance();
-    const cacheKey = `${buildWeatherSvgCacheKey(weather, appearance)}::${String(className || '')}`;
-    if (weatherIconSvgMarkupCache.has(cacheKey)) {
-      return weatherIconSvgMarkupCache.get(cacheKey);
+    const cacheKey = buildWeatherSvgCacheKey(weather, appearance);
+    if (weatherIconSourceCache.has(cacheKey)) {
+      return weatherIconSourceCache.get(cacheKey);
     }
-    if (!weatherIconSvgMarkupPromiseCache.has(cacheKey)) {
-      weatherIconSvgMarkupPromiseCache.set(
+    if (
+      (appearance.weatherIconStyle === 'flat' || appearance.weatherIconStyle === 'fill') &&
+      appearance.weatherIconAnimated
+    ) {
+      const directSource = buildWeatherMeteoconSourceUrl(weather, appearance);
+      weatherIconSourceCache.set(cacheKey, directSource);
+      return directSource;
+    }
+    if (!weatherIconSourcePromiseCache.has(cacheKey)) {
+      weatherIconSourcePromiseCache.set(
         cacheKey,
         (async () => {
           let svgText = await loadRawWeatherSvgText(weather, appearance);
@@ -1323,27 +1318,34 @@
                 : '#FFFFFF';
             svgText = recolorWeatherSvg(svgText, monoColor);
           }
-          const markup = addClassToWeatherSvgRoot(svgText, className);
-          weatherIconSvgMarkupCache.set(cacheKey, markup);
-          weatherIconSvgMarkupPromiseCache.delete(cacheKey);
+          const source = svgTextToDataUri(svgText);
+          weatherIconSourceCache.set(cacheKey, source);
+          weatherIconSourcePromiseCache.delete(cacheKey);
           scheduleWeatherIconRefresh();
-          return markup;
+          return source;
         })().catch((error) => {
-          weatherIconSvgMarkupPromiseCache.delete(cacheKey);
+          weatherIconSourcePromiseCache.delete(cacheKey);
           throw error;
         })
       );
     }
-    return weatherIconSvgMarkupPromiseCache.get(cacheKey);
+    return weatherIconSourcePromiseCache.get(cacheKey);
   };
 
-  const getWeatherIconMarkupSync = (weather, className = '') => {
-    const cacheKey = `${buildWeatherSvgCacheKey(weather, getWeatherIconAppearance())}::${String(className || '')}`;
-    if (!weatherIconSvgMarkupCache.has(cacheKey)) {
-      void buildWeatherIconMarkup(weather, className).catch(() => {});
+  const getWeatherIconSourceSync = (weather) => {
+    const appearance = getWeatherIconAppearance();
+    if (
+      (appearance.weatherIconStyle === 'flat' || appearance.weatherIconStyle === 'fill') &&
+      appearance.weatherIconAnimated
+    ) {
+      return buildWeatherMeteoconSourceUrl(weather, appearance);
+    }
+    const cacheKey = buildWeatherSvgCacheKey(weather, appearance);
+    if (!weatherIconSourceCache.has(cacheKey)) {
+      void buildWeatherIconSource(weather).catch(() => {});
       return '';
     }
-    return weatherIconSvgMarkupCache.get(cacheKey) || '';
+    return weatherIconSourceCache.get(cacheKey) || '';
   };
 
   const formatWeatherPercent = (value) => {
@@ -2600,19 +2602,15 @@
         this.element.title = String(this.weather.point_name || this.weather.segment_name || 'Weather').toUpperCase();
         const weatherLabel = String(this.weather.weather_label || 'Cuaca').trim();
         const pointName = String(this.weather.point_name || this.weather.segment_name || this.weather.corridor_name || 'Lokasi').trim().toUpperCase();
-        const iconUrl = escapeHtml(getWeatherMarkerIconUrl(this.weather));
+        const iconSource = escapeHtml(getWeatherIconSourceSync(this.weather) || getWeatherMarkerIconUrl(this.weather));
         const fallbackIconUrl = escapeHtml(getWeatherMarkerIconFallbackUrl(this.weather));
-        const inlineIconMarkup = getWeatherIconMarkupSync(this.weather, 'weather-map-marker__icon-svg');
-        const iconContent = inlineIconMarkup
-          ? inlineIconMarkup
-          : `<img class="weather-map-marker__icon" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />`;
         const staleBadge = isStale ? '<span class="weather-map-marker__badge">Data lama</span>' : '';
         const renderKey = JSON.stringify({
           isExpanded,
           isStale,
           weatherLabel,
           pointName,
-          iconKey: inlineIconMarkup ? `inline:${buildWeatherSvgCacheKey(this.weather, getWeatherIconAppearance())}` : iconUrl,
+          iconKey: iconSource,
           temperature: formatWeatherTemperatureDisplay(this.weather.temperature_c),
         });
         if (this.renderKey !== renderKey) {
@@ -2620,7 +2618,7 @@
           this.element.innerHTML = `
               <span class="weather-map-marker__pin" aria-hidden="true">
                 <span class="weather-map-marker__icon-wrap">
-                  ${iconContent}
+                  <img class="weather-map-marker__icon" src="${iconSource}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
                 </span>
               </span>
             <span class="weather-map-marker__bubble" aria-hidden="${isExpanded ? 'false' : 'true'}">
@@ -3396,12 +3394,8 @@
 
     if (entry.entityType === 'weather') {
       const weather = entry.data;
-      const iconUrl = escapeHtml(getWeatherMarkerIconUrl(weather));
+      const iconUrl = escapeHtml(getWeatherIconSourceSync(weather) || getWeatherMarkerIconUrl(weather));
       const fallbackIconUrl = escapeHtml(getWeatherMarkerIconFallbackUrl(weather));
-      const inlineIconMarkup = getWeatherIconMarkupSync(weather, 'sos-weather-incident__icon-svg');
-      const iconContent = inlineIconMarkup
-        ? inlineIconMarkup
-        : `<img class="sos-weather-incident__icon-img" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />`;
       const weatherLabel = escapeHtml(weather.weather_label || 'Cuaca');
       const pointName = escapeHtml(weather.point_name || '-');
       const contextLine = escapeHtml(getWeatherContextLine(weather));
@@ -3410,7 +3404,7 @@
         <article class="sos-incident-item sos-incident-item--summary sos-incident-item--weather ${state.ui.selectedEntityType === 'weather' && String(state.ui.selectedEntityId) === String(weather.id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="weather" data-weather-id="${weather.id}" ${interactionAttrs} aria-label="Pilih weather point ${escapeHtml(weather.point_name || weather.point_code || weather.id)}">
           <div class="sos-weather-incident__top">
             <span class="sos-weather-incident__icon">
-              ${iconContent}
+              <img class="sos-weather-incident__icon-img" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
             </span>
             <div class="sos-weather-incident__body">
               <strong class="sos-weather-incident__label">${weatherLabel}</strong>
@@ -3691,6 +3685,7 @@
     if (!state.notifications.length) {
       sosNotificationPanelEl.classList.add('hidden');
       sosNotificationListEl.innerHTML = '';
+      return;
     }
     sosNotificationPanelEl.classList.remove('hidden');
     sosNotificationListEl.innerHTML = state.notifications
@@ -3710,6 +3705,17 @@
         `
       )
       .join('');
+  };
+
+  const markNotificationLeaving = (notificationId) => {
+    const normalizedId = String(notificationId || '').trim();
+    if (!normalizedId || !sosNotificationListEl) {
+      return;
+    }
+    const card = sosNotificationListEl.querySelector(`[data-notification-id="${CSS.escape(normalizedId)}"]`);
+    if (card) {
+      card.classList.add('is-leaving');
+    }
   };
 
   const clearNotificationTimer = (notificationId) => {
@@ -3732,8 +3738,10 @@
   const removeNotification = (notificationId) => {
     const normalizedId = String(notificationId || '').trim();
     if (!normalizedId) {
+      return;
     }
     if (state.notificationLeavingIds.has(normalizedId)) {
+      return;
     }
     const exists = state.notifications.some((entry) => String(entry.id) === normalizedId);
     if (!exists) {
@@ -3741,7 +3749,7 @@
     }
     clearNotificationTimer(normalizedId);
     state.notificationLeavingIds.add(normalizedId);
-    renderNotifications();
+    markNotificationLeaving(normalizedId);
     window.setTimeout(() => {
       removeNotificationImmediately(normalizedId);
     }, 220);
@@ -5339,6 +5347,25 @@
     renderIncidentList();
     renderDetailPanel();
     syncWeatherMarkers();
+  };
+
+  const focusWeatherOnMap = (weatherId) => {
+    if (!state.map) {
+      return;
+    }
+    const weather = state.weather.items.find((entry) => String(entry && entry.id) === String(weatherId || ''));
+    if (!(weather && weather.latLng)) {
+      return;
+    }
+    moveMapCamera({
+      center: { lat: Number(weather.latLng.lat), lng: Number(weather.latLng.lng) },
+      zoom: 14,
+      tilt: isVectorRenderingActive() ? 30 : 0,
+      heading: 0,
+    });
+    state.mapContext.cameraMode = 'tilt';
+    renderMapCameraModeControls();
+    void persistAssetMonitoringPrefs();
   };
 
   const syncWeatherMarkers = () => {
@@ -7432,8 +7459,8 @@
   }
 
   window.addEventListener('app-appearance-change', () => {
-    weatherIconSvgMarkupCache.clear();
-    weatherIconSvgMarkupPromiseCache.clear();
+    weatherIconSourceCache.clear();
+    weatherIconSourcePromiseCache.clear();
     if (!state.isActive) {
       return;
     }
@@ -7521,6 +7548,8 @@
     }
     if (entityType === 'weather' && target.dataset.weatherId) {
       selectWeatherMarker(target.dataset.weatherId);
+      focusWeatherOnMap(target.dataset.weatherId);
+      return;
     }
   });
 

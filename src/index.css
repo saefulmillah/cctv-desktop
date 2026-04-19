@@ -1865,13 +1865,6 @@ body.sos-mode .current-branch {
   color: #f4feff;
 }
 
-.weather-map-marker__icon-svg,
-.sos-weather-incident__icon-svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
 .sos-map {
   width: 100%;
   height: 100%;
@@ -2436,6 +2429,8 @@ body.sos-mode .current-branch {
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
+  contain: layout paint;
+  will-change: opacity, transform;
 }
 
 .sos-map-toggle {
@@ -2478,6 +2473,8 @@ body.sos-mode .asset-toolbar-control {
   padding: 12px 12px 10px;
   animation: notificationEnter 0.26s cubic-bezier(0.2, 0.9, 0.22, 1) both;
   transform-origin: top right;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 
 .sos-notification-card.is-leaving {
