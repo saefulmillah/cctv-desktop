@@ -8,6 +8,8 @@
   const TRANSIENT_NOTIFICATION_MS = 5000;
   const INCIDENT_LIST_ENTER_MS = 320;
   const INCIDENT_LIST_LEAVE_MS = 220;
+  const NOTIFICATION_ENTER_MS = 420;
+  const NOTIFICATION_LEAVE_MS = 240;
   const SOS_FOCUS_ANIMATION_MS = 520;
   const ALL_BRANCHES_OPTION = '__all__';
   const MAP_ZOOM_BRANCH = 11;
@@ -230,6 +232,8 @@
     ticketsBySosId: new Map(),
     selectedSosId: null,
     notifications: [],
+    notificationEnteringIds: new Set(),
+    notificationEnterTimers: new Map(),
     notificationTimers: new Map(),
     notificationLeavingIds: new Set(),
     notificationCounter: 0,
@@ -3138,6 +3142,18 @@
       renderIncidentList();
     }
   };
+
+  const clearIncidentEnteringClass = (key) => {
+    const normalizedKey = String(key || '');
+    if (!normalizedKey || !sosIncidentListEl) {
+      return;
+    }
+    const entryEl = sosIncidentListEl.querySelector(`[data-incident-key="${CSS.escape(normalizedKey)}"]`);
+    if (entryEl) {
+      entryEl.classList.remove('is-entering');
+    }
+  };
+
   const queueIncidentEnteringAnimation = (key) => {
     const normalizedKey = String(key || '');
     if (!normalizedKey) {
@@ -3151,7 +3167,7 @@
       window.setTimeout(() => {
         animationState.enteringKeys.delete(normalizedKey);
         animationState.enterTimers.delete(normalizedKey);
-        scheduleIncidentListRender();
+        clearIncidentEnteringClass(normalizedKey);
       }, INCIDENT_LIST_ENTER_MS)
     );
   };
@@ -3314,10 +3330,12 @@
     }
     const isLeaving = Boolean(options.isLeaving);
     const isEntering = Boolean(options.isEntering);
+    const order = Number.isFinite(Number(options.order)) ? Number(options.order) : 0;
     const animationClasses = [isEntering ? 'is-entering' : '', isLeaving ? 'is-leaving' : ''].filter(Boolean).join(' ');
     const interactionAttrs = isLeaving
       ? 'tabindex="-1" aria-hidden="true" data-incident-disabled="true"'
       : 'tabindex="0" role="button"';
+    const animationAttrs = `data-incident-key="${escapeHtml(entry.key)}" style="--stagger-index:${Math.min(Math.max(order, 0), 7)};"`;
 
     if (entry.entityType === 'sos') {
       const alert = entry.data;
@@ -3326,7 +3344,7 @@
       const displayPhoneNumber = getDisplayPhoneNumber(rawPhoneNumber);
       const whatsAppLink = isLeaving ? '' : getWhatsAppLink(rawPhoneNumber);
       return `
-        <article class="sos-incident-item ${alert.sos_id === state.selectedSosId && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="sos" data-sos-id="${alert.sos_id}" ${interactionAttrs} aria-label="Pilih kejadian SOS ${alert.sos_id}">
+        <article class="sos-incident-item ${alert.sos_id === state.selectedSosId && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="sos" data-sos-id="${alert.sos_id}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih kejadian SOS ${alert.sos_id}">
           <div class="sos-incident-item__head">
             <strong>${escapeHtml(alert.ticket && alert.ticket.ticket_no ? alert.ticket.ticket_no : `SOS-${alert.sos_id}`)}</strong>
             <span class="status-pill ${statusMeta.tone}">${statusMeta.label}</span>
@@ -3367,7 +3385,7 @@
       const gate = entry.data;
       const tone = getGateMarkerTone(gate);
       return `
-        <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'gate' && String(state.ui.selectedEntityId) === String(gate.gate_id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="gate" data-gate-id="${gate.gate_id}" ${interactionAttrs} aria-label="Pilih gate alert ${escapeHtml(gate.gate_name || gate.gate_code || gate.gate_id)}">
+        <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'gate' && String(state.ui.selectedEntityId) === String(gate.gate_id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="gate" data-gate-id="${gate.gate_id}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih gate alert ${escapeHtml(gate.gate_name || gate.gate_code || gate.gate_id)}">
           <div class="sos-incident-item__head">
             <strong>${escapeHtml(gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`)}</strong>
             <span class="status-pill ${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'success'}">${escapeHtml(String(gate.status || 'normal').toUpperCase())}</span>
@@ -3401,7 +3419,7 @@
       const contextLine = escapeHtml(getWeatherContextLine(weather));
       const observedAt = escapeHtml(formatWeatherObservedAt(weather.observed_at || '-'));
       return `
-        <article class="sos-incident-item sos-incident-item--summary sos-incident-item--weather ${state.ui.selectedEntityType === 'weather' && String(state.ui.selectedEntityId) === String(weather.id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="weather" data-weather-id="${weather.id}" ${interactionAttrs} aria-label="Pilih weather point ${escapeHtml(weather.point_name || weather.point_code || weather.id)}">
+        <article class="sos-incident-item sos-incident-item--summary sos-incident-item--weather ${state.ui.selectedEntityType === 'weather' && String(state.ui.selectedEntityId) === String(weather.id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="weather" data-weather-id="${weather.id}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih weather point ${escapeHtml(weather.point_name || weather.point_code || weather.id)}">
           <div class="sos-weather-incident__top">
             <span class="sos-weather-incident__icon">
               <img class="sos-weather-incident__icon-img" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
@@ -3434,7 +3452,7 @@
     const asset = entry.data;
     const assetKey = makeAssetKey(asset.asset_type, asset.id);
     return `
-      <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'asset' && String(state.ui.selectedEntityId) === assetKey && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="asset" data-asset-type="${escapeHtml(asset.asset_type)}" data-asset-id="${escapeHtml(asset.id)}" ${interactionAttrs} aria-label="Pilih asset ${escapeHtml(asset.title)}">
+      <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'asset' && String(state.ui.selectedEntityId) === assetKey && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="asset" data-asset-type="${escapeHtml(asset.asset_type)}" data-asset-id="${escapeHtml(asset.id)}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih asset ${escapeHtml(asset.title)}">
         <div class="sos-incident-item__head">
           <strong>${escapeHtml(asset.title)}</strong>
           <span class="status-pill ${getAssetIssueTone(asset.status)}">${escapeHtml(String(asset.status || 'offline').toUpperCase())}</span>
@@ -3690,8 +3708,8 @@
     sosNotificationPanelEl.classList.remove('hidden');
     sosNotificationListEl.innerHTML = state.notifications
       .map(
-        (entry) => `
-          <article class="sos-notification-card ${state.notificationLeavingIds.has(String(entry.id)) ? 'is-leaving' : ''}" data-notification-id="${escapeHtml(entry.id)}">
+        (entry, index) => `
+          <article class="sos-notification-card ${state.notificationEnteringIds.has(String(entry.id)) ? 'is-entering' : ''} ${state.notificationLeavingIds.has(String(entry.id)) ? 'is-leaving' : ''}" data-notification-id="${escapeHtml(entry.id)}" style="--stagger-index:${Math.min(index, 5)};">
             <div class="sos-incident-item__row">
               <strong>${escapeHtml(entry.title)}</strong>
               <button class="sos-notification-close-btn" type="button" data-notification-close="${escapeHtml(entry.id)}" aria-label="Tutup notifikasi" title="Tutup notifikasi">
@@ -3705,6 +3723,25 @@
         `
       )
       .join('');
+  };
+
+  const clearNotificationEnterTimer = (notificationId) => {
+    const timer = state.notificationEnterTimers.get(String(notificationId));
+    if (timer) {
+      window.clearTimeout(timer);
+      state.notificationEnterTimers.delete(String(notificationId));
+    }
+  };
+
+  const clearNotificationEnteringClass = (notificationId) => {
+    const normalizedId = String(notificationId || '').trim();
+    if (!normalizedId || !sosNotificationListEl) {
+      return;
+    }
+    const card = sosNotificationListEl.querySelector(`[data-notification-id="${CSS.escape(normalizedId)}"]`);
+    if (card) {
+      card.classList.remove('is-entering');
+    }
   };
 
   const markNotificationLeaving = (notificationId) => {
@@ -3728,10 +3765,24 @@
 
   const removeNotificationImmediately = (notificationId) => {
     const normalizedId = String(notificationId || '').trim();
+    const existingCard =
+      normalizedId && sosNotificationListEl
+        ? sosNotificationListEl.querySelector(`[data-notification-id="${CSS.escape(normalizedId)}"]`)
+        : null;
+    clearNotificationEnterTimer(normalizedId);
     clearNotificationTimer(normalizedId);
+    state.notificationEnteringIds.delete(normalizedId);
     state.notificationLeavingIds.delete(normalizedId);
     state.notifications = state.notifications.filter((entry) => String(entry.id) !== normalizedId);
     state.incidents.notifications = state.notifications;
+    if (existingCard && existingCard.parentNode) {
+      existingCard.parentNode.removeChild(existingCard);
+      if (!state.notifications.length) {
+        sosNotificationPanelEl.classList.add('hidden');
+        sosNotificationListEl.innerHTML = '';
+      }
+      return;
+    }
     renderNotifications();
   };
 
@@ -3752,14 +3803,16 @@
     markNotificationLeaving(normalizedId);
     window.setTimeout(() => {
       removeNotificationImmediately(normalizedId);
-    }, 220);
+    }, NOTIFICATION_LEAVE_MS);
   };
 
   const removeNotificationsByTarget = (targetType, matcher) => {
     state.notifications
       .filter((entry) => entry && entry.target && entry.target.type === targetType && matcher(entry.target))
       .forEach((entry) => {
+        clearNotificationEnterTimer(entry.id);
         clearNotificationTimer(entry.id);
+        state.notificationEnteringIds.delete(String(entry.id));
         state.notificationLeavingIds.delete(String(entry.id));
       });
     state.notifications = state.notifications.filter(
@@ -3797,12 +3850,24 @@
     ];
     const droppedNotifications = nextNotifications.slice(SOS_NOTIFICATION_LIMIT);
     droppedNotifications.forEach((item) => {
+      clearNotificationEnterTimer(item.id);
       clearNotificationTimer(item.id);
+      state.notificationEnteringIds.delete(String(item.id));
       state.notificationLeavingIds.delete(String(item.id));
     });
     state.notifications = nextNotifications.slice(0, SOS_NOTIFICATION_LIMIT);
     state.incidents.notifications = state.notifications;
+    state.notificationEnteringIds.add(String(notificationId));
     renderNotifications();
+    clearNotificationEnterTimer(notificationId);
+    state.notificationEnterTimers.set(
+      String(notificationId),
+      window.setTimeout(() => {
+        state.notificationEnteringIds.delete(String(notificationId));
+        state.notificationEnterTimers.delete(String(notificationId));
+        clearNotificationEnteringClass(notificationId);
+      }, NOTIFICATION_ENTER_MS + 260)
+    );
     if (options.autoDismiss !== false) {
       scheduleNotificationRemoval(notificationId, options.durationMs);
     }
@@ -3975,10 +4040,11 @@
     sosIncidentListEl.innerHTML = INCIDENT_GROUP_ORDER.map((group) => {
       const items = combinedEntries
         .filter((entry) => entry.group === group)
-        .map((entry) =>
+        .map((entry, index) =>
           renderIncidentEntry(entry, {
             isEntering: animationState.enteringKeys.has(entry.key),
             isLeaving: animationState.leavingItems.has(entry.key),
+            order: index,
           })
         )
         .join('');
@@ -6239,7 +6305,7 @@
       state.isInitialSnapshotLoaded = true;
       ensureDefaultSosSelection();
       renderAll();
-      setText(sosRouteTitleEl, 'ASSET MONITORING');
+      setText(sosRouteTitleEl, 'MOVISION');
       renderAll();
       focusSelectedBranchOnMap();
       syncCameraModeForBranchSelection();
@@ -6666,7 +6732,7 @@
       pagingControlEl.classList.toggle('hidden', state.isActive);
     }
     sosMonitorBtn.classList.toggle('is-active', state.isActive);
-    setText(sosMonitorBtn, state.isActive ? 'Back to Vision' : 'Go to Asset Monitoring');
+    setText(sosMonitorBtn, state.isActive ? 'Back to CCTV' : 'Go to Map');
     sosMonitorBtn.setAttribute(
       'title',
       state.isActive ? 'Kembali ke tampilan CCTV utama' : 'Buka Asset Monitoring'

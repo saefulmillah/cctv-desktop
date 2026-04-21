@@ -1760,12 +1760,17 @@ body.sos-mode .current-branch {
   min-width: 0;
 }
 
+.asset-map-topbar__title .eyebrow {
+  margin: 0 0 6px;
+  color: #ffffff;
+  font-weight: 800;
+}
+
 .asset-map-topbar__title h2 {
   color: #ffffff;
-  -webkit-text-stroke: 0.8px rgba(9, 25, 46, 0.9);
-  text-shadow:
-    0 1px 0 rgba(9, 25, 46, 0.82),
-    0 0 12px rgba(12, 36, 63, 0.24);
+  font-weight: 800;
+  -webkit-text-stroke: 0;
+  text-shadow: none;
 }
 
 .asset-map-topbar__subtitle {
@@ -2144,13 +2149,18 @@ body.sos-mode .current-branch {
 }
 
 .sos-incident-item.is-entering {
-  animation: incidentListEnter 0.32s cubic-bezier(0.18, 0.88, 0.24, 1) both;
+  animation: incidentListEnter 0.46s cubic-bezier(0.2, 0.82, 0.24, 1) both;
+  animation-delay: calc(var(--stagger-index, 0) * 40ms);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 
 .sos-incident-item.is-leaving {
   pointer-events: none;
   user-select: none;
-  animation: incidentListLeave 0.22s ease forwards;
+  animation: incidentListLeave 0.3s cubic-bezier(0.24, 0.72, 0.28, 1) forwards;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 
 .sos-incident-item--summary {
@@ -2397,7 +2407,7 @@ body.sos-mode .current-branch {
 @keyframes incidentListEnter {
   from {
     opacity: 0;
-    transform: translateX(26px);
+    transform: translateX(16px) translateY(4px);
   }
   to {
     opacity: 1;
@@ -2408,9 +2418,11 @@ body.sos-mode .current-branch {
 @keyframes incidentListLeave {
   from {
     opacity: 1;
+    transform: translateX(0);
   }
   to {
     opacity: 0;
+    transform: translateY(-6px);
   }
 }
 
@@ -2471,14 +2483,19 @@ body.sos-mode .asset-toolbar-control {
   gap: 4px;
   border-radius: 16px;
   padding: 12px 12px 10px;
-  animation: notificationEnter 0.26s cubic-bezier(0.2, 0.9, 0.22, 1) both;
   transform-origin: top right;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
 
+.sos-notification-card.is-entering {
+  animation: notificationEnter 0.42s cubic-bezier(0.2, 0.82, 0.24, 1) both;
+  animation-delay: calc(var(--stagger-index, 0) * 56ms);
+}
+
 .sos-notification-card.is-leaving {
-  animation: notificationExit 0.22s ease forwards;
+  pointer-events: none;
+  animation: notificationExit 0.32s cubic-bezier(0.24, 0.72, 0.28, 1) forwards;
 }
 
 .sos-notification-card strong {
@@ -2767,22 +2784,22 @@ body.sos-mode .asset-toolbar-control {
 @keyframes notificationEnter {
   from {
     opacity: 0;
-    transform: translateY(-10px) scale(0.98);
+    transform: translateY(-8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
 @keyframes notificationExit {
   from {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
   to {
     opacity: 0;
-    transform: translateX(18px) scale(0.98);
+    transform: translateY(-4px);
   }
 }
 

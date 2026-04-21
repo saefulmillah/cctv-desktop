@@ -22,6 +22,7 @@ const modeBadgeEl = document.getElementById('modeBadge');
 const activeRouteTitleEl = document.getElementById('activeRouteTitle');
 const currentBranchMiniEl = document.getElementById('currentBranchMini');
 const activityVersionEl = document.getElementById('activityVersion');
+const assetMapVersionEyebrowEl = document.getElementById('assetMapVersionEyebrow');
 const apiBaseUrlLabelEl = document.getElementById('apiBaseUrlLabel');
 const updateStatusBadgeEl = document.getElementById('updateStatusBadge');
 const activityFeedEl = document.getElementById('activityFeed');
@@ -256,6 +257,7 @@ const setApiBaseUrlText = (value) => {
 const setInstalledVersionText = (value) => {
   const nextValue = `Version: ${value || '-'}`;
   setTextIfChanged(activityVersionEl, nextValue);
+  setTextIfChanged(assetMapVersionEyebrowEl, value || '-');
 };
 
 const normalizeAppearanceConfig = (payload) => {
