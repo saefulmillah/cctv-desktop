@@ -9,6 +9,8 @@ const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const authService = require('./services/authService');
+const capabilityService = require('./services/capabilityService');
 const cameraService = require('./services/cameraService');
 
 let mainWindow;
@@ -22,10 +24,12 @@ const SRC_DIR = __dirname;
 const CONFIG_FILE_NAME = 'app-config.json';
 const WORKSPACE_STATE_KEY = 'WORKSPACE_STATE';
 const UI_APPEARANCE_KEY = 'UI_APPEARANCE';
+const API_AUTH_TOKEN_KEY = 'API_AUTH_TOKEN';
 const APP_PACKAGE_JSON_PATH = path.resolve(__dirname, '..', 'package.json');
 const { promises: fsPromises } = fs;
 const SUPPORTED_FONT_FAMILIES = new Set(['inter', 'sora', 'nunito', 'rajdhani']);
 const SUPPORTED_WEATHER_ICON_STYLES = new Set(['flat', 'fill', 'monochrome', 'monochrome-color']);
+let currentSession = capabilityService.createAnonymousSession();
 
 const MIME_TYPES = {
   '.css': 'text/css',
@@ -75,7 +79,7 @@ const loadPersistedApiBaseUrl = async () => {
 
 const loadPersistedApiAuthToken = async () => {
   const config = await readConfig();
-  const persistedApiAuthToken = config.API_AUTH_TOKEN;
+  const persistedApiAuthToken = config[API_AUTH_TOKEN_KEY];
   if (typeof persistedApiAuthToken !== 'string') {
     return;
   }
@@ -91,13 +95,22 @@ const persistApiBaseUrl = async (apiBaseUrl) => {
   });
 };
 
-const persistApiConfig = async ({ apiBaseUrl, apiAuthToken }) => {
+const persistApiAuthToken = async (apiAuthToken) => {
   const config = await readConfig();
   await writeConfig({
     ...config,
-    API_BASE_URL: apiBaseUrl,
-    API_AUTH_TOKEN: String(apiAuthToken || ''),
+    [API_AUTH_TOKEN_KEY]: String(apiAuthToken || ''),
   });
+};
+
+const clearPersistedApiAuthToken = async () => {
+  const config = await readConfig();
+  if (!(API_AUTH_TOKEN_KEY in config)) {
+    return;
+  }
+  const nextConfig = { ...config };
+  delete nextConfig[API_AUTH_TOKEN_KEY];
+  await writeConfig(nextConfig);
 };
 
 const getPersistedWorkspaceState = async () => {
@@ -224,6 +237,26 @@ const sendUpdateStatus = (payload) => {
   }
 
   mainWindow.webContents.send('app-update:status', payload);
+};
+
+const sendSessionStatus = (payload = currentSession) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send('auth:session-changed', payload);
+};
+
+const setCurrentSession = (session) => {
+  currentSession =
+    session && typeof session === 'object'
+      ? {
+          ...capabilityService.createAnonymousSession(),
+          ...session,
+        }
+      : capabilityService.createAnonymousSession();
+  sendSessionStatus(currentSession);
+  return currentSession;
 };
 
 const toUpdateError = (error, fallbackMessage) => ({
@@ -634,14 +667,90 @@ const registerReloadShortcut = () => {
   }
 };
 
-const toIpcError = (error) => ({
-  status: error.status || 500,
-  message: error.message || 'Internal server error',
-  data: (error.payload && error.payload.data) || [],
-});
+const resetAuthState = ({ emit = true } = {}) => {
+  cameraService.setApiAuthToken('');
+  void clearPersistedApiAuthToken().catch(() => {});
+  currentSession = capabilityService.createAnonymousSession();
+  if (emit) {
+    sendSessionStatus(currentSession);
+  }
+  return currentSession;
+};
+
+const toIpcError = (error) => {
+  const status = error.status || 500;
+  if (status === 401) {
+    resetAuthState({ emit: true });
+  }
+  return {
+    status,
+    message: error.message || 'Internal server error',
+    data: (error.payload && error.payload.data) || [],
+  };
+};
 
 const registerServiceHandlers = () => {
   ipcMain.handle('app:get-version', () => app.getVersion());
+  ipcMain.handle('auth:get-session', async () => ({
+    status: 200,
+    data: currentSession,
+  }));
+  ipcMain.handle('auth:logout', async () => {
+    try {
+      return {
+        status: 200,
+        data: resetAuthState({ emit: true }),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+  ipcMain.handle('auth:restore-session', async () => {
+    try {
+      const token = String(cameraService.getApiAuthToken() || '').trim();
+      if (!token) {
+        return {
+          status: 200,
+          data: setCurrentSession(capabilityService.createAnonymousSession()),
+        };
+      }
+
+      const restoredSession = await authService.fetchCapability({
+        apiBaseUrl: cameraService.getApiBaseUrl(),
+        token,
+      });
+      return {
+        status: 200,
+        data: setCurrentSession(restoredSession),
+      };
+    } catch (error) {
+      if ((error && error.status) === 401) {
+        resetAuthState({ emit: true });
+        return {
+          status: 200,
+          data: currentSession,
+        };
+      }
+      return toIpcError(error);
+    }
+  });
+  ipcMain.handle('auth:login', async (_event, username, password) => {
+    try {
+      const nextSession = await authService.login({
+        apiBaseUrl: cameraService.getApiBaseUrl(),
+        username,
+        password,
+      });
+      cameraService.setApiAuthToken(nextSession.token);
+      await persistApiAuthToken(nextSession.token);
+      return {
+        status: 200,
+        data: setCurrentSession(nextSession),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
   ipcMain.handle('app-state:get-workspace', async () => {
     try {
       return {
@@ -777,27 +886,20 @@ const registerServiceHandlers = () => {
   });
   ipcMain.handle(
     'camera-service:set-api-config',
-    async (_event, nextApiBaseUrl, nextApiAuthToken) => {
+    async (_event, nextApiBaseUrl) => {
     const previousApiBaseUrl = cameraService.getApiBaseUrl();
-    const previousApiAuthToken = cameraService.getApiAuthToken();
     try {
       const updatedApiBaseUrl = cameraService.setApiBaseUrl(nextApiBaseUrl);
-      const updatedApiAuthToken = cameraService.setApiAuthToken(nextApiAuthToken);
-      await persistApiConfig({
-        apiBaseUrl: updatedApiBaseUrl,
-        apiAuthToken: updatedApiAuthToken,
-      });
+      await persistApiBaseUrl(updatedApiBaseUrl);
       return {
         status: 200,
         data: {
           apiBaseUrl: updatedApiBaseUrl,
-          apiAuthToken: updatedApiAuthToken,
         },
       };
     } catch (error) {
       try {
         cameraService.setApiBaseUrl(previousApiBaseUrl);
-        cameraService.setApiAuthToken(previousApiAuthToken);
       } catch (_) {
         // Ignore rollback error and return the original failure.
       }

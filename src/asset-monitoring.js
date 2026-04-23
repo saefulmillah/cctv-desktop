@@ -102,10 +102,58 @@
     $('normalModeBtn'),
     $('reloadStreamBtn'),
   ];
+  const capabilityApi = window.appCapability;
+  const sessionStore = window.appSessionStore;
 
   if (!sosMonitorBtn || !sosDashboardEl || !sosMapEl || !window.cameraService) {
     return;
   }
+
+  const getSessionSnapshot = () =>
+    sessionStore && typeof sessionStore.getState === 'function'
+      ? sessionStore.getState()
+      : capabilityApi && typeof capabilityApi.createAnonymousSession === 'function'
+        ? capabilityApi.createAnonymousSession()
+        : {
+            isAuthenticated: false,
+            token: '',
+            user: null,
+            roles: [],
+            permissions: [],
+            branchScopes: [],
+            canViewAllBranches: false,
+          };
+
+  const canUseAssetMonitoring = () =>
+    Boolean(capabilityApi && capabilityApi.canUseAssetMonitoring(getSessionSnapshot()));
+
+  const canViewAllBranches = () =>
+    Boolean(getSessionSnapshot() && getSessionSnapshot().canViewAllBranches);
+
+  const canDispatchSos = () =>
+    Boolean(capabilityApi && capabilityApi.canDispatchSos(getSessionSnapshot()));
+
+  const canCompleteSos = () =>
+    Boolean(capabilityApi && capabilityApi.canCompleteSos(getSessionSnapshot()));
+
+  const filterAllowedBranches = (branches) =>
+    capabilityApi && typeof capabilityApi.filterAllowedBranches === 'function'
+      ? capabilityApi.filterAllowedBranches(getSessionSnapshot(), branches)
+      : Array.isArray(branches)
+        ? branches
+        : [];
+
+  const applySosActionButtonState = (alert) => {
+    const canDispatch = canDispatchSos() && alert && Number(alert.status) === 0;
+    const canComplete =
+      canCompleteSos() &&
+      alert &&
+      alert.ticket &&
+      alert.ticket.ticket_no &&
+      Number(alert.status) === 1;
+    sosDispatchBtn.disabled = !canDispatch;
+    sosCompleteBtn.disabled = !canComplete;
+  };
 
   const getGoogleMapsMapId = () => String(GOOGLE_MAPS_MAP_ID || '').trim();
   const hasGoogleMapsMapId = () => Boolean(getGoogleMapsMapId());
@@ -220,6 +268,7 @@
       previewMarkerLabel: null,
       cctvClusterRenderTimeout: 0,
       mapInteractionActive: false,
+      initialTiltSyncPending: true,
       mapCameraDebugVisible: false,
       sosFocusAnimationFrame: 0,
     },
@@ -2798,6 +2847,9 @@
     if (!assetFilterPopup) {
       return;
     }
+    if (visible && typeof window.__HKTV_SET_PROFILE_MENU_VISIBLE__ === 'function') {
+      window.__HKTV_SET_PROFILE_MENU_VISIBLE__(false);
+    }
     assetFilterPopup.classList.toggle('hidden', !visible);
     syncAssetFilterButtonState();
   };
@@ -2805,6 +2857,9 @@
   const setFoControlPopupVisible = (visible) => {
     if (!foControlPopup) {
       return;
+    }
+    if (visible && typeof window.__HKTV_SET_PROFILE_MENU_VISIBLE__ === 'function') {
+      window.__HKTV_SET_PROFILE_MENU_VISIBLE__(false);
     }
     foControlPopup.classList.toggle('hidden', !visible);
     syncFoControlButtonState();
@@ -2814,6 +2869,9 @@
     if (!weatherControlPopup) {
       return;
     }
+    if (visible && typeof window.__HKTV_SET_PROFILE_MENU_VISIBLE__ === 'function') {
+      window.__HKTV_SET_PROFILE_MENU_VISIBLE__(false);
+    }
     weatherControlPopup.classList.toggle('hidden', !visible);
     syncWeatherControlButtonState();
   };
@@ -2821,6 +2879,9 @@
   const setBranchControlPopupVisible = (visible) => {
     if (!sosBranchControlPopup) {
       return;
+    }
+    if (visible && typeof window.__HKTV_SET_PROFILE_MENU_VISIBLE__ === 'function') {
+      window.__HKTV_SET_PROFILE_MENU_VISIBLE__(false);
     }
     sosBranchControlPopup.classList.toggle('hidden', !visible);
     syncBranchControlButtonState();
@@ -2965,6 +3026,27 @@
       state.map.setHeading(state.mapContext.cameraHeading);
     }
     renderMapCameraDebug();
+  };
+
+  const syncInitialMapTiltIfNeeded = () => {
+    if (!state.map || !state.ui.initialTiltSyncPending) {
+      return;
+    }
+    if (state.mapContext.cameraMode !== 'tilt' || !isVectorRenderingActive()) {
+      state.ui.initialTiltSyncPending = false;
+      return;
+    }
+    const current = getCurrentMapCamera();
+    state.ui.initialTiltSyncPending = false;
+    if (Number(current.tilt || 0) >= 30) {
+      return;
+    }
+    moveMapCamera({
+      center: current.center,
+      zoom: current.zoom,
+      tilt: 30,
+      heading: Number(current.heading || 0),
+    });
   };
 
   const applyMapCameraMode = (mode, options = {}) => {
@@ -3935,6 +4017,7 @@
       return;
     }
     const branches = Array.isArray(state.mapContext.availableBranches) ? state.mapContext.availableBranches : [];
+    const includeAllBranches = canViewAllBranches();
     const selectedBranch = getSelectedBranch();
     const selectedId = selectedBranch && selectedBranch.id ? String(selectedBranch.id) : '';
     const selectedLabel = isAllBranchesSelected()
@@ -3944,7 +4027,11 @@
         : 'Pilih Branch';
     setText(sosBranchControlLabelEl, selectedLabel);
     sosBranchControlOptionsEl.innerHTML = [
-      `<button type="button" class="asset-filter-option asset-map-topbar__branch-option ${selectedId === ALL_BRANCHES_OPTION ? 'is-selected' : ''}" data-branch-option="${ALL_BRANCHES_OPTION}" role="menuitemradio" aria-checked="${selectedId === ALL_BRANCHES_OPTION ? 'true' : 'false'}"><span>Semua Branch</span></button>`,
+      ...(includeAllBranches
+        ? [
+            `<button type="button" class="asset-filter-option asset-map-topbar__branch-option ${selectedId === ALL_BRANCHES_OPTION ? 'is-selected' : ''}" data-branch-option="${ALL_BRANCHES_OPTION}" role="menuitemradio" aria-checked="${selectedId === ALL_BRANCHES_OPTION ? 'true' : 'false'}"><span>Semua Branch</span></button>`,
+          ]
+        : []),
       ...branches.map((branch) => {
         const branchId = String(branch.id);
         const branchLabel = branch.branch_name || branch.branch_code || branch.id;
@@ -3955,6 +4042,10 @@
   };
 
   const applySelectedMonitoringBranch = (nextBranchId) => {
+    if (nextBranchId === ALL_BRANCHES_OPTION && !canViewAllBranches()) {
+      setConnectionBadge('Akun ini tidak memiliki akses semua branch.', 'warning');
+      return;
+    }
     debugLog('branchSelect:change', {
       previousBranchId:
         state.mapContext.selectedBranch && state.mapContext.selectedBranch.id
@@ -4082,8 +4173,7 @@
     if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
       const gateDetail = state.gateAlerts.details.get(String(state.gateAlerts.selectedGateId));
       if (gateDetail) {
-        sosDispatchBtn.disabled = true;
-        sosCompleteBtn.disabled = true;
+        applySosActionButtonState(null);
         return;
       }
     }
@@ -4141,8 +4231,7 @@
           sosDetailPanelEl.classList.add('is-visible');
           replayDetailPanelAnimation();
         }
-        sosDispatchBtn.disabled = true;
-        sosCompleteBtn.disabled = true;
+        applySosActionButtonState(null);
         return;
       }
     }
@@ -4165,8 +4254,7 @@
       sex: alert.user && alert.user.sex,
     });
     if (state.detailRenderKey === detailKey && !sosDetailPanelEl.classList.contains('hidden')) {
-      sosDispatchBtn.disabled = Number(alert.status) !== 0;
-      sosCompleteBtn.disabled = !(alert.ticket && alert.ticket.ticket_no && Number(alert.status) === 1);
+      applySosActionButtonState(alert);
       return;
     }
     state.detailRenderKey = detailKey;
@@ -4201,8 +4289,7 @@
         <div><span class="sos-detail-label">Dispatch</span><strong>${escapeHtml(alert.ticket && alert.ticket.dispatched_at ? toDateTime(alert.ticket.dispatched_at) : 'Belum dispatch')}</strong></div>
       </div>
     `;
-    sosDispatchBtn.disabled = Number(alert.status) !== 0;
-    sosCompleteBtn.disabled = !(alert.ticket && alert.ticket.ticket_no && Number(alert.status) === 1);
+    applySosActionButtonState(alert);
     sosDetailPanelEl.classList.remove('hidden');
     sosDetailPanelEl.classList.add('is-visible');
     replayDetailPanelAnimation();
@@ -5548,14 +5635,14 @@
       throw new Error((response && response.message) || 'Gagal memuat branch peta.');
     }
     const rows = unwrapCollection(response);
-    state.mapContext.availableBranches = rows.map(normalizeMapBranch).filter(Boolean);
+    state.mapContext.availableBranches = filterAllowedBranches(rows.map(normalizeMapBranch).filter(Boolean));
     const preferredBranchId = String(
       (state.mapContext.selectedBranch && state.mapContext.selectedBranch.id) ||
         (state.activeWorkspaceBranch && state.activeWorkspaceBranch.id) ||
         ''
     );
     state.mapContext.selectedBranch =
-      (preferredBranchId === ALL_BRANCHES_OPTION
+      (preferredBranchId === ALL_BRANCHES_OPTION && canViewAllBranches()
         ? { id: ALL_BRANCHES_OPTION, branch_name: 'Semua Branch', branch_code: 'ALL' }
         : null) ||
       state.mapContext.availableBranches.find((branch) => String(branch.id) === preferredBranchId) ||
@@ -5768,8 +5855,7 @@
         marker.update(marker.gate);
       }
     });
-    sosDispatchBtn.disabled = true;
-    sosCompleteBtn.disabled = true;
+    applySosActionButtonState(null);
     setText(sosDetailTitleEl, detail.gate_name || detail.gate_code || `Gate ${detail.gate_id}`);
     setClass(sosDetailStatusEl, `status-pill ${getGateMarkerTone(detail) === 'danger' ? 'danger' : getGateMarkerTone(detail) === 'warning' ? 'warning' : 'success'}`);
     setText(sosDetailStatusEl, String(detail.status || 'normal').toUpperCase());
@@ -6584,6 +6670,9 @@
         signal: state.streamAbortController.signal,
       });
       if (!response.ok || !response.body) {
+        if (response.status === 401 && window.auth && typeof window.auth.logout === 'function') {
+          await window.auth.logout().catch(() => {});
+        }
         throw new Error(`SSE asset monitoring gagal dengan status ${response.status}`);
       }
       debugLog('connectStream:connected', {
@@ -6630,6 +6719,8 @@
       state.map = new google.maps.Map(sosMapEl, {
         center: { lat: -6.2, lng: 106.8 },
         zoom: 12,
+        tilt: state.mapContext.cameraMode === 'tilt' ? 30 : 0,
+        heading: Number(state.mapContext.cameraHeading || 0),
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
@@ -6681,6 +6772,7 @@
         }
       });
       state.map.addListener('idle', () => {
+        syncInitialMapTiltIfNeeded();
         state.ui.mapInteractionActive = false;
         syncGateAlertMarkers();
         syncWeatherMarkers();
@@ -6737,6 +6829,7 @@
       'title',
       state.isActive ? 'Kembali ke tampilan CCTV utama' : 'Buka Asset Monitoring'
     );
+    sosMonitorBtn.disabled = !canUseAssetMonitoring() && !state.isActive;
   };
 
   const startTicketRefreshLoop = () => {
@@ -6959,8 +7052,12 @@
     if (state.isActive) {
       return;
     }
+    if (!canUseAssetMonitoring()) {
+      throw new Error('Akun ini tidak memiliki akses Asset Monitoring.');
+    }
     debugLog('enterAssetMonitoringMode');
     state.isActive = true;
+    state.ui.initialTiltSyncPending = true;
     document.body.classList.add('sos-mode');
     sosDashboardEl.classList.remove('hidden');
     cameraGridEl.classList.add('hidden');
@@ -7046,6 +7143,10 @@
   };
 
   const openDispatchModal = () => {
+    if (!canDispatchSos()) {
+      setConnectionBadge('Akun ini tidak memiliki izin dispatch SOS.', 'warning');
+      return;
+    }
     const alert = getSelectedAlert();
     if (!alert) {
       return;
@@ -7065,6 +7166,10 @@
   };
 
   const openCompleteModal = () => {
+    if (!canCompleteSos()) {
+      setConnectionBadge('Akun ini tidak memiliki izin menyelesaikan ticket SOS.', 'warning');
+      return;
+    }
     const alert = getSelectedAlert();
     if (!(alert && alert.ticket && alert.ticket.ticket_no)) {
       return;
@@ -7077,6 +7182,9 @@
   };
 
   const completeSelectedTicket = async () => {
+    if (!canCompleteSos()) {
+      throw new Error('Akun ini tidak memiliki izin menyelesaikan ticket SOS.');
+    }
     const alert = getSelectedAlert();
     if (!(alert && alert.ticket && alert.ticket.ticket_no)) {
       return;
@@ -7113,6 +7221,13 @@
   });
 
   const restoreAssetMonitoringMode = async () => {
+    if (window.__HKTV_AUTH_BOOTSTRAP_PROMISE__) {
+      await window.__HKTV_AUTH_BOOTSTRAP_PROMISE__;
+    }
+    if (!canUseAssetMonitoring()) {
+      setToolbarState();
+      return;
+    }
     if (!window.appState || typeof window.appState.getWorkspaceState !== 'function') {
       return;
     }
@@ -7645,6 +7760,11 @@
 
   sosDispatchFormEl.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (!canDispatchSos()) {
+      setClass(sosDispatchStatusEl, 'api-check-status danger');
+      setText(sosDispatchStatusEl, 'Akun ini tidak memiliki izin dispatch SOS.');
+      return;
+    }
     const payload = {
       sos_id: Number(sosDispatchSosIdEl.value),
       incident_type: toSentenceCase(sosIncidentTypeInputEl.value),
@@ -7686,6 +7806,11 @@
 
   sosCompleteFormEl.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (!canCompleteSos()) {
+      setClass(sosCompleteStatusEl, 'api-check-status danger');
+      setText(sosCompleteStatusEl, 'Akun ini tidak memiliki izin menyelesaikan ticket SOS.');
+      return;
+    }
     setClass(sosCompleteStatusEl, 'api-check-status warning');
     setText(sosCompleteStatusEl, 'Menyelesaikan ticket...');
     try {
@@ -7708,6 +7833,17 @@
     }
   });
   document.addEventListener('keydown', handleSosKeyboardGuards, true);
+  window.addEventListener('app-session-changed', () => {
+    setToolbarState();
+    renderBranchOptions();
+    renderSummary();
+    renderIncidentList();
+    if (state.isActive && !canUseAssetMonitoring()) {
+      leaveAssetMonitoringMode();
+      setConnectionBadge('Session saat ini tidak memiliki akses Asset Monitoring.', 'warning');
+    }
+    applySosActionButtonState(getSelectedAlert());
+  });
 
   setToolbarState();
   renderNotifications();

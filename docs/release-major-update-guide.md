@@ -1,6 +1,6 @@
 # Release Guide: Major Version and Auto Update
 
-Panduan ini dipakai untuk merilis versi baru aplikasi `HK Toll Vision (HKTV)` agar:
+Panduan ini dipakai untuk merilis versi baru aplikasi `MOVISION` agar:
 
 - branch fitur masuk ke versi resmi
 - version aplikasi naik dengan benar
@@ -57,15 +57,15 @@ Ubah versi di file berikut:
 - `package.json`
 - `package-lock.json`
 
-Contoh major version:
+Contoh kenaikan version:
 
 - dari `1.3.6`
-- menjadi `2.0.0`
+- menjadi `2.1.2`
 
 Contoh setelah diubah:
 
 ```json
-"version": "2.0.0"
+"version": "2.1.2"
 ```
 
 Pastikan version di kedua file sama.
@@ -74,7 +74,7 @@ Pastikan version di kedua file sama.
 
 ```powershell
 git add package.json package-lock.json
-git commit -m "chore: release version 2.0.0"
+git commit -m "chore: release version 2.1.2"
 ```
 
 ## 6. Push master ke GitHub
@@ -91,8 +91,8 @@ npm run make
 
 Hasil build biasanya ada di folder:
 
-- `out/builder/HKTV-Setup-2.0.0.exe`
-- `out/builder/HKTV-Setup-2.0.0.exe.blockmap`
+- `out/builder/MOVISION-Setup-2.1.2.exe`
+- `out/builder/MOVISION-Setup-2.1.2.exe.blockmap`
 - `out/builder/latest.yml`
 
 ## 8. Verifikasi metadata updater
@@ -105,8 +105,8 @@ Get-Content out\builder\latest.yml -Raw
 
 Pastikan minimal berisi:
 
-- `version: 2.0.0`
-- `path: HKTV-Setup-2.0.0.exe`
+- `version: 2.1.2`
+- `path: MOVISION-Setup-2.1.2.exe`
 - `sha512`
 - `releaseDate`
 
@@ -141,7 +141,7 @@ Perintah ini akan:
 Jika GitHub CLI tersedia:
 
 ```powershell
-gh release view v2.0.0 --repo saefulmillah/cctv-desktop --json name,tagName,isDraft,isPrerelease,url,assets
+gh release view v2.1.2 --repo saefulmillah/cctv-desktop --json name,tagName,isDraft,isPrerelease,url,assets
 ```
 
 Pastikan:
@@ -155,7 +155,7 @@ Pastikan:
 Kadang `electron-builder` membuat release sebagai draft. Jika itu terjadi:
 
 ```powershell
-gh release edit v2.0.0 --repo saefulmillah/cctv-desktop --draft=false
+gh release edit v2.1.2 --repo saefulmillah/cctv-desktop --draft=false
 ```
 
 Setelah itu cek lagi status release.
@@ -164,17 +164,17 @@ Setelah itu cek lagi status release.
 
 Pastikan release GitHub berisi:
 
-- `HKTV-Setup-2.0.0.exe`
-- `HKTV-Setup-2.0.0.exe.blockmap`
+- `MOVISION-Setup-2.1.2.exe`
+- `MOVISION-Setup-2.1.2.exe.blockmap`
 - `latest.yml`
 
 ## 14. Uji update dari versi sebelumnya
 
-Lakukan pengujian dari aplikasi versi lama, misalnya `1.3.6`:
+Lakukan pengujian dari aplikasi versi lama, misalnya `2.1.1`:
 
 1. buka aplikasi versi lama
 2. jalankan pengecekan update
-3. pastikan aplikasi mendeteksi `2.0.0`
+3. pastikan aplikasi mendeteksi `2.1.2`
 4. pastikan proses download/update berjalan normal
 
 ## Alur Singkat
@@ -191,12 +191,12 @@ Lalu update version di `package.json` dan `package-lock.json`, kemudian:
 
 ```powershell
 git add package.json package-lock.json
-git commit -m "chore: release version 2.0.0"
+git commit -m "chore: release version 2.1.2"
 git push origin master
 npm run make
 $env:GH_TOKEN="TOKEN_GITHUB_KAMU"
 npm run publish
-gh release edit v2.0.0 --repo saefulmillah/cctv-desktop --draft=false
+gh release edit v2.1.2 --repo saefulmillah/cctv-desktop --draft=false
 ```
 
 ## Checklist Rilis

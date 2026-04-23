@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HK Toll Vision</title>
+    <title>MOVISION</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -18,7 +18,7 @@
     <aside class="activity-panel" aria-label="Activity panel">
       <div class="activity-panel__header">
         <div>
-          <!-- <p class="eyebrow">HK Toll Vision</p> -->
+          <!-- <p class="eyebrow">MOVISION</p> -->
           <h1 id="activeRouteTitle">Ruas Belum Dipilih</h1>
         </div>
         <span id="modeBadge" class="mode-badge sidebar-section-hidden">Normal Mode</span>
@@ -184,6 +184,29 @@
         <span id="pageInfo">Page 1 / 1</span>
         <button id="nextPageBtn" type="button">Next</button>
       </div>
+
+      <div id="sessionMeta" class="toolbar-menu-wrap profile-toolbar-wrap">
+        <button
+          id="profileMenuBtn"
+          class="toolbar-btn profile-toolbar-btn"
+          type="button"
+          aria-haspopup="true"
+          aria-expanded="false"
+        >
+          <span class="profile-toolbar-btn__icon" aria-hidden="true">ID</span>
+          <span id="profileMenuBtnLabel">Hi, -</span>
+        </button>
+        <div id="profileMenuPanel" class="toolbar-menu-panel profile-menu-panel hidden" aria-label="Profil pengguna">
+          <div class="profile-menu-panel__meta">
+            <strong id="profileDisplayName">-</strong>
+            <span id="profileRoleText">Role: -</span>
+            <span id="profileEmailText">Email: -</span>
+          </div>
+          <button id="logoutBtn" class="toolbar-menu-item profile-menu-panel__logout" type="button">
+            Logout
+          </button>
+        </div>
+      </div>
     </section>
 
     <main id="cameraGrid" class="grid loading" aria-live="polite"></main>
@@ -333,7 +356,7 @@
           <button id="closeApiConfigBtn" type="button">Close</button>
         </div>
         <p class="picker-status">
-          Enter API_BASE_URL and optional bearer token for authenticated backend access.
+          Enter API_BASE_URL untuk backend CCTV, lalu gunakan login form untuk memulai session.
         </p>
         <form id="apiConfigForm" class="api-config-form">
           <input
@@ -343,38 +366,47 @@
             placeholder="http://localhost:3002"
             required
           />
-          <textarea
-            id="apiAuthTokenInput"
-            class="api-config-input api-config-textarea"
-            placeholder="Bearer token"
-            rows="4"
-          ></textarea>
-          <div id="apiTokenInfo" class="token-info-card hidden" aria-live="polite">
-            <div class="token-info-grid">
-              <div class="token-info-item">
-                <span class="token-info-label">Username</span>
-                <strong id="apiTokenUsername">-</strong>
-              </div>
-              <div class="token-info-item">
-                <span class="token-info-label">Role</span>
-                <strong id="apiTokenRole">-</strong>
-              </div>
-              <div class="token-info-item">
-                <span class="token-info-label">Status</span>
-                <strong id="apiTokenStatus">-</strong>
-              </div>
-              <div class="token-info-item">
-                <span class="token-info-label">Expired</span>
-                <strong id="apiTokenExpiry">-</strong>
-              </div>
-            </div>
-          </div>
           <div id="apiCheckStatus" class="api-check-status neutral">
             Enter an API URL, then use Check URL to verify connectivity.
           </div>
           <div class="api-config-actions">
             <button id="checkApiConfigBtn" type="button">Check URL</button>
             <button id="saveApiConfigBtn" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="authModal" class="overlay-modal auth-modal" aria-hidden="false">
+      <div class="overlay-modal__content auth-modal__content">
+        <div class="overlay-modal__header">
+          <div>
+            <p class="eyebrow">Authentication</p>
+            <h2>MOVISION</h2>
+          </div>
+        </div>
+        <p id="authStatus" class="picker-status">
+          Masukkan username dan password.
+        </p>
+        <form id="authForm" class="api-config-form">
+          <input
+            id="authUsernameInput"
+            class="api-config-input"
+            type="text"
+            placeholder="Username"
+            autocomplete="username"
+            required
+          />
+          <input
+            id="authPasswordInput"
+            class="api-config-input"
+            type="password"
+            placeholder="Password"
+            autocomplete="current-password"
+            required
+          />
+          <div class="api-config-actions">
+            <button id="authLoginBtn" type="submit">Login</button>
           </div>
         </form>
       </div>
@@ -640,6 +672,8 @@
     <script src="https://unpkg.com/deck.gl@9.1.12/dist.min.js"></script>
     <script src="./animated-arc-layer.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <script src="./services/capabilityService.js"></script>
+    <script src="./state/sessionStore.js"></script>
     <script src="./renderer.js"></script>
     <script src="./asset-monitoring.js"></script>
   </body>
