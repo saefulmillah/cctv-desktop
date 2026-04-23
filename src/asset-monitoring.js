@@ -8,9 +8,12 @@
   const TRANSIENT_NOTIFICATION_MS = 5000;
   const INCIDENT_LIST_ENTER_MS = 320;
   const INCIDENT_LIST_LEAVE_MS = 220;
+  const NOTIFICATION_ENTER_MS = 420;
+  const NOTIFICATION_LEAVE_MS = 240;
   const SOS_FOCUS_ANIMATION_MS = 520;
   const ALL_BRANCHES_OPTION = '__all__';
   const MAP_ZOOM_BRANCH = 11;
+  const MAP_ZOOM_ALL_BRANCH = 6.5;
   const MAP_ZOOM_GATE = 11;
   const MAP_ZOOM_ASSET = 11;
   const MAP_ZOOM_SOS = 14;
@@ -28,7 +31,10 @@
   const sosMapEl = $('sosMap');
   const sosMapLoadingEl = $('sosMapLoading');
   const sosMapEmptyEl = $('sosMapEmpty');
-  const sosBranchSelectEl = $('sosBranchSelect');
+  const sosBranchControlBtn = $('sosBranchControlBtn');
+  const sosBranchControlLabelEl = $('sosBranchControlLabel');
+  const sosBranchControlPopup = $('sosBranchControlPopup');
+  const sosBranchControlOptionsEl = $('sosBranchControlOptions');
   const sosMapNormalBtn = $('sosMapNormalBtn');
   const sosMapTiltBtn = $('sosMapTiltBtn');
   const sosMapRotateLeftBtn = $('sosMapRotateLeftBtn');
@@ -38,7 +44,20 @@
   const sosVmsToggleEl = $('sosVmsToggle');
   const sosGateToggleEl = $('sosGateToggle');
   const sosNetworkToggleEl = $('sosNetworkToggle');
+  const sosAnimatedNetworkToggleEl = $('sosAnimatedNetworkToggle');
   const sosWeatherToggleEl = $('sosWeatherToggle');
+  const sosWeatherBubbleToggleEl = $('sosWeatherBubbleToggle');
+  const sosMarkerNormalToggleEl = $('sosMarkerNormalToggle');
+  const sosMarkerWarningToggleEl = $('sosMarkerWarningToggle');
+  const sosMarkerErrorToggleEl = $('sosMarkerErrorToggle');
+  const assetFilterBtn = $('assetFilterBtn');
+  const assetFilterPopup = $('assetFilterPopup');
+  const foControlBtn = $('foControlBtn');
+  const foControlPopup = $('foControlPopup');
+  const weatherControlBtn = $('weatherControlBtn');
+  const weatherControlPopup = $('weatherControlPopup');
+  const toolbarMenuBtnEl = document.getElementById('toolbarMenuBtn');
+  const toolbarMenuPanelEl = document.getElementById('toolbarMenuPanel');
   const mapCameraDebugEl = $('mapCameraDebug');
   const networkArcTooltipEl = $('networkArcTooltip');
   const sosNotificationPanelEl = $('sosNotificationPanel');
@@ -83,10 +102,58 @@
     $('normalModeBtn'),
     $('reloadStreamBtn'),
   ];
+  const capabilityApi = window.appCapability;
+  const sessionStore = window.appSessionStore;
 
   if (!sosMonitorBtn || !sosDashboardEl || !sosMapEl || !window.cameraService) {
     return;
   }
+
+  const getSessionSnapshot = () =>
+    sessionStore && typeof sessionStore.getState === 'function'
+      ? sessionStore.getState()
+      : capabilityApi && typeof capabilityApi.createAnonymousSession === 'function'
+        ? capabilityApi.createAnonymousSession()
+        : {
+            isAuthenticated: false,
+            token: '',
+            user: null,
+            roles: [],
+            permissions: [],
+            branchScopes: [],
+            canViewAllBranches: false,
+          };
+
+  const canUseAssetMonitoring = () =>
+    Boolean(capabilityApi && capabilityApi.canUseAssetMonitoring(getSessionSnapshot()));
+
+  const canViewAllBranches = () =>
+    Boolean(getSessionSnapshot() && getSessionSnapshot().canViewAllBranches);
+
+  const canDispatchSos = () =>
+    Boolean(capabilityApi && capabilityApi.canDispatchSos(getSessionSnapshot()));
+
+  const canCompleteSos = () =>
+    Boolean(capabilityApi && capabilityApi.canCompleteSos(getSessionSnapshot()));
+
+  const filterAllowedBranches = (branches) =>
+    capabilityApi && typeof capabilityApi.filterAllowedBranches === 'function'
+      ? capabilityApi.filterAllowedBranches(getSessionSnapshot(), branches)
+      : Array.isArray(branches)
+        ? branches
+        : [];
+
+  const applySosActionButtonState = (alert) => {
+    const canDispatch = canDispatchSos() && alert && Number(alert.status) === 0;
+    const canComplete =
+      canCompleteSos() &&
+      alert &&
+      alert.ticket &&
+      alert.ticket.ticket_no &&
+      Number(alert.status) === 1;
+    sosDispatchBtn.disabled = !canDispatch;
+    sosCompleteBtn.disabled = !canComplete;
+  };
 
   const getGoogleMapsMapId = () => String(GOOGLE_MAPS_MAP_ID || '').trim();
   const hasGoogleMapsMapId = () => Boolean(getGoogleMapsMapId());
@@ -137,25 +204,33 @@
       items: new Map(),
       details: new Map(),
       selectedAssetKey: null,
+      selectedLabelLatLng: null,
       assetMarkers: new Map(),
       clusterMarkers: new Map(),
+      selectedLabelOverlay: null,
+      selectedLabelOverlayClass: null,
     },
     networkArcs: {
       items: [],
       cacheByBranch: new Map(),
       meta: null,
       visible: true,
+      experimentalEnabled: false,
       selectedEdgeKey: null,
       hoveredEdgeKey: null,
       overlay: null,
       hasLoaded: false,
       errorMessage: '',
+      animationFrame: 0,
+      animationStartedAt: 0,
+      currentTime: 0,
     },
     weather: {
       items: [],
       cacheByBranch: new Map(),
       meta: null,
       visible: true,
+      expandAllBubbles: false,
       selectedWeatherId: null,
       hasLoaded: false,
       errorMessage: '',
@@ -180,23 +255,34 @@
         cctv: true,
         vms: true,
         gate: true,
+        weather: true,
       },
     },
     ui: {
       topbarFloating: true,
       mapLoading: false,
       mapEmptyMessage: 'Hubungkan API lalu buka asset monitoring untuk memantau asset dan kejadian secara real-time.',
-      selectedEntityType: 'sos',
+      selectedEntityType: '',
       selectedEntityId: null,
+      lockedMarkerLabel: null,
+      previewMarkerLabel: null,
       cctvClusterRenderTimeout: 0,
       mapInteractionActive: false,
-      mapCameraDebugVisible: true,
+      initialTiltSyncPending: true,
+      mapCameraDebugVisible: false,
       sosFocusAnimationFrame: 0,
+    },
+    markerStatusFilters: {
+      normal: true,
+      warning: true,
+      error: true,
     },
     alerts: new Map(),
     ticketsBySosId: new Map(),
     selectedSosId: null,
     notifications: [],
+    notificationEnteringIds: new Set(),
+    notificationEnterTimers: new Map(),
     notificationTimers: new Map(),
     notificationLeavingIds: new Set(),
     notificationCounter: 0,
@@ -255,12 +341,43 @@
     }
   };
 
-  const toCapitalizedWords = (value) =>
-    String(value ?? '')
-      .toLowerCase()
-      .replace(/(^|[\s\r\n]+)([a-z])/g, (match, prefix, char) => `${prefix}${char.toUpperCase()}`);
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
-  const applyAutoCapitalizeValue = (element) => {
+  const toSentenceCase = (value) => {
+    const input = String(value ?? '');
+    if (!input.trim()) {
+      return '';
+    }
+    const normalized = input.trimStart();
+    let shouldUppercaseNext = true;
+    let result = '';
+    for (let index = 0; index < normalized.length; index += 1) {
+      const char = normalized[index];
+      if (shouldUppercaseNext && /[A-Za-z]/.test(char)) {
+        result += char.toUpperCase();
+        shouldUppercaseNext = false;
+        continue;
+      }
+      result += char;
+      if (/[.!?]/.test(char)) {
+        shouldUppercaseNext = true;
+      }
+    }
+    return result;
+  };
+
+  const applySentenceCaseValue = (element) => {
+    if (!(element && typeof element.value === 'string')) {
+      return;
+    }
+    const nextValue = toSentenceCase(element.value);
+    if (nextValue === element.value) {
+      return;
+    }
+    element.value = nextValue;
+  };
+
+  const applyLiveSentenceCaseValue = (element) => {
     if (!(element && typeof element.value === 'string')) {
       return;
     }
@@ -269,24 +386,25 @@
       typeof element.selectionStart === 'number' ? element.selectionStart : currentValue.length;
     const selectionEnd =
       typeof element.selectionEnd === 'number' ? element.selectionEnd : currentValue.length;
-    const nextValue = toCapitalizedWords(currentValue);
+    const nextValue = toSentenceCase(currentValue);
     if (nextValue === currentValue) {
       return;
     }
-    const nextSelectionStart = toCapitalizedWords(currentValue.slice(0, selectionStart)).length;
-    const nextSelectionEnd = toCapitalizedWords(currentValue.slice(0, selectionEnd)).length;
     element.value = nextValue;
     if (typeof element.setSelectionRange === 'function') {
-      element.setSelectionRange(nextSelectionStart, nextSelectionEnd);
+      element.setSelectionRange(selectionStart, selectionEnd);
     }
   };
 
-  const bindAutoCapitalizeInput = (element) => {
+  const bindSentenceCaseInput = (element) => {
     if (!element) {
       return;
     }
     element.addEventListener('input', () => {
-      applyAutoCapitalizeValue(element);
+      applyLiveSentenceCaseValue(element);
+    });
+    element.addEventListener('blur', () => {
+      applySentenceCaseValue(element);
     });
   };
 
@@ -431,6 +549,27 @@
     return `${day}-${month}-${year} ${hours}:${minutes}`;
   };
 
+  const formatWeatherObservedAt = (value) => {
+    if (!value) {
+      return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    const now = new Date();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    if (
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate()
+    ) {
+      return `Hari ini, ${hours}:${minutes}`;
+    }
+    return toDateTime(value);
+  };
+
   const formatGateIssueDuration = (value, now = Date.now()) => {
     if (!value) {
       return '';
@@ -530,6 +669,17 @@
     }
     return 'neutral';
   };
+  const getMarkerFilterKeyFromTone = (tone) => {
+    if (tone === 'danger') {
+      return 'error';
+    }
+    if (tone === 'warning') {
+      return 'warning';
+    }
+    return 'normal';
+  };
+  const isMarkerStatusFilterEnabled = (key) =>
+    Boolean(state.markerStatusFilters[String(key || '').toLowerCase()]);
   const getNetworkStatusTone = (status) => {
     const normalized = String(status || '').trim().toLowerCase();
     if (normalized === 'warning') {
@@ -581,6 +731,45 @@
     };
   };
 
+  const NETWORK_STATUS_STYLE = {
+    up: {
+      key: 'up',
+      color: [64, 238, 255],
+      speed: 0.18,
+      pulse: true,
+    },
+    degraded: {
+      key: 'degraded',
+      color: [255, 191, 71],
+      speed: 0.1,
+      pulse: true,
+    },
+    down: {
+      key: 'down',
+      color: [255, 90, 90],
+      speed: 0,
+      pulse: false,
+    },
+  };
+
+  const resolveNetworkStatusStyle = (status, severity) => {
+    const normalizedStatus = String(status || 'normal').trim().toLowerCase();
+    const normalizedSeverity = String(severity || 'none').trim().toLowerCase();
+    if (
+      ['down', 'error', 'offline', 'critical'].includes(normalizedStatus) ||
+      ['critical', 'high'].includes(normalizedSeverity)
+    ) {
+      return NETWORK_STATUS_STYLE.down;
+    }
+    if (
+      ['degraded', 'warning', 'unstable'].includes(normalizedStatus) ||
+      ['medium', 'warning', 'moderate'].includes(normalizedSeverity)
+    ) {
+      return NETWORK_STATUS_STYLE.degraded;
+    }
+    return NETWORK_STATUS_STYLE.up;
+  };
+
   const normalizeNetworkArc = (item) => {
     if (!item || typeof item !== 'object' || !(item.edge_id || item.edge_code)) {
       return null;
@@ -612,6 +801,7 @@
       Number.isFinite(Number(item.target && item.target.lng))
       ? { lat: Number(item.target.lat), lng: Number(item.target.lng) }
       : { lat: targetPosition[1], lng: targetPosition[0] };
+    const statusStyle = resolveNetworkStatusStyle(item.status, item.severity);
     return {
       ...item,
       edge_id: String(item.edge_id || ''),
@@ -636,10 +826,13 @@
         ...(item.arc || {}),
         source_position: sourcePosition,
         target_position: targetPosition,
-        color: arcColor.length >= 3 ? arcColor.slice(0, 3) : [34, 197, 94],
+        color: arcColor.length >= 3 ? arcColor.slice(0, 3) : statusStyle.color,
         width: Number.isFinite(Number(item.arc && item.arc.width)) ? Number(item.arc.width) : 1,
         height: Number.isFinite(Number(item.arc && item.arc.height)) ? Number(item.arc.height) : 0.35,
-        pulse: Boolean(item.arc && item.arc.pulse),
+        pulse: statusStyle.pulse,
+        status_style: statusStyle.key,
+        animation_speed: statusStyle.speed,
+        visual_color: statusStyle.color.slice(0, 3),
       },
       edgeKey: makeNetworkEdgeKey(item),
       isCrossBranch: Boolean(sourceBranchId && targetBranchId && sourceBranchId !== targetBranchId),
@@ -838,6 +1031,20 @@
     }
     return Number(camera && camera.is_active) === 1 ? 'online' : 'offline';
   };
+  const getStandaloneAssetMarkerTone = (camera) => {
+    const operationalState = getCameraOperationalState(camera);
+    if (operationalState === 'offline') {
+      return 'danger';
+    }
+    if (operationalState === 'warning') {
+      return 'warning';
+    }
+    return 'success';
+  };
+  const shouldDisplayStandaloneAssetStatus = (camera) =>
+    isMarkerStatusFilterEnabled(getMarkerFilterKeyFromTone(getStandaloneAssetMarkerTone(camera)));
+  const shouldDisplayGateStatus = (gate) =>
+    isMarkerStatusFilterEnabled(getMarkerFilterKeyFromTone(getGateMarkerTone(gate)));
 
   const getCctvMarkerIconUrl = (camera) => {
     const assetType = String(camera && camera.asset_type ? camera.asset_type : 'cctv').toLowerCase();
@@ -897,14 +1104,341 @@
       <path d="M31 33H15c-4.418 0-8-3.134-8-7s3.582-7 8-7c.803 0 1.58.104 2.314.298C18.82 14.936 22.96 12 27.75 12 33.963 12 39 16.925 39 23c4.418 0 8 3.134 8 7s-3.582 7-8 7Z" fill="#ffffff"/>
     </svg>
   `);
+  const WEATHER_METEOCON_FALLBACK_SLUG = 'cloudy';
+  const WEATHER_METEOCON_STYLE_BASE_URLS = {
+    flat: new URL('./assets/weather/meteocons/flat/', window.location.href).href,
+    fill: new URL('./assets/weather/meteocons/fill/', window.location.href).href,
+  };
+  const DEFAULT_WEATHER_ICON_APPEARANCE = {
+    weatherIconStyle: 'flat',
+    weatherIconMonochromeColor: '#FFFFFF',
+    weatherIconAnimated: true,
+  };
+  const weatherIconSvgTextCache = new Map();
+  const weatherIconSourceCache = new Map();
+  const weatherIconSourcePromiseCache = new Map();
+  let weatherIconRefreshTimer = 0;
 
   const formatWeatherTemperature = (value) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${Math.round(numeric)}°` : '-';
   };
 
-  const getWeatherMarkerIconUrl = (weather) =>
+  const normalizeWeatherIconToken = (value) =>
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[_/]+/g, '-')
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+  const normalizeHexColor = (value, fallback = '#FFFFFF') => {
+    const raw = String(value || '').trim();
+    const normalized = raw.startsWith('#') ? raw.slice(1) : raw;
+    return /^[0-9a-fA-F]{6}$/.test(normalized) ? `#${normalized.toUpperCase()}` : fallback;
+  };
+
+  const normalizeWeatherIconAppearance = (value) => {
+    const source = value && typeof value === 'object' ? value : {};
+    const requestedStyle = String(source.weatherIconStyle || DEFAULT_WEATHER_ICON_APPEARANCE.weatherIconStyle)
+      .trim()
+      .toLowerCase();
+    return {
+      weatherIconStyle: ['flat', 'fill', 'monochrome', 'monochrome-color'].includes(requestedStyle)
+        ? requestedStyle
+        : DEFAULT_WEATHER_ICON_APPEARANCE.weatherIconStyle,
+      weatherIconMonochromeColor: normalizeHexColor(
+        source.weatherIconMonochromeColor,
+        DEFAULT_WEATHER_ICON_APPEARANCE.weatherIconMonochromeColor
+      ),
+      weatherIconAnimated:
+        source.weatherIconAnimated === undefined
+          ? DEFAULT_WEATHER_ICON_APPEARANCE.weatherIconAnimated
+          : Boolean(source.weatherIconAnimated),
+    };
+  };
+
+  const getWeatherIconAppearance = () =>
+    normalizeWeatherIconAppearance(window.__APP_APPEARANCE || DEFAULT_WEATHER_ICON_APPEARANCE);
+
+  const getWeatherSourceStyle = (appearance) => {
+    const normalized = normalizeWeatherIconAppearance(appearance);
+    return normalized.weatherIconStyle === 'fill' ? 'fill' : 'flat';
+  };
+
+  const buildWeatherMeteoconSourceUrl = (weather, appearance) =>
+    `${WEATHER_METEOCON_STYLE_BASE_URLS[getWeatherSourceStyle(appearance)]}${resolveWeatherMeteoconSlug(weather)}.svg`;
+
+  const stripWeatherSvgAnimation = (svgText) =>
+    String(svgText || '')
+      .replace(/<animateTransform[^>]*\/>/gi, '')
+      .replace(/<animateTransform[\s\S]*?<\/animateTransform>/gi, '')
+      .replace(/<animateMotion[^>]*\/>/gi, '')
+      .replace(/<animateMotion[\s\S]*?<\/animateMotion>/gi, '')
+      .replace(/<animate[^>]*\/>/gi, '')
+      .replace(/<animate[\s\S]*?<\/animate>/gi, '')
+      .replace(/<set[^>]*\/>/gi, '')
+      .replace(/<set[\s\S]*?<\/set>/gi, '')
+      .replace(/\s(begin|dur|repeatCount|keyTimes|keySplines|calcMode|values|keyPoints)="[^"]*"/gi, '');
+
+  const recolorWeatherSvg = (svgText, color) => {
+    const normalizedColor = normalizeHexColor(color, '#FFFFFF');
+    return String(svgText || '')
+      .replace(/fill="(?!none)[^"]*"/gi, `fill="${normalizedColor}"`)
+      .replace(/stroke="(?!none)[^"]*"/gi, `stroke="${normalizedColor}"`);
+  };
+
+  const scheduleWeatherIconRefresh = () => {
+    if (weatherIconRefreshTimer) {
+      return;
+    }
+    weatherIconRefreshTimer = window.setTimeout(() => {
+      weatherIconRefreshTimer = 0;
+      if (!state.isActive) {
+        return;
+      }
+      syncWeatherMarkers();
+      renderIncidentList();
+    }, 30);
+  };
+
+  const isNightWeatherCondition = (weather) => {
+    const token = normalizeWeatherIconToken(
+      `${weather && weather.condition_key ? weather.condition_key : ''} ${weather && weather.weather_label ? weather.weather_label : ''}`
+    );
+    return /(^|-)night($|-)|malam|dini|moon/.test(token);
+  };
+
+  const resolveWeatherMeteoconSlug = (weather) => {
+    const rawToken = normalizeWeatherIconToken(
+      `${weather && weather.condition_key ? weather.condition_key : ''} ${weather && weather.weather_label ? weather.weather_label : ''}`
+    );
+    if (!rawToken) {
+      return WEATHER_METEOCON_FALLBACK_SLUG;
+    }
+
+    const isNight = isNightWeatherCondition(weather);
+    const baseToken = rawToken
+      .replace(/(^|-)weather($|-)/g, '$1')
+      .replace(/(^|-)conditions?($|-)/g, '$1')
+      .replace(/(^|-)condition($|-)/g, '$1')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const asDayNight = (daySlug, nightSlug = '') => (isNight ? nightSlug || daySlug : daySlug);
+
+    if (/thunder|lightning|storm|badai|petir/.test(baseToken)) {
+      if (/heavy|lebat|extreme|severe/.test(baseToken)) {
+        if (/rain|shower|hujan/.test(baseToken)) {
+          return asDayNight('extreme-thunderstorms-day-rain', 'extreme-thunderstorms-night-rain');
+        }
+        return asDayNight('extreme-thunderstorms-day', 'extreme-thunderstorms-night');
+      }
+      if (/rain|shower|hujan/.test(baseToken)) {
+        return asDayNight('thunderstorms-day-rain', 'thunderstorms-night-rain');
+      }
+      return asDayNight('thunderstorms-day', 'thunderstorms-night');
+    }
+
+    if (/hurricane|typhoon|cyclone/.test(baseToken)) {
+      return 'hurricane';
+    }
+    if (/tornado|puting-beliung/.test(baseToken)) {
+      return 'tornado';
+    }
+    if (/hail|hujan-es/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-hail', 'extreme-night-hail')
+        : 'hail';
+    }
+    if (/sleet/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-sleet', 'extreme-night-sleet')
+        : 'sleet';
+    }
+    if (/snow|salju/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-snow', 'extreme-night-snow')
+        : 'snow';
+    }
+    if (/drizzle|gerimis/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-drizzle', 'extreme-night-drizzle')
+        : 'drizzle';
+    }
+    if (/rain|shower|hujan/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-rain', 'extreme-night-rain')
+        : 'rain';
+    }
+    if (/fog|mist|kabut/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-fog', 'extreme-night-fog')
+        : asDayNight('fog-day', 'fog-night');
+    }
+    if (/haze|berkabut/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-haze', 'extreme-night-haze')
+        : asDayNight('haze-day', 'haze-night');
+    }
+    if (/smoke|asap/.test(baseToken)) {
+      return /heavy|lebat|extreme|severe/.test(baseToken)
+        ? asDayNight('extreme-day-smoke', 'extreme-night-smoke')
+        : 'smoke';
+    }
+    if (/dust|debu/.test(baseToken)) {
+      return asDayNight('dust-day', 'dust-night');
+    }
+    if (/mostly-clear|cerah-berawan/.test(baseToken)) {
+      return asDayNight('mostly-clear-day', 'mostly-clear-night');
+    }
+    if (/partly-cloudy|partly-cloud|sebagian-berawan/.test(baseToken)) {
+      return asDayNight('partly-cloudy-day', 'partly-cloudy-night');
+    }
+    if (/overcast|mendung|mendung-tebal/.test(baseToken)) {
+      return /day|night/.test(baseToken) ? asDayNight('overcast-day', 'overcast-night') : 'overcast';
+    }
+    if (/cloudy|berawan/.test(baseToken)) {
+      return 'cloudy';
+    }
+    if (/clear|sunny|cerah/.test(baseToken)) {
+      return asDayNight('clear-day', 'clear-night');
+    }
+    return WEATHER_METEOCON_FALLBACK_SLUG;
+  };
+
+  const getWeatherMeteoconIconUrl = (weather) => buildWeatherMeteoconSourceUrl(weather, getWeatherIconAppearance());
+
+  const getWeatherMarkerIconUrl = (weather) => getWeatherMeteoconIconUrl(weather);
+
+  const getWeatherMarkerIconFallbackUrl = (weather) =>
     String(weather && weather.icon_url ? weather.icon_url : '').trim() || WEATHER_FALLBACK_ICON_URL;
+
+  const loadRawWeatherSvgText = async (weather, appearance) => {
+    const sourceUrl = buildWeatherMeteoconSourceUrl(weather, appearance);
+    if (weatherIconSvgTextCache.has(sourceUrl)) {
+      return weatherIconSvgTextCache.get(sourceUrl);
+    }
+    const response = await window.fetch(sourceUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load weather icon: ${sourceUrl}`);
+    }
+    const svgText = await response.text();
+    weatherIconSvgTextCache.set(sourceUrl, svgText);
+    return svgText;
+  };
+
+  const buildWeatherSvgCacheKey = (weather, appearance) => {
+    const normalizedAppearance = normalizeWeatherIconAppearance(appearance);
+    return JSON.stringify({
+      slug: resolveWeatherMeteoconSlug(weather),
+      sourceStyle: getWeatherSourceStyle(normalizedAppearance),
+      style: normalizedAppearance.weatherIconStyle,
+      color: normalizedAppearance.weatherIconMonochromeColor,
+      animated: normalizedAppearance.weatherIconAnimated,
+    });
+  };
+
+  const buildWeatherIconSource = async (weather) => {
+    const appearance = getWeatherIconAppearance();
+    const cacheKey = buildWeatherSvgCacheKey(weather, appearance);
+    if (weatherIconSourceCache.has(cacheKey)) {
+      return weatherIconSourceCache.get(cacheKey);
+    }
+    if (
+      (appearance.weatherIconStyle === 'flat' || appearance.weatherIconStyle === 'fill') &&
+      appearance.weatherIconAnimated
+    ) {
+      const directSource = buildWeatherMeteoconSourceUrl(weather, appearance);
+      weatherIconSourceCache.set(cacheKey, directSource);
+      return directSource;
+    }
+    if (!weatherIconSourcePromiseCache.has(cacheKey)) {
+      weatherIconSourcePromiseCache.set(
+        cacheKey,
+        (async () => {
+          let svgText = await loadRawWeatherSvgText(weather, appearance);
+          if (!appearance.weatherIconAnimated) {
+            svgText = stripWeatherSvgAnimation(svgText);
+          }
+          if (
+            appearance.weatherIconStyle === 'monochrome' ||
+            appearance.weatherIconStyle === 'monochrome-color'
+          ) {
+            const monoColor =
+              appearance.weatherIconStyle === 'monochrome-color'
+                ? appearance.weatherIconMonochromeColor
+                : '#FFFFFF';
+            svgText = recolorWeatherSvg(svgText, monoColor);
+          }
+          const source = svgTextToDataUri(svgText);
+          weatherIconSourceCache.set(cacheKey, source);
+          weatherIconSourcePromiseCache.delete(cacheKey);
+          scheduleWeatherIconRefresh();
+          return source;
+        })().catch((error) => {
+          weatherIconSourcePromiseCache.delete(cacheKey);
+          throw error;
+        })
+      );
+    }
+    return weatherIconSourcePromiseCache.get(cacheKey);
+  };
+
+  const getWeatherIconSourceSync = (weather) => {
+    const appearance = getWeatherIconAppearance();
+    if (
+      (appearance.weatherIconStyle === 'flat' || appearance.weatherIconStyle === 'fill') &&
+      appearance.weatherIconAnimated
+    ) {
+      return buildWeatherMeteoconSourceUrl(weather, appearance);
+    }
+    const cacheKey = buildWeatherSvgCacheKey(weather, appearance);
+    if (!weatherIconSourceCache.has(cacheKey)) {
+      void buildWeatherIconSource(weather).catch(() => {});
+      return '';
+    }
+    return weatherIconSourceCache.get(cacheKey) || '';
+  };
+
+  const formatWeatherPercent = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}%` : '-';
+  };
+
+  const formatWeatherWind = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)} km/j` : '-';
+  };
+
+  const getWeatherMetricIcon = (kind) => {
+    if (kind === 'wind') {
+      return `
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M2 6.25h7.2c1.2 0 1.95-.62 1.95-1.53 0-.88-.67-1.47-1.52-1.47-.82 0-1.38.42-1.64 1.18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M2 9.1h9.55c1.35 0 2.2.72 2.2 1.78 0 1.03-.8 1.77-1.87 1.77-.93 0-1.58-.48-1.87-1.32" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      `;
+    }
+    if (kind === 'humidity') {
+      return `
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M8 2.05c1.38 2.1 3.7 4.66 3.7 7.13A3.7 3.7 0 0 1 8 12.88a3.7 3.7 0 0 1-3.7-3.7c0-2.47 2.32-5.03 3.7-7.13Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+      `;
+    }
+    return '';
+  };
+
+  const formatWeatherTemperatureDisplay = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}°C` : '-';
+  };
+
+  const getWeatherContextLine = (weather) =>
+    [weather && weather.segment_name ? weather.segment_name : '', weather && weather.corridor_name ? weather.corridor_name : '']
+      .filter(Boolean)
+      .join(' • ') || '-';
 
   const loadOnlyIconDataUris = () => {
     if (state.onlyIconLoaderPromise) {
@@ -1011,6 +1545,20 @@
     };
   };
 
+  const getActiveAppFontFamilyStack = () => {
+    const fromWindow = String(window.__APP_FONT_FAMILY_STACK || '').trim();
+    if (fromWindow) {
+      return fromWindow;
+    }
+    const fromCss = String(
+      window.getComputedStyle(document.documentElement).getPropertyValue('--font-family-base') || ''
+    ).trim();
+    if (fromCss) {
+      return fromCss;
+    }
+    return "'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
+  };
+
   const buildClusterCountBadgeSvg = (count, size) => {
     const displayCount = String(Number(count || 0));
     const badgeWidth = Math.min(size - 2, Math.max(18, displayCount.length * 7 + 10));
@@ -1020,7 +1568,7 @@
     const y = 1;
     return `
       <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="#E63946" />
-      <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="${fontSize}" font-weight="800">${displayCount}</text>
+      <text x="${x + badgeWidth / 2}" y="${y + 12.5}" text-anchor="middle" fill="#ffffff" font-family="${getActiveAppFontFamilyStack()}" font-size="${fontSize}" font-weight="800">${displayCount}</text>
     `;
   };
 
@@ -1060,7 +1608,7 @@
         y="${size / 2 + 5.5}"
         text-anchor="middle"
         fill="#ffffff"
-        font-family="Segoe UI, Arial, sans-serif"
+        font-family="${getActiveAppFontFamilyStack()}"
         font-size="${fontSize}"
         font-weight="800"
       >${displayCount}</text>
@@ -1249,6 +1797,8 @@
       const centerLatLng =
         projection.fromDivPixelToLatLng(new window.google.maps.Point(avgX, avgY)) || group[0].latLng;
       const clusterEntries = group.map((item) => item.entry);
+      const hasDanger = clusterEntries.some((item) => getStandaloneAssetMarkerTone(item && item.camera) === 'danger');
+      const hasWarning = clusterEntries.some((item) => getStandaloneAssetMarkerTone(item && item.camera) === 'warning');
       clusters.push({
         key: clusterEntries
           .map((entry) => String(entry && entry.camera && entry.camera.id ? entry.camera.id : ''))
@@ -1259,6 +1809,7 @@
         entries: clusterEntries,
         position: centerLatLng,
         assetType: getClusterAssetTypeFromEntries(clusterEntries),
+        status: hasDanger ? 'error' : hasWarning ? 'warning' : 'normal',
       });
     }
     return { singles, clusters };
@@ -1459,6 +2010,136 @@
     return name || `User ${alert.user_id || '-'}`;
   };
 
+  const formatElapsedSince = (value) => {
+    const timestamp = new Date(value || '').getTime();
+    if (!Number.isFinite(timestamp)) {
+      return '⏱ -';
+    }
+    const diffMs = Math.max(0, Date.now() - timestamp);
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes < 1) {
+      return '⏱ Baru saja';
+    }
+    if (minutes < 60) {
+      return `⏱ ${minutes} m yang lalu`;
+    }
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+      return `⏱ ${hours} j yang lalu`;
+    }
+    const days = Math.floor(hours / 24);
+    return `⏱ ${days} h yang lalu`;
+  };
+
+  const getSosMarkerLabelPayload = (alert) => {
+    if (!(alert && alert.latLng)) {
+      return null;
+    }
+    const reporterName = String(getAlertName(alert) || `User ${alert.user_id || '-'}`).toUpperCase();
+    const dispatched =
+      Boolean(alert.ticket && (alert.ticket.dispatched_at || Number(alert.status) === 1));
+    return {
+      key: `sos:${alert.sos_id}`,
+      latLng: alert.latLng,
+      className: 'selected-map-label selected-map-label--sos',
+      html:
+        `<div class="selected-map-label__line">` +
+        `<strong>${escapeHtml('SOS')}</strong>` +
+        `<span class="selected-map-label__sep">&bull;</span>` +
+        `<span>${escapeHtml(String(formatElapsedSince(alert.created_at)).toUpperCase())}</span>` +
+        (dispatched
+          ? `<span class="selected-map-label__sep">&bull;</span><span class="selected-map-label__status-inline">DISPATCHED</span>`
+          : '') +
+        `</div>` +
+        `<div class="selected-map-label__line selected-map-label__line--sub">${escapeHtml(reporterName)}</div>`,
+    };
+  };
+
+  const getGateMarkerLabelPayload = (gate) => {
+    if (!(gate && gate.latLng && state.gateAlerts.visible && shouldDisplayGateStatus(gate))) {
+      return null;
+    }
+    const gateLabel = `GT ${String(gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`).trim()}`.toUpperCase();
+    return {
+      key: `gate:${gate.gate_id}`,
+      latLng: gate.latLng,
+      label: gateLabel,
+    };
+  };
+
+  const getAssetMarkerLabelPayload = (asset, latLngOverride = null) => {
+    if (
+      !(
+        asset &&
+        asset.latLng &&
+        isStandaloneAssetTypeVisible(asset) &&
+        shouldDisplayStandaloneAssetStatus(asset)
+      )
+    ) {
+      return null;
+    }
+    return {
+      key: `asset:${makeAssetKey(asset.asset_type, asset.id)}`,
+      latLng: latLngOverride || asset.latLng,
+      label: asset.title || asset.asset_name || asset.cctv_name || asset.asset_code || `Asset ${asset.id}`,
+    };
+  };
+
+  const resolveMarkerLabelRef = (ref) => {
+    if (!(ref && ref.kind && ref.id)) {
+      return null;
+    }
+    if (ref.kind === 'sos') {
+      return getSosMarkerLabelPayload(state.alerts.get(Number(ref.id)) || null);
+    }
+    if (ref.kind === 'gate') {
+      return getGateMarkerLabelPayload(state.gateAlerts.items.get(String(ref.id)) || null);
+    }
+    if (ref.kind === 'asset') {
+      return getAssetMarkerLabelPayload(
+        state.standaloneAssets.items.get(String(ref.id)) || null,
+        ref.latLng || null
+      );
+    }
+    return null;
+  };
+
+  const getSelectedEntityMarkerLabelPayload = () => {
+    if (state.ui.selectedEntityType === 'sos' && state.selectedSosId) {
+      return getSosMarkerLabelPayload(state.alerts.get(Number(state.selectedSosId)) || null);
+    }
+    if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
+      return getGateMarkerLabelPayload(state.gateAlerts.items.get(String(state.gateAlerts.selectedGateId)) || null);
+    }
+    if (state.ui.selectedEntityType === 'asset' && state.standaloneAssets.selectedAssetKey) {
+      return getAssetMarkerLabelPayload(
+        state.standaloneAssets.items.get(String(state.standaloneAssets.selectedAssetKey)) || null,
+        state.standaloneAssets.selectedLabelLatLng || null
+      );
+    }
+    return null;
+  };
+
+  const ensureDefaultSosSelection = () => {
+    if (state.selectedSosId) {
+      return;
+    }
+    if (
+      state.ui.selectedEntityType &&
+      state.ui.selectedEntityType !== 'sos' &&
+      state.ui.selectedEntityId
+    ) {
+      return;
+    }
+    const candidate = getVisibleAlerts()
+      .filter((alert) => alert && alert.latLng)
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0];
+    if (!candidate) {
+      return;
+    }
+    selectAlert(candidate.sos_id, false, { removeNotification: false, forceFocus: false, lockLabel: false });
+  };
+
   const getLatLng = (item) => {
     const lat = Number(item && item.latitude);
     const lng = Number(item && item.longitude);
@@ -1614,7 +2295,16 @@
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'sos-map-marker';
-        button.addEventListener('click', () => this.onSelect(this.alert.sos_id));
+        button.addEventListener('mouseenter', () => {
+          setPreviewMarkerLabel(createMarkerLabelRef('sos', this.alert.sos_id));
+        });
+        button.addEventListener('mouseleave', () => {
+          clearPreviewMarkerLabelIfUnlocked();
+        });
+        button.addEventListener('click', () => {
+          state.cctvSuppressMapClickUntil = Date.now() + 250;
+          this.onSelect(this.alert.sos_id);
+        });
         this.element = button;
         this.getPanes().overlayMouseTarget.appendChild(button);
         this.draw();
@@ -1637,7 +2327,7 @@
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
         this.element.style.zIndex = String(
-          getMapMarkerZIndex(this.alert.sos_id === state.selectedSosId ? 'selected' : 'default')
+          getSosMarkerZIndex(this.alert.sos_id === state.selectedSosId ? 'selected' : 'default')
         );
         this.element.innerHTML =
           '<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"></span>';
@@ -1672,8 +2362,8 @@
   const getLayerStackZIndex = (stackOrder, options = {}) => {
     const networkVisible = Boolean(state.networkArcs && state.networkArcs.visible);
     const tiers = networkVisible
-      ? { 1: 50, 2: 40, 3: 30, 4: 20, 5: 10 }
-      : { 1: 1000, 2: 900, 3: 800, 4: 700, 5: 600 };
+      ? { 1: 50, 2: 40, 3: 30, 4: 20, 5: 10, 6: 4 }
+      : { 1: 1000, 2: 900, 3: 800, 4: 700, 5: 600, 6: 520 };
     const base = tiers[Number(stackOrder)] || (networkVisible ? 25 : 750);
     const selectedBoost = options.selected ? (networkVisible ? 4 : 20) : 0;
     const offset = Number.isFinite(Number(options.offset)) ? Number(options.offset) : 0;
@@ -1686,6 +2376,20 @@
     if (variant === 'spiderfy') return getLayerStackZIndex(3, { selected: true, offset: 1 });
     if (variant === 'polyline') return Boolean(state.networkArcs && state.networkArcs.visible) ? 8 : 1;
     return getLayerStackZIndex(3, { offset: -5 });
+  };
+  const getSosMarkerZIndex = (variant = 'default') => {
+    if (variant === 'selected') return getLayerStackZIndex(1, { selected: true, offset: 12 });
+    return getLayerStackZIndex(1, { offset: 8 });
+  };
+  const getStandaloneAssetZIndex = (camera, isSelected = false) => {
+    const tone = getStandaloneAssetMarkerTone(camera);
+    const stackOrder = tone === 'danger' ? 4 : tone === 'warning' ? 5 : 6;
+    return getLayerStackZIndex(stackOrder, { selected: isSelected, offset: isSelected ? 6 : 0 });
+  };
+  const getCctvClusterZIndex = (cluster) => {
+    const tone = getAssetIssueTone(cluster && cluster.status ? cluster.status : 'normal');
+    const stackOrder = tone === 'danger' ? 2 : tone === 'warning' ? 3 : 4;
+    return getLayerStackZIndex(stackOrder, { offset: 1 });
   };
 
   const getGateMarkerZIndex = (gate, isSelected = false) => {
@@ -1745,10 +2449,11 @@
           return;
         }
         const assetType = String(this.cluster.assetType || 'mixed').toLowerCase();
-        this.element.className = `sos-map-marker asset-map-marker asset-map-marker--success asset-map-marker--cluster cctv-cluster-marker cctv-cluster-marker--${assetType} ${this.isEntering ? 'is-entering' : ''} ${this.isDimmed ? 'is-dimmed' : ''}`;
+        const tone = getAssetIssueTone(this.cluster && this.cluster.status ? this.cluster.status : 'normal');
+        this.element.className = `sos-map-marker asset-map-marker asset-map-marker--${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'success'} asset-map-marker--cluster cctv-cluster-marker cctv-cluster-marker--${assetType} ${this.isEntering ? 'is-entering' : ''} ${this.isDimmed ? 'is-dimmed' : ''}`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
-        this.element.style.zIndex = String(getMapMarkerZIndex('cluster'));
+        this.element.style.zIndex = String(getCctvClusterZIndex(this.cluster));
         this.element.title = `${Number(this.cluster.count || 0)} asset`;
         this.element.innerHTML = assetType === 'mixed'
           ? `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><span class="asset-map-cluster__count">${escapeHtml(String(this.cluster.count || 0))}</span></span>`
@@ -1811,7 +2516,18 @@
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'sos-map-marker';
-        button.addEventListener('click', () => this.onSelect(this.gate));
+        button.addEventListener('mouseenter', () => {
+          if (this.gate && !this.gate.isCluster) {
+            setPreviewMarkerLabel(createMarkerLabelRef('gate', this.gate.gate_id));
+          }
+        });
+        button.addEventListener('mouseleave', () => {
+          clearPreviewMarkerLabelIfUnlocked();
+        });
+        button.addEventListener('click', () => {
+          state.cctvSuppressMapClickUntil = Date.now() + 250;
+          this.onSelect(this.gate);
+        });
         this.element = button;
         this.getPanes().overlayMouseTarget.appendChild(button);
         this.isEntering = true;
@@ -1855,8 +2571,8 @@
           )
         );
         this.element.title = isCluster
-          ? `${Number(this.gate.count || 0)} gate alert`
-          : this.gate.gate_name || this.gate.gate_code || 'Gate Alert';
+          ? `${Number(this.gate.count || 0)} GATE ALERT`
+          : `GT ${String(this.gate.gate_name || this.gate.gate_code || 'Gate Alert').trim()}`.toUpperCase();
         this.element.innerHTML = isCluster
           ? `<span class="sos-map-marker__pulse"></span><span class="sos-map-marker__dot"><span class="asset-map-cluster__count">${escapeHtml(String(this.gate.count || 0))}</span></span>`
           : isNormalGate
@@ -1936,29 +2652,30 @@
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
         this.element.style.zIndex = String(getWeatherMarkerZIndex(isExpanded));
-        this.element.title = this.weather.point_name || this.weather.segment_name || 'Weather';
+        this.element.title = String(this.weather.point_name || this.weather.segment_name || 'Weather').toUpperCase();
         const weatherLabel = String(this.weather.weather_label || 'Cuaca').trim();
-        const pointName = String(this.weather.point_name || this.weather.segment_name || this.weather.corridor_name || 'Lokasi').trim();
-        const iconUrl = escapeHtml(getWeatherMarkerIconUrl(this.weather));
+        const pointName = String(this.weather.point_name || this.weather.segment_name || this.weather.corridor_name || 'Lokasi').trim().toUpperCase();
+        const iconSource = escapeHtml(getWeatherIconSourceSync(this.weather) || getWeatherMarkerIconUrl(this.weather));
+        const fallbackIconUrl = escapeHtml(getWeatherMarkerIconFallbackUrl(this.weather));
         const staleBadge = isStale ? '<span class="weather-map-marker__badge">Data lama</span>' : '';
         const renderKey = JSON.stringify({
           isExpanded,
           isStale,
           weatherLabel,
           pointName,
-          iconUrl,
-          temperature: formatWeatherTemperature(this.weather.temperature_c),
+          iconKey: iconSource,
+          temperature: formatWeatherTemperatureDisplay(this.weather.temperature_c),
         });
         if (this.renderKey !== renderKey) {
           this.renderKey = renderKey;
           this.element.innerHTML = `
-            <span class="weather-map-marker__pin" aria-hidden="true">
-              <span class="weather-map-marker__icon-wrap">
-                <img class="weather-map-marker__icon" src="${iconUrl}" alt="" aria-hidden="true" />
+              <span class="weather-map-marker__pin" aria-hidden="true">
+                <span class="weather-map-marker__icon-wrap">
+                  <img class="weather-map-marker__icon" src="${iconSource}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
+                </span>
               </span>
-            </span>
             <span class="weather-map-marker__bubble" aria-hidden="${isExpanded ? 'false' : 'true'}">
-              <span class="weather-map-marker__summary">${escapeHtml(weatherLabel)} &bull; ${escapeHtml(formatWeatherTemperature(this.weather.temperature_c))}</span>
+              <span class="weather-map-marker__summary">${escapeHtml(weatherLabel)} &bull; ${escapeHtml(formatWeatherTemperatureDisplay(this.weather.temperature_c))}</span>
               <strong class="weather-map-marker__location">${escapeHtml(pointName)}</strong>
               ${staleBadge}
             </span>
@@ -1968,7 +2685,7 @@
             iconEl.addEventListener(
               'error',
               () => {
-                iconEl.src = WEATHER_FALLBACK_ICON_URL;
+                iconEl.src = iconEl.getAttribute('data-fallback-src') || WEATHER_FALLBACK_ICON_URL;
               },
               { once: true }
             );
@@ -2065,6 +2782,150 @@
     sosWeatherToggleEl.checked = state.weather.visible;
     sosWeatherToggleEl.indeterminate = false;
     sosWeatherToggleEl.disabled = false;
+    if (sosWeatherBubbleToggleEl) {
+      sosWeatherBubbleToggleEl.checked = Boolean(state.weather.expandAllBubbles);
+      sosWeatherBubbleToggleEl.indeterminate = false;
+      sosWeatherBubbleToggleEl.disabled = !state.weather.visible;
+    }
+  };
+
+  const syncWeatherControlButtonState = () => {
+    if (!weatherControlBtn) {
+      return;
+    }
+    weatherControlBtn.classList.toggle('is-active', Boolean(state.weather.visible));
+    weatherControlBtn.setAttribute(
+      'aria-expanded',
+      weatherControlPopup && !weatherControlPopup.classList.contains('hidden') ? 'true' : 'false'
+    );
+  };
+
+  const syncBranchControlButtonState = () => {
+    if (!sosBranchControlBtn) {
+      return;
+    }
+    sosBranchControlBtn.setAttribute(
+      'aria-expanded',
+      sosBranchControlPopup && !sosBranchControlPopup.classList.contains('hidden') ? 'true' : 'false'
+    );
+  };
+
+  const getActiveMarkerFilterCount = () =>
+    ['normal', 'warning', 'error'].filter((key) => Boolean(state.markerStatusFilters[key])).length;
+
+  const syncAssetFilterButtonState = () => {
+    if (!assetFilterBtn) {
+      return;
+    }
+    const activeCount = getActiveMarkerFilterCount();
+    assetFilterBtn.textContent = activeCount === 3 ? 'Filter' : `Filter ${activeCount}/3`;
+    assetFilterBtn.setAttribute('aria-expanded', assetFilterPopup && !assetFilterPopup.classList.contains('hidden') ? 'true' : 'false');
+  };
+
+  const syncFoControlButtonState = () => {
+    if (!foControlBtn) {
+      return;
+    }
+    foControlBtn.classList.toggle('is-active', Boolean(state.networkArcs.visible));
+    foControlBtn.setAttribute(
+      'aria-expanded',
+      foControlPopup && !foControlPopup.classList.contains('hidden') ? 'true' : 'false'
+    );
+  };
+
+  const setToolbarMenuPanelVisible = (visible) => {
+    if (!toolbarMenuPanelEl) {
+      return;
+    }
+    toolbarMenuPanelEl.classList.toggle('hidden', !visible);
+    if (toolbarMenuBtnEl) {
+      toolbarMenuBtnEl.setAttribute('aria-expanded', visible ? 'true' : 'false');
+    }
+  };
+
+  const setAssetFilterPopupVisible = (visible) => {
+    if (!assetFilterPopup) {
+      return;
+    }
+    if (visible && typeof window.__HKTV_SET_PROFILE_MENU_VISIBLE__ === 'function') {
+      window.__HKTV_SET_PROFILE_MENU_VISIBLE__(false);
+    }
+    assetFilterPopup.classList.toggle('hidden', !visible);
+    syncAssetFilterButtonState();
+  };
+
+  const setFoControlPopupVisible = (visible) => {
+    if (!foControlPopup) {
+      return;
+    }
+    if (visible && typeof window.__HKTV_SET_PROFILE_MENU_VISIBLE__ === 'function') {
+      window.__HKTV_SET_PROFILE_MENU_VISIBLE__(false);
+    }
+    foControlPopup.classList.toggle('hidden', !visible);
+    syncFoControlButtonState();
+  };
+
+  const setWeatherControlPopupVisible = (visible) => {
+    if (!weatherControlPopup) {
+      return;
+    }
+    if (visible && typeof window.__HKTV_SET_PROFILE_MENU_VISIBLE__ === 'function') {
+      window.__HKTV_SET_PROFILE_MENU_VISIBLE__(false);
+    }
+    weatherControlPopup.classList.toggle('hidden', !visible);
+    syncWeatherControlButtonState();
+  };
+
+  const setBranchControlPopupVisible = (visible) => {
+    if (!sosBranchControlPopup) {
+      return;
+    }
+    if (visible && typeof window.__HKTV_SET_PROFILE_MENU_VISIBLE__ === 'function') {
+      window.__HKTV_SET_PROFILE_MENU_VISIBLE__(false);
+    }
+    sosBranchControlPopup.classList.toggle('hidden', !visible);
+    syncBranchControlButtonState();
+  };
+
+  const createMarkerLabelRef = (kind, id, options = {}) => ({
+    kind: String(kind || ''),
+    id: id == null ? null : String(id),
+    latLng: options.latLng || null,
+  });
+
+  const setPreviewMarkerLabel = (ref) => {
+    if (state.ui.lockedMarkerLabel) {
+      return;
+    }
+    state.ui.previewMarkerLabel = ref || null;
+    syncSelectedMarkerLabelOverlay();
+  };
+
+  const setLockedMarkerLabel = (ref) => {
+    state.ui.lockedMarkerLabel = ref || null;
+    state.ui.previewMarkerLabel = null;
+    syncSelectedMarkerLabelOverlay();
+  };
+
+  const clearMarkerLabelState = (options = {}) => {
+    const preserveSosLocked = options.preserveSosLocked !== false;
+    if (preserveSosLocked && state.ui.selectedEntityType === 'sos' && state.selectedSosId) {
+      state.ui.lockedMarkerLabel = createMarkerLabelRef('sos', state.selectedSosId);
+      state.ui.previewMarkerLabel = null;
+      syncSelectedMarkerLabelOverlay();
+      return;
+    }
+    state.ui.lockedMarkerLabel = null;
+    state.ui.previewMarkerLabel = null;
+    syncSelectedMarkerLabelOverlay();
+  };
+
+  const clearPreviewMarkerLabelIfUnlocked = () => {
+    if (state.ui.lockedMarkerLabel || !state.ui.previewMarkerLabel) {
+      return;
+    }
+    state.ui.previewMarkerLabel = null;
+    syncSelectedMarkerLabelOverlay();
   };
 
   const renderMapCameraModeControls = () => {
@@ -2130,11 +2991,12 @@
         : Number(state.mapContext.cameraHeading || 0),
   });
 
-  const moveMapCamera = ({ zoom, tilt, heading }) => {
+  const moveMapCamera = ({ center, zoom, tilt, heading }) => {
     if (!state.map) {
       return;
     }
     const current = getCurrentMapCamera();
+    const nextCenter = center || current.center;
     const nextHeading = Number.isFinite(Number(heading)) ? Number(heading) : current.heading;
     state.mapContext.cameraHeading = ((nextHeading % 360) + 360) % 360;
     if (typeof state.map.setOptions === 'function') {
@@ -2145,13 +3007,16 @@
     }
     if (typeof state.map.moveCamera === 'function') {
       state.map.moveCamera({
-        center: current.center,
+        center: nextCenter,
         zoom: Number.isFinite(Number(zoom)) ? Number(zoom) : current.zoom,
         tilt: Number.isFinite(Number(tilt)) ? Number(tilt) : state.mapContext.cameraMode === 'tilt' ? 55 : 0,
         heading: state.mapContext.cameraHeading,
       });
       renderMapCameraDebug();
       return;
+    }
+    if (nextCenter && typeof state.map.setCenter === 'function') {
+      state.map.setCenter(nextCenter);
     }
     state.map.setZoom(Number.isFinite(Number(zoom)) ? Number(zoom) : current.zoom);
     if (typeof state.map.setTilt === 'function') {
@@ -2161,6 +3026,27 @@
       state.map.setHeading(state.mapContext.cameraHeading);
     }
     renderMapCameraDebug();
+  };
+
+  const syncInitialMapTiltIfNeeded = () => {
+    if (!state.map || !state.ui.initialTiltSyncPending) {
+      return;
+    }
+    if (state.mapContext.cameraMode !== 'tilt' || !isVectorRenderingActive()) {
+      state.ui.initialTiltSyncPending = false;
+      return;
+    }
+    const current = getCurrentMapCamera();
+    state.ui.initialTiltSyncPending = false;
+    if (Number(current.tilt || 0) >= 30) {
+      return;
+    }
+    moveMapCamera({
+      center: current.center,
+      zoom: current.zoom,
+      tilt: 30,
+      heading: Number(current.heading || 0),
+    });
   };
 
   const applyMapCameraMode = (mode, options = {}) => {
@@ -2208,12 +3094,58 @@
     syncNetworkOverlay();
   };
 
-  const resetMapCamera = () => {
+  const getAllBranchesBounds = () => {
+    if (!window.google || !window.google.maps) {
+      return null;
+    }
+    const bounds = new window.google.maps.LatLngBounds();
+    let hasBounds = false;
+    (Array.isArray(state.mapContext.availableBranches) ? state.mapContext.availableBranches : []).forEach((entry) => {
+      const lat = Number(entry.center_lat);
+      const lng = Number(entry.center_lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        bounds.extend({ lat, lng });
+        hasBounds = true;
+      }
+    });
+    return hasBounds ? bounds : null;
+  };
+
+  const centerMapForCurrentSelection = () => {
     if (!state.map) {
       return;
     }
-    state.mapContext.cameraHeading = 0;
-    applyMapCameraMode('tilt');
+    state.mapContext.cameraMode = 'tilt';
+    renderMapCameraModeControls();
+    if (isAllBranchesSelected()) {
+      const bounds = getAllBranchesBounds();
+      const center = bounds && typeof bounds.getCenter === 'function' ? bounds.getCenter() : null;
+      moveMapCamera({
+        center,
+        zoom: MAP_ZOOM_ALL_BRANCH,
+        tilt: isVectorRenderingActive() ? 30 : 0,
+        heading: 0,
+      });
+      void persistAssetMonitoringPrefs();
+      syncNetworkOverlay();
+      return;
+    }
+    const branch = getSelectedBranch();
+    if (
+      branch &&
+      Number.isFinite(Number(branch.center_lat)) &&
+      Number.isFinite(Number(branch.center_lng))
+    ) {
+      const current = getCurrentMapCamera();
+      moveMapCamera({
+        center: { lat: Number(branch.center_lat), lng: Number(branch.center_lng) },
+        zoom: Math.max(Number(current.zoom || 0), MAP_ZOOM_BRANCH),
+        tilt: state.mapContext.cameraMode === 'tilt' && isVectorRenderingActive() ? 30 : 0,
+        heading: Number(current.heading || 0),
+      });
+      void persistAssetMonitoringPrefs();
+      syncNetworkOverlay();
+    }
   };
 
   const syncCameraModeForBranchSelection = () => {
@@ -2237,8 +3169,8 @@
       .filter((alert) => alert && Number(alert.status) !== 2 && isEntityInSelectedBranch(alert.branch_id))
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-  const INCIDENT_FILTER_KEYS = ['sos', 'cctv', 'vms', 'gate'];
-  const INCIDENT_GROUP_ORDER = ['sos', 'gate', 'asset'];
+  const INCIDENT_FILTER_KEYS = ['sos', 'cctv', 'vms', 'gate', 'weather'];
+  const INCIDENT_GROUP_ORDER = ['sos', 'gate', 'asset', 'weather'];
 
   const isIncidentFilterEnabled = (key) => state.incidents.filters[String(key || '').toLowerCase()] !== false;
   const getIncidentAnimationState = () => state.incidents.animation;
@@ -2282,6 +3214,9 @@
     if (state.ui.selectedEntityType === 'asset' && state.standaloneAssets.selectedAssetKey) {
       return `asset:${state.standaloneAssets.selectedAssetKey}`;
     }
+    if (state.ui.selectedEntityType === 'weather' && state.weather.selectedWeatherId) {
+      return `weather:${state.weather.selectedWeatherId}`;
+    }
     return '';
   };
   const scheduleIncidentListRender = () => {
@@ -2289,6 +3224,18 @@
       renderIncidentList();
     }
   };
+
+  const clearIncidentEnteringClass = (key) => {
+    const normalizedKey = String(key || '');
+    if (!normalizedKey || !sosIncidentListEl) {
+      return;
+    }
+    const entryEl = sosIncidentListEl.querySelector(`[data-incident-key="${CSS.escape(normalizedKey)}"]`);
+    if (entryEl) {
+      entryEl.classList.remove('is-entering');
+    }
+  };
+
   const queueIncidentEnteringAnimation = (key) => {
     const normalizedKey = String(key || '');
     if (!normalizedKey) {
@@ -2302,7 +3249,7 @@
       window.setTimeout(() => {
         animationState.enteringKeys.delete(normalizedKey);
         animationState.enterTimers.delete(normalizedKey);
-        scheduleIncidentListRender();
+        clearIncidentEnteringClass(normalizedKey);
       }, INCIDENT_LIST_ENTER_MS)
     );
   };
@@ -2367,6 +3314,11 @@
     if (a.group === 'asset' && b.group === 'asset') {
       return String((a.data && a.data.title) || '').localeCompare(String((b.data && b.data.title) || ''));
     }
+    if (a.group === 'weather' && b.group === 'weather') {
+      return String((a.data && (a.data.point_code || a.data.point_name)) || '').localeCompare(
+        String((b.data && (b.data.point_code || b.data.point_name)) || '')
+      );
+    }
     return INCIDENT_GROUP_ORDER.indexOf(a.group) - INCIDENT_GROUP_ORDER.indexOf(b.group);
   };
 
@@ -2391,6 +3343,13 @@
     data: asset,
   });
 
+  const buildWeatherIncidentEntry = (weather) => ({
+    key: `weather:${weather.id}`,
+    group: 'weather',
+    entityType: 'weather',
+    data: weather,
+  });
+
   const getVisibleIncidentEntries = () => {
     const alerts = isIncidentFilterEnabled('sos') ? getVisibleAlerts() : [];
     const gateAlerts = Array.from(state.gateAlerts.items.values())
@@ -2405,10 +3364,19 @@
     const issueAssets = Array.from(state.standaloneAssets.items.values())
       .filter((item) => isAssetVisibleInIncidentList(item))
       .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+    const weatherItems =
+      isIncidentFilterEnabled('weather') && isWeatherLayerActive()
+        ? state.weather.items
+            .filter((item) => item && item.latLng)
+            .sort((a, b) =>
+              String(a.point_code || a.point_name || '').localeCompare(String(b.point_code || b.point_name || ''))
+            )
+        : [];
     return [
       ...alerts.map(buildSosIncidentEntry),
       ...gateAlerts.map(buildGateIncidentEntry),
       ...issueAssets.map(buildAssetIncidentEntry),
+      ...weatherItems.map(buildWeatherIncidentEntry),
     ];
   };
 
@@ -2444,10 +3412,12 @@
     }
     const isLeaving = Boolean(options.isLeaving);
     const isEntering = Boolean(options.isEntering);
+    const order = Number.isFinite(Number(options.order)) ? Number(options.order) : 0;
     const animationClasses = [isEntering ? 'is-entering' : '', isLeaving ? 'is-leaving' : ''].filter(Boolean).join(' ');
     const interactionAttrs = isLeaving
       ? 'tabindex="-1" aria-hidden="true" data-incident-disabled="true"'
       : 'tabindex="0" role="button"';
+    const animationAttrs = `data-incident-key="${escapeHtml(entry.key)}" style="--stagger-index:${Math.min(Math.max(order, 0), 7)};"`;
 
     if (entry.entityType === 'sos') {
       const alert = entry.data;
@@ -2456,7 +3426,7 @@
       const displayPhoneNumber = getDisplayPhoneNumber(rawPhoneNumber);
       const whatsAppLink = isLeaving ? '' : getWhatsAppLink(rawPhoneNumber);
       return `
-        <article class="sos-incident-item ${alert.sos_id === state.selectedSosId && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="sos" data-sos-id="${alert.sos_id}" ${interactionAttrs} aria-label="Pilih kejadian SOS ${alert.sos_id}">
+        <article class="sos-incident-item ${alert.sos_id === state.selectedSosId && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="sos" data-sos-id="${alert.sos_id}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih kejadian SOS ${alert.sos_id}">
           <div class="sos-incident-item__head">
             <strong>${escapeHtml(alert.ticket && alert.ticket.ticket_no ? alert.ticket.ticket_no : `SOS-${alert.sos_id}`)}</strong>
             <span class="status-pill ${statusMeta.tone}">${statusMeta.label}</span>
@@ -2497,7 +3467,7 @@
       const gate = entry.data;
       const tone = getGateMarkerTone(gate);
       return `
-        <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'gate' && String(state.ui.selectedEntityId) === String(gate.gate_id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="gate" data-gate-id="${gate.gate_id}" ${interactionAttrs} aria-label="Pilih gate alert ${escapeHtml(gate.gate_name || gate.gate_code || gate.gate_id)}">
+        <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'gate' && String(state.ui.selectedEntityId) === String(gate.gate_id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="gate" data-gate-id="${gate.gate_id}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih gate alert ${escapeHtml(gate.gate_name || gate.gate_code || gate.gate_id)}">
           <div class="sos-incident-item__head">
             <strong>${escapeHtml(gate.gate_name || gate.gate_code || `Gate ${gate.gate_id}`)}</strong>
             <span class="status-pill ${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'success'}">${escapeHtml(String(gate.status || 'normal').toUpperCase())}</span>
@@ -2522,10 +3492,49 @@
       `;
     }
 
+    if (entry.entityType === 'weather') {
+      const weather = entry.data;
+      const iconUrl = escapeHtml(getWeatherIconSourceSync(weather) || getWeatherMarkerIconUrl(weather));
+      const fallbackIconUrl = escapeHtml(getWeatherMarkerIconFallbackUrl(weather));
+      const weatherLabel = escapeHtml(weather.weather_label || 'Cuaca');
+      const pointName = escapeHtml(weather.point_name || '-');
+      const contextLine = escapeHtml(getWeatherContextLine(weather));
+      const observedAt = escapeHtml(formatWeatherObservedAt(weather.observed_at || '-'));
+      return `
+        <article class="sos-incident-item sos-incident-item--summary sos-incident-item--weather ${state.ui.selectedEntityType === 'weather' && String(state.ui.selectedEntityId) === String(weather.id) && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="weather" data-weather-id="${weather.id}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih weather point ${escapeHtml(weather.point_name || weather.point_code || weather.id)}">
+          <div class="sos-weather-incident__top">
+            <span class="sos-weather-incident__icon">
+              <img class="sos-weather-incident__icon-img" src="${iconUrl}" alt="" aria-hidden="true" data-fallback-src="${fallbackIconUrl}" />
+            </span>
+            <div class="sos-weather-incident__body">
+              <strong class="sos-weather-incident__label">${weatherLabel}</strong>
+              <span class="sos-weather-incident__point">${pointName}</span>
+              <span class="sos-weather-incident__location">${contextLine}</span>
+            </div>
+            <div class="sos-weather-incident__temp">${escapeHtml(formatWeatherTemperatureDisplay(weather.temperature_c))}</div>
+          </div>
+          <div class="sos-weather-incident__footer">
+            <div class="sos-weather-incident__metric">
+              <span class="sos-weather-incident__metric-label">Kecepatan Angin</span>
+              <strong class="sos-weather-incident__metric-value">${getWeatherMetricIcon('wind')}<span>${escapeHtml(formatWeatherWind(weather.wind_kph))}</span></strong>
+            </div>
+            <div class="sos-weather-incident__metric">
+              <span class="sos-weather-incident__metric-label">Kelembapan</span>
+              <strong class="sos-weather-incident__metric-value">${getWeatherMetricIcon('humidity')}<span>${escapeHtml(formatWeatherPercent(weather.humidity_pct))}</span></strong>
+            </div>
+            <div class="sos-weather-incident__metric">
+              <span class="sos-weather-incident__metric-label">Waktu Observasi</span>
+              <strong class="sos-weather-incident__metric-value">${observedAt}</strong>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
     const asset = entry.data;
     const assetKey = makeAssetKey(asset.asset_type, asset.id);
     return `
-      <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'asset' && String(state.ui.selectedEntityId) === assetKey && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="asset" data-asset-type="${escapeHtml(asset.asset_type)}" data-asset-id="${escapeHtml(asset.id)}" ${interactionAttrs} aria-label="Pilih asset ${escapeHtml(asset.title)}">
+      <article class="sos-incident-item sos-incident-item--summary ${state.ui.selectedEntityType === 'asset' && String(state.ui.selectedEntityId) === assetKey && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="asset" data-asset-type="${escapeHtml(asset.asset_type)}" data-asset-id="${escapeHtml(asset.id)}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih asset ${escapeHtml(asset.title)}">
         <div class="sos-incident-item__head">
           <strong>${escapeHtml(asset.title)}</strong>
           <span class="status-pill ${getAssetIssueTone(asset.status)}">${escapeHtml(String(asset.status || 'offline').toUpperCase())}</span>
@@ -2565,6 +3574,16 @@
       }
       const asset = state.standaloneAssets.items.get(state.standaloneAssets.selectedAssetKey);
       return isAssetVisibleInIncidentList(asset);
+    }
+    if (state.ui.selectedEntityType === 'weather') {
+      return (
+        isIncidentFilterEnabled('weather') &&
+        isWeatherLayerActive() &&
+        Boolean(
+          state.weather.selectedWeatherId &&
+            state.weather.items.some((item) => String(item.id) === String(state.weather.selectedWeatherId))
+        )
+      );
     }
     return true;
   };
@@ -2615,7 +3634,8 @@
   const isWeatherLayerActive = () => state.weather.visible;
   const isWeatherMarkerExpanded = (weatherId) =>
     isWeatherLayerActive() &&
-    String(state.weather.selectedWeatherId || '') === String(weatherId || '');
+    (Boolean(state.weather.expandAllBubbles) ||
+      String(state.weather.selectedWeatherId || '') === String(weatherId || ''));
   const isViewportCullingActive = () => isAllBranchesSelected();
   const getViewportBoundsWithPadding = (paddingRatio = 0.08) => {
     if (!state.map || typeof state.map.getBounds !== 'function') {
@@ -2679,7 +3699,14 @@
     return assetType === 'vms' ? state.vmsVisible : state.cctvVisible;
   };
   const getStandaloneLayerKey = (branchKey) =>
-    `${branchKey}:${state.cctvVisible ? 'cctv' : ''}:${state.vmsVisible ? 'vms' : ''}`;
+    [
+      branchKey,
+      state.cctvVisible ? 'cctv' : '',
+      state.vmsVisible ? 'vms' : '',
+      state.markerStatusFilters.normal ? 'normal' : '',
+      state.markerStatusFilters.warning ? 'warning' : '',
+      state.markerStatusFilters.error ? 'error' : '',
+    ].join(':');
   const getNetworkSummaryLabel = () => {
     const totals = state.networkArcs.meta && state.networkArcs.meta.totals ? state.networkArcs.meta.totals : null;
     const arcCount = totals && Number.isFinite(Number(totals.arcs))
@@ -2691,7 +3718,7 @@
     if (!state.networkArcs.visible) {
       return 'Layer network disembunyikan';
     }
-    return `${arcCount} arc${arcCount === 1 ? '' : 's'}${crossBranch ? ' • cross-branch' : ''}`;
+    return `${arcCount} arc${arcCount === 1 ? '' : 's'}${crossBranch ? ' • cross-branch' : ''}${state.networkArcs.experimentalEnabled ? ' • arc fx' : ''}`;
   };
   const getWeatherSummaryLabel = () => {
     if (!isWeatherLayerActive()) {
@@ -2758,12 +3785,13 @@
     if (!state.notifications.length) {
       sosNotificationPanelEl.classList.add('hidden');
       sosNotificationListEl.innerHTML = '';
+      return;
     }
     sosNotificationPanelEl.classList.remove('hidden');
     sosNotificationListEl.innerHTML = state.notifications
       .map(
-        (entry) => `
-          <article class="sos-notification-card ${state.notificationLeavingIds.has(String(entry.id)) ? 'is-leaving' : ''}" data-notification-id="${escapeHtml(entry.id)}">
+        (entry, index) => `
+          <article class="sos-notification-card ${state.notificationEnteringIds.has(String(entry.id)) ? 'is-entering' : ''} ${state.notificationLeavingIds.has(String(entry.id)) ? 'is-leaving' : ''}" data-notification-id="${escapeHtml(entry.id)}" style="--stagger-index:${Math.min(index, 5)};">
             <div class="sos-incident-item__row">
               <strong>${escapeHtml(entry.title)}</strong>
               <button class="sos-notification-close-btn" type="button" data-notification-close="${escapeHtml(entry.id)}" aria-label="Tutup notifikasi" title="Tutup notifikasi">
@@ -2779,6 +3807,36 @@
       .join('');
   };
 
+  const clearNotificationEnterTimer = (notificationId) => {
+    const timer = state.notificationEnterTimers.get(String(notificationId));
+    if (timer) {
+      window.clearTimeout(timer);
+      state.notificationEnterTimers.delete(String(notificationId));
+    }
+  };
+
+  const clearNotificationEnteringClass = (notificationId) => {
+    const normalizedId = String(notificationId || '').trim();
+    if (!normalizedId || !sosNotificationListEl) {
+      return;
+    }
+    const card = sosNotificationListEl.querySelector(`[data-notification-id="${CSS.escape(normalizedId)}"]`);
+    if (card) {
+      card.classList.remove('is-entering');
+    }
+  };
+
+  const markNotificationLeaving = (notificationId) => {
+    const normalizedId = String(notificationId || '').trim();
+    if (!normalizedId || !sosNotificationListEl) {
+      return;
+    }
+    const card = sosNotificationListEl.querySelector(`[data-notification-id="${CSS.escape(normalizedId)}"]`);
+    if (card) {
+      card.classList.add('is-leaving');
+    }
+  };
+
   const clearNotificationTimer = (notificationId) => {
     const timer = state.notificationTimers.get(String(notificationId));
     if (timer) {
@@ -2789,18 +3847,34 @@
 
   const removeNotificationImmediately = (notificationId) => {
     const normalizedId = String(notificationId || '').trim();
+    const existingCard =
+      normalizedId && sosNotificationListEl
+        ? sosNotificationListEl.querySelector(`[data-notification-id="${CSS.escape(normalizedId)}"]`)
+        : null;
+    clearNotificationEnterTimer(normalizedId);
     clearNotificationTimer(normalizedId);
+    state.notificationEnteringIds.delete(normalizedId);
     state.notificationLeavingIds.delete(normalizedId);
     state.notifications = state.notifications.filter((entry) => String(entry.id) !== normalizedId);
     state.incidents.notifications = state.notifications;
+    if (existingCard && existingCard.parentNode) {
+      existingCard.parentNode.removeChild(existingCard);
+      if (!state.notifications.length) {
+        sosNotificationPanelEl.classList.add('hidden');
+        sosNotificationListEl.innerHTML = '';
+      }
+      return;
+    }
     renderNotifications();
   };
 
   const removeNotification = (notificationId) => {
     const normalizedId = String(notificationId || '').trim();
     if (!normalizedId) {
+      return;
     }
     if (state.notificationLeavingIds.has(normalizedId)) {
+      return;
     }
     const exists = state.notifications.some((entry) => String(entry.id) === normalizedId);
     if (!exists) {
@@ -2808,17 +3882,19 @@
     }
     clearNotificationTimer(normalizedId);
     state.notificationLeavingIds.add(normalizedId);
-    renderNotifications();
+    markNotificationLeaving(normalizedId);
     window.setTimeout(() => {
       removeNotificationImmediately(normalizedId);
-    }, 220);
+    }, NOTIFICATION_LEAVE_MS);
   };
 
   const removeNotificationsByTarget = (targetType, matcher) => {
     state.notifications
       .filter((entry) => entry && entry.target && entry.target.type === targetType && matcher(entry.target))
       .forEach((entry) => {
+        clearNotificationEnterTimer(entry.id);
         clearNotificationTimer(entry.id);
+        state.notificationEnteringIds.delete(String(entry.id));
         state.notificationLeavingIds.delete(String(entry.id));
       });
     state.notifications = state.notifications.filter(
@@ -2856,12 +3932,24 @@
     ];
     const droppedNotifications = nextNotifications.slice(SOS_NOTIFICATION_LIMIT);
     droppedNotifications.forEach((item) => {
+      clearNotificationEnterTimer(item.id);
       clearNotificationTimer(item.id);
+      state.notificationEnteringIds.delete(String(item.id));
       state.notificationLeavingIds.delete(String(item.id));
     });
     state.notifications = nextNotifications.slice(0, SOS_NOTIFICATION_LIMIT);
     state.incidents.notifications = state.notifications;
+    state.notificationEnteringIds.add(String(notificationId));
     renderNotifications();
+    clearNotificationEnterTimer(notificationId);
+    state.notificationEnterTimers.set(
+      String(notificationId),
+      window.setTimeout(() => {
+        state.notificationEnteringIds.delete(String(notificationId));
+        state.notificationEnterTimers.delete(String(notificationId));
+        clearNotificationEnteringClass(notificationId);
+      }, NOTIFICATION_ENTER_MS + 260)
+    );
     if (options.autoDismiss !== false) {
       scheduleNotificationRemoval(notificationId, options.durationMs);
     }
@@ -2915,7 +4003,8 @@
           item.showInSummary !== false &&
           isAssetIssueStatus(item.status) &&
           isStandaloneAssetTypeVisible(item)
-      ).length;
+      ).length +
+      (isWeatherLayerActive() && isIncidentFilterEnabled('weather') ? state.weather.items.length : 0);
     const arcCount =
       state.networkArcs.visible && Array.isArray(state.networkArcs.items)
         ? state.networkArcs.items.length
@@ -2924,22 +4013,66 @@
   };
 
   const renderBranchOptions = () => {
-    if (!sosBranchSelectEl) {
+    if (!sosBranchControlOptionsEl || !sosBranchControlLabelEl) {
       return;
     }
     const branches = Array.isArray(state.mapContext.availableBranches) ? state.mapContext.availableBranches : [];
+    const includeAllBranches = canViewAllBranches();
     const selectedBranch = getSelectedBranch();
     const selectedId = selectedBranch && selectedBranch.id ? String(selectedBranch.id) : '';
-    sosBranchSelectEl.innerHTML = [
-      '<option value="">Pilih branch</option>',
-      `<option value="${ALL_BRANCHES_OPTION}" ${selectedId === ALL_BRANCHES_OPTION ? 'selected' : ''}>Semua Branch</option>`,
-      ...branches.map(
-        (branch) =>
-          `<option value="${escapeHtml(branch.id)}" ${
-            String(branch.id) === selectedId ? 'selected' : ''
-          }>${escapeHtml(branch.branch_name || branch.branch_code || branch.id)}</option>`
-      ),
+    const selectedLabel = isAllBranchesSelected()
+      ? 'Semua Branch'
+      : selectedBranch
+        ? selectedBranch.branch_name || selectedBranch.branch_code || selectedBranch.id
+        : 'Pilih Branch';
+    setText(sosBranchControlLabelEl, selectedLabel);
+    sosBranchControlOptionsEl.innerHTML = [
+      ...(includeAllBranches
+        ? [
+            `<button type="button" class="asset-filter-option asset-map-topbar__branch-option ${selectedId === ALL_BRANCHES_OPTION ? 'is-selected' : ''}" data-branch-option="${ALL_BRANCHES_OPTION}" role="menuitemradio" aria-checked="${selectedId === ALL_BRANCHES_OPTION ? 'true' : 'false'}"><span>Semua Branch</span></button>`,
+          ]
+        : []),
+      ...branches.map((branch) => {
+        const branchId = String(branch.id);
+        const branchLabel = branch.branch_name || branch.branch_code || branch.id;
+        return `<button type="button" class="asset-filter-option asset-map-topbar__branch-option ${branchId === selectedId ? 'is-selected' : ''}" data-branch-option="${escapeHtml(branchId)}" role="menuitemradio" aria-checked="${branchId === selectedId ? 'true' : 'false'}"><span>${escapeHtml(branchLabel)}</span></button>`;
+      }),
     ].join('');
+    syncBranchControlButtonState();
+  };
+
+  const applySelectedMonitoringBranch = (nextBranchId) => {
+    if (nextBranchId === ALL_BRANCHES_OPTION && !canViewAllBranches()) {
+      setConnectionBadge('Akun ini tidak memiliki akses semua branch.', 'warning');
+      return;
+    }
+    debugLog('branchSelect:change', {
+      previousBranchId:
+        state.mapContext.selectedBranch && state.mapContext.selectedBranch.id
+          ? String(state.mapContext.selectedBranch.id)
+          : '',
+      nextBranchId,
+    });
+    state.mapContext.selectedBranch =
+      nextBranchId === ALL_BRANCHES_OPTION
+        ? {
+            id: ALL_BRANCHES_OPTION,
+            branch_name: 'Semua Branch',
+            branch_code: 'ALL',
+          }
+        : state.mapContext.availableBranches.find((branch) => String(branch.id) === nextBranchId) || null;
+    if (nextBranchId === ALL_BRANCHES_OPTION) {
+      state.weather.visible = false;
+    }
+    resetIncidentListAnimationState();
+    resetStandaloneLayerState();
+    resetNetworkLayerState();
+    resetWeatherLayerState();
+    renderBranchOptions();
+    void persistAssetMonitoringPrefs();
+    void refreshDashboard().catch((error) => {
+      setConnectionBadge(error.message || 'Gagal mengganti branch monitoring.', 'danger');
+    });
   };
 
   const renderAssetToolbar = () => {
@@ -2947,6 +4080,10 @@
       return;
     }
     syncWeatherToggleState();
+    syncAssetFilterButtonState();
+    syncFoControlButtonState();
+    syncWeatherControlButtonState();
+    syncBranchControlButtonState();
     const selectedBranch = getSelectedBranch();
     const branchLabel = isAllBranchesSelected()
       ? 'Semua Branch'
@@ -2994,10 +4131,11 @@
     sosIncidentListEl.innerHTML = INCIDENT_GROUP_ORDER.map((group) => {
       const items = combinedEntries
         .filter((entry) => entry.group === group)
-        .map((entry) =>
+        .map((entry, index) =>
           renderIncidentEntry(entry, {
             isEntering: animationState.enteringKeys.has(entry.key),
             isLeaving: animationState.leavingItems.has(entry.key),
+            order: index,
           })
         )
         .join('');
@@ -3005,11 +4143,27 @@
         return '';
       }
       const title =
-        group === 'sos' ? 'SOS' : group === 'gate' ? 'Gate Alert Summary' : 'Asset Offline Summary';
+        group === 'sos'
+          ? 'SOS'
+          : group === 'gate'
+            ? 'Gate Alert Summary'
+            : group === 'asset'
+              ? 'Asset Offline Summary'
+              : 'Weather';
       return `<section class="sos-incident-group"><div class="sos-incident-group__title">${title}</div>${items}</section>`;
     })
       .filter(Boolean)
       .join('');
+    sosIncidentListEl.querySelectorAll('.sos-weather-incident__icon-img').forEach((img) => {
+      img.addEventListener(
+        'error',
+        () => {
+          const fallbackSrc = img.getAttribute('data-fallback-src') || WEATHER_FALLBACK_ICON_URL;
+          img.src = fallbackSrc;
+        },
+        { once: true }
+      );
+    });
   };
 
   const renderDetailPanel = () => {
@@ -3019,8 +4173,7 @@
     if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
       const gateDetail = state.gateAlerts.details.get(String(state.gateAlerts.selectedGateId));
       if (gateDetail) {
-        sosDispatchBtn.disabled = true;
-        sosCompleteBtn.disabled = true;
+        applySosActionButtonState(null);
         return;
       }
     }
@@ -3078,8 +4231,7 @@
           sosDetailPanelEl.classList.add('is-visible');
           replayDetailPanelAnimation();
         }
-        sosDispatchBtn.disabled = true;
-        sosCompleteBtn.disabled = true;
+        applySosActionButtonState(null);
         return;
       }
     }
@@ -3102,8 +4254,7 @@
       sex: alert.user && alert.user.sex,
     });
     if (state.detailRenderKey === detailKey && !sosDetailPanelEl.classList.contains('hidden')) {
-      sosDispatchBtn.disabled = Number(alert.status) !== 0;
-      sosCompleteBtn.disabled = !(alert.ticket && alert.ticket.ticket_no && Number(alert.status) === 1);
+      applySosActionButtonState(alert);
       return;
     }
     state.detailRenderKey = detailKey;
@@ -3138,8 +4289,7 @@
         <div><span class="sos-detail-label">Dispatch</span><strong>${escapeHtml(alert.ticket && alert.ticket.dispatched_at ? toDateTime(alert.ticket.dispatched_at) : 'Belum dispatch')}</strong></div>
       </div>
     `;
-    sosDispatchBtn.disabled = Number(alert.status) !== 0;
-    sosCompleteBtn.disabled = !(alert.ticket && alert.ticket.ticket_no && Number(alert.status) === 1);
+    applySosActionButtonState(alert);
     sosDetailPanelEl.classList.remove('hidden');
     sosDetailPanelEl.classList.add('is-visible');
     replayDetailPanelAnimation();
@@ -3205,16 +4355,102 @@
     const rgb = Array.isArray(color) ? color.slice(0, 3) : [34, 197, 94];
     return [...rgb.map((value) => Number(value) || 0), alpha];
   };
+  const getNetworkArcBaseColor = (edge) => {
+    const color = edge && edge.arc && Array.isArray(edge.arc.visual_color) ? edge.arc.visual_color : null;
+    return Array.isArray(color) && color.length >= 3 ? color.slice(0, 3) : NETWORK_STATUS_STYLE.up.color;
+  };
 
-  const NETWORK_NEON_BLUE = [64, 238, 255];
+  const getNetworkArcColor = (edge, { selected = false, hovered = false, animated = false } = {}) => {
+    const baseColor = getNetworkArcBaseColor(edge);
+    const intensity = selected ? 34 : hovered ? 18 : animated ? 10 : 0;
+    const alpha = selected ? 255 : hovered ? 246 : animated ? 228 : 208;
+    return withAlpha(
+      baseColor.map((channel) => clamp(Number(channel || 0) + intensity, 0, 255)),
+      alpha
+    );
+  };
+
+  const getNetworkArcWidth = (edge, { animated = false } = {}) => {
+    const baseWidth = Number(edge && edge.arc && edge.arc.width) || 1;
+    if (edge && edge.edgeKey === state.networkArcs.selectedEdgeKey) {
+      return baseWidth + (animated ? 3.0 : 1.4);
+    }
+    if (edge && edge.edgeKey === state.networkArcs.hoveredEdgeKey) {
+      return baseWidth + (animated ? 2.5 : 1.0);
+    }
+    return baseWidth + (animated ? 1.9 : 0.5);
+  };
+
+  const getNetworkArcHeight = (edge) => {
+    const heightScale = state.mapContext.cameraMode === 'tilt' ? 2.2 : 1.15;
+    return (Number(edge && edge.arc && edge.arc.height) || 0.35) * heightScale;
+  };
+
+  const getAnimatedArcLayerCtor = () => window.AnimatedArcLayer || null;
+  const getStableAnimationOffset = (edge) => {
+    const key = String((edge && (edge.edgeKey || edge.edge_id || edge.edge_code)) || '');
+    if (!key) {
+      return 0;
+    }
+    let hash = 0;
+    for (let index = 0; index < key.length; index += 1) {
+      hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+    }
+    return (hash % 1000) / 1000;
+  };
+
+  const hasAnimatedNetworkArcs = () =>
+    Boolean(
+      state.networkArcs.experimentalEnabled &&
+      getAnimatedArcLayerCtor() &&
+      state.networkArcs.visible &&
+      Array.isArray(state.networkArcs.items) &&
+      state.networkArcs.items.some((item) => item && item.arc && item.arc.pulse)
+    );
+
+  const stopNetworkArcAnimation = ({ resetTime = false } = {}) => {
+    if (state.networkArcs.animationFrame) {
+      window.cancelAnimationFrame(state.networkArcs.animationFrame);
+      state.networkArcs.animationFrame = 0;
+    }
+    state.networkArcs.animationStartedAt = 0;
+    if (resetTime) {
+      state.networkArcs.currentTime = 0;
+    }
+  };
+
+  const startNetworkArcAnimation = () => {
+    if (!hasAnimatedNetworkArcs()) {
+      stopNetworkArcAnimation({ resetTime: !state.networkArcs.experimentalEnabled });
+      return;
+    }
+    if (state.networkArcs.animationFrame) {
+      return;
+    }
+    const step = (timestamp) => {
+      state.networkArcs.animationFrame = 0;
+      if (!hasAnimatedNetworkArcs()) {
+        stopNetworkArcAnimation();
+        return;
+      }
+      if (!state.networkArcs.animationStartedAt) {
+        state.networkArcs.animationStartedAt = timestamp - state.networkArcs.currentTime * 1000;
+      }
+      state.networkArcs.currentTime = (timestamp - state.networkArcs.animationStartedAt) / 1000;
+      syncNetworkOverlay();
+    };
+    state.networkArcs.animationFrame = window.requestAnimationFrame(step);
+  };
 
   const syncNetworkOverlay = () => {
     if (!state.networkArcs.overlay) {
+      stopNetworkArcAnimation();
       return;
     }
     if (!state.networkArcs.visible || !Array.isArray(state.networkArcs.items) || !state.networkArcs.items.length) {
       state.networkArcs.overlay.setProps({ layers: [] });
       hideNetworkArcTooltip();
+      stopNetworkArcAnimation({ resetTime: !state.networkArcs.experimentalEnabled });
       return;
     }
     const deckGlobal = window.deck || {};
@@ -3222,73 +4458,132 @@
       deckGlobal.ArcLayer ||
       (deckGlobal.layers && deckGlobal.layers.ArcLayer) ||
       (window.deckLayers && window.deckLayers.ArcLayer);
+    const AnimatedArcLayerCtor = getAnimatedArcLayerCtor();
     if (!ArcLayerCtor) {
+      stopNetworkArcAnimation();
       return;
     }
-    const hasSelection = Boolean(state.networkArcs.selectedEdgeKey);
-    const hasHover = Boolean(state.networkArcs.hoveredEdgeKey);
-    const heightScale = state.mapContext.cameraMode === 'tilt' ? 2.2 : 1.15;
-    state.networkArcs.overlay.setProps({
-      layers: [
-        new ArcLayerCtor({
-          id: 'fiber-network-arcs',
-          data: state.networkArcs.items,
-          pickable: true,
-          autoHighlight: false,
+    const animatedEnabled = Boolean(state.networkArcs.experimentalEnabled && AnimatedArcLayerCtor);
+    const layers = [
+      new ArcLayerCtor({
+        id: 'fiber-network-arcs-base',
+        data: state.networkArcs.items,
+        pickable: true,
+        autoHighlight: false,
+        widthUnits: 'pixels',
+        getSourcePosition: (d) => d.arc.source_position,
+        getTargetPosition: (d) => d.arc.target_position,
+        getSourceColor: (d) =>
+          getNetworkArcColor(d, {
+            selected: d.edgeKey === state.networkArcs.selectedEdgeKey,
+            hovered: d.edgeKey === state.networkArcs.hoveredEdgeKey,
+          }),
+        getTargetColor: (d) =>
+          getNetworkArcColor(d, {
+            selected: d.edgeKey === state.networkArcs.selectedEdgeKey,
+            hovered: d.edgeKey === state.networkArcs.hoveredEdgeKey,
+          }),
+        getWidth: (d) => getNetworkArcWidth(d),
+        getHeight: (d) => getNetworkArcHeight(d),
+        onHover: (info) => {
+          const nextHoveredEdgeKey = info && info.object ? info.object.edgeKey : null;
+          const hasChanged = state.networkArcs.hoveredEdgeKey !== nextHoveredEdgeKey;
+          state.networkArcs.hoveredEdgeKey = nextHoveredEdgeKey;
+          showNetworkArcTooltip(info);
+          if (hasChanged) {
+            syncNetworkOverlay();
+          }
+        },
+        onClick: (info) => {
+          if (!(info && info.object)) {
+            return;
+          }
+          selectNetworkArc(info.object);
+        },
+        updateTriggers: {
+          getSourceColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+          getTargetColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+          getWidth: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+          getHeight: [state.mapContext.cameraMode],
+        },
+      }),
+    ];
+    const animatedUpItems = animatedEnabled
+      ? state.networkArcs.items.filter((item) => item && item.arc && item.arc.pulse && item.arc.status_style === 'up')
+      : [];
+    const animatedDegradedItems = animatedEnabled
+      ? state.networkArcs.items.filter(
+          (item) => item && item.arc && item.arc.pulse && item.arc.status_style === 'degraded'
+        )
+      : [];
+    if (animatedUpItems.length) {
+      animatedUpItems.forEach((edge) => {
+        layers.push(
+          new AnimatedArcLayerCtor({
+            id: `fiber-network-arcs-animated-up-${edge.edgeKey}`,
+            data: [edge],
+            pickable: false,
+            widthUnits: 'pixels',
+            currentTime: state.networkArcs.currentTime + getStableAnimationOffset(edge) / NETWORK_STATUS_STYLE.up.speed,
+            speed: NETWORK_STATUS_STYLE.up.speed,
+            headSize: 0.05,
+            tailSize: 0.28,
+            minAlpha: 0.2,
+            getSourcePosition: (d) => d.arc.source_position,
+            getTargetPosition: (d) => d.arc.target_position,
+            getSourceColor: (d) => getNetworkArcColor(d, { animated: true }),
+            getTargetColor: (d) => getNetworkArcColor(d, { animated: true }),
+            getWidth: (d) => getNetworkArcWidth(d, { animated: true }),
+            getHeight: (d) => getNetworkArcHeight(d),
+            updateTriggers: {
+              getSourceColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+              getTargetColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+              getWidth: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
+              getHeight: [state.mapContext.cameraMode],
+              currentTime: [state.networkArcs.currentTime],
+            },
+          })
+        );
+      });
+    }
+    if (animatedDegradedItems.length) {
+      animatedDegradedItems.forEach((edge) => {
+        layers.push(
+        new AnimatedArcLayerCtor({
+          id: `fiber-network-arcs-animated-degraded-${edge.edgeKey}`,
+          data: [edge],
+          pickable: false,
           widthUnits: 'pixels',
+          currentTime: state.networkArcs.currentTime + getStableAnimationOffset(edge) / NETWORK_STATUS_STYLE.degraded.speed,
+          speed: NETWORK_STATUS_STYLE.degraded.speed,
+          headSize: 0.042,
+          tailSize: 0.24,
+          minAlpha: 0.18,
           getSourcePosition: (d) => d.arc.source_position,
           getTargetPosition: (d) => d.arc.target_position,
-          getSourceColor: (d) => {
-            const isSelected = d.edgeKey === state.networkArcs.selectedEdgeKey;
-            const isHovered = d.edgeKey === state.networkArcs.hoveredEdgeKey;
-            return withAlpha(
-              NETWORK_NEON_BLUE,
-              isSelected ? 255 : isHovered ? 250 : hasSelection || hasHover ? 170 : 242
-            );
-          },
-          getTargetColor: (d) => {
-            const isSelected = d.edgeKey === state.networkArcs.selectedEdgeKey;
-            const isHovered = d.edgeKey === state.networkArcs.hoveredEdgeKey;
-            return withAlpha(
-              NETWORK_NEON_BLUE,
-              isSelected ? 255 : isHovered ? 250 : hasSelection || hasHover ? 170 : 242
-            );
-          },
-          getWidth: (d) => {
-            const baseWidth = Number(d.arc.width) || 1;
-            if (d.edgeKey === state.networkArcs.selectedEdgeKey) {
-              return baseWidth + 1.4;
-            }
-            if (d.edgeKey === state.networkArcs.hoveredEdgeKey) {
-              return baseWidth + 1.0;
-            }
-            return baseWidth + 0.5;
-          },
-          getHeight: (d) => (Number(d.arc.height) || 0.35) * heightScale,
-          onHover: (info) => {
-            const nextHoveredEdgeKey = info && info.object ? info.object.edgeKey : null;
-            const hasChanged = state.networkArcs.hoveredEdgeKey !== nextHoveredEdgeKey;
-            state.networkArcs.hoveredEdgeKey = nextHoveredEdgeKey;
-            showNetworkArcTooltip(info);
-            if (hasChanged) {
-              syncNetworkOverlay();
-            }
-          },
-          onClick: (info) => {
-            if (!(info && info.object)) {
-              return;
-            }
-            selectNetworkArc(info.object);
-          },
+          getSourceColor: (d) => getNetworkArcColor(d, { animated: true }),
+          getTargetColor: (d) => getNetworkArcColor(d, { animated: true }),
+          getWidth: (d) => getNetworkArcWidth(d, { animated: true }),
+          getHeight: (d) => getNetworkArcHeight(d),
           updateTriggers: {
             getSourceColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
             getTargetColor: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
             getWidth: [state.networkArcs.selectedEdgeKey, state.networkArcs.hoveredEdgeKey],
             getHeight: [state.mapContext.cameraMode],
+            currentTime: [state.networkArcs.currentTime],
           },
-        }),
-      ],
+        })
+      );
+      });
+    }
+    state.networkArcs.overlay.setProps({
+      layers,
     });
+    if (animatedEnabled && (animatedUpItems.length || animatedDegradedItems.length)) {
+      startNetworkArcAnimation();
+      return;
+    }
+    stopNetworkArcAnimation({ resetTime: !state.networkArcs.experimentalEnabled });
   };
 
   const ensureNetworkOverlay = () => {
@@ -3312,6 +4607,7 @@
 
   const clearNetworkOverlay = () => {
     hideNetworkArcTooltip();
+    stopNetworkArcAnimation({ resetTime: true });
     if (state.networkArcs.overlay) {
       state.networkArcs.overlay.setProps({ layers: [] });
       state.networkArcs.overlay.setMap(null);
@@ -3325,6 +4621,15 @@
     state.cctvViewportKey = '';
     state.cctvClusterOverlayKey = '';
     state.cctvMarkerLoadSeq += 1;
+    if (state.standaloneAssets.selectedLabelOverlay) {
+      state.standaloneAssets.selectedLabelOverlay.setMap(null);
+      state.standaloneAssets.selectedLabelOverlay = null;
+    }
+    state.ui.previewMarkerLabel = null;
+    if (state.ui.selectedEntityType !== 'sos') {
+      state.ui.lockedMarkerLabel = null;
+    }
+    state.standaloneAssets.selectedLabelLatLng = null;
     clearCctvMarkers({ invalidate: false });
   };
 
@@ -3349,6 +4654,7 @@
     state.networkArcs.hoveredEdgeKey = null;
     state.networkArcs.errorMessage = '';
     state.networkArcs.hasLoaded = false;
+    stopNetworkArcAnimation({ resetTime: true });
     hideNetworkArcTooltip();
     if (state.networkArcs.overlay) {
       state.networkArcs.overlay.setProps({ layers: [] });
@@ -3368,21 +4674,30 @@
     if (!state.map || !alert || !alert.latLng) {
       return;
     }
-    if (forceZoom || Number(state.map.getZoom()) < 16) {
-      animateSosFocusOnMap(alert.latLng, MAP_ZOOM_SOS);
-      return;
-    }
-    animateSosFocusOnMap(alert.latLng, Number(state.map.getZoom()) || MAP_ZOOM_SOS);
+    state.mapContext.cameraMode = 'tilt';
+    renderMapCameraModeControls();
+    moveMapCamera({
+      center: alert.latLng,
+      zoom: MAP_ZOOM_SOS,
+      tilt: isVectorRenderingActive() ? 30 : 0,
+      heading: 0,
+    });
+    syncNetworkOverlay();
   };
 
   const focusEntityOnMap = (latLng, targetZoom) => {
     if (!state.map || !latLng) {
       return;
     }
-    animateMapZoom(state.map, Math.max(Number(targetZoom) || MAP_ZOOM_BRANCH, Number(state.map.getZoom()) || 0), latLng);
-    if (Number(state.map.getZoom() || 0) >= Number(targetZoom || MAP_ZOOM_BRANCH)) {
-      state.map.panTo(latLng);
-    }
+    state.mapContext.cameraMode = 'tilt';
+    renderMapCameraModeControls();
+    moveMapCamera({
+      center: latLng,
+      zoom: Number(targetZoom) || MAP_ZOOM_SOS,
+      tilt: isVectorRenderingActive() ? 30 : 0,
+      heading: 0,
+    });
+    syncNetworkOverlay();
   };
 
   const getContextBranch = () => {
@@ -3435,9 +4750,10 @@
       }
       entry.marker.setPosition(entry.originalPosition);
       entry.marker.setZIndex(
-        String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
-          ? getMapMarkerZIndex('selected')
-          : getMapMarkerZIndex('default')
+        getStandaloneAssetZIndex(
+          entry.camera,
+          String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+        )
       );
     });
   };
@@ -3519,9 +4835,6 @@
     } catch (_) {
       detail = camera;
     }
-    if (detail.latLng || camera.latLng) {
-      focusEntityOnMap(detail.latLng || camera.latLng, MAP_ZOOM_ASSET);
-    }
     state.standaloneAssets.selectedAssetKey = makeAssetKey(assetType, detail.id || camera.id);
     state.ui.selectedEntityType = 'asset';
     state.ui.selectedEntityId = state.standaloneAssets.selectedAssetKey;
@@ -3538,9 +4851,10 @@
         ),
       });
       entry.marker.setZIndex(
-        String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
-          ? getMapMarkerZIndex('selected')
-          : getMapMarkerZIndex('default')
+        getStandaloneAssetZIndex(
+          entry.camera,
+          String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+        )
       );
     });
     setText(
@@ -3607,6 +4921,114 @@
     hideModal(sosCctvModalEl);
   };
 
+  const getSelectedMarkerLabelPayload = () => {
+    if (!state.map || !state.isActive) {
+      return null;
+    }
+    const lockedPayload = resolveMarkerLabelRef(state.ui.lockedMarkerLabel);
+    if (lockedPayload) {
+      return lockedPayload;
+    }
+    if (state.ui.lockedMarkerLabel) {
+      state.ui.lockedMarkerLabel = null;
+    }
+    const previewPayload = resolveMarkerLabelRef(state.ui.previewMarkerLabel);
+    if (previewPayload) {
+      return previewPayload;
+    }
+    if (state.ui.previewMarkerLabel) {
+      state.ui.previewMarkerLabel = null;
+    }
+    return getSelectedEntityMarkerLabelPayload();
+  };
+
+  const getSelectedLabelOverlayClass = () => {
+    if (state.standaloneAssets.selectedLabelOverlayClass) {
+      return state.standaloneAssets.selectedLabelOverlayClass;
+    }
+    state.standaloneAssets.selectedLabelOverlayClass = class SelectedMarkerLabelOverlay extends window.google.maps.OverlayView {
+      constructor({ map }) {
+        super();
+        this.map = map;
+        this.payload = null;
+        this.element = null;
+        this.setMap(map);
+      }
+
+      onAdd() {
+        this.element = document.createElement('div');
+        this.element.className = 'selected-map-label selected-map-label--neutral';
+        const panes = this.getPanes();
+        if (panes && panes.floatPane) {
+          panes.floatPane.appendChild(this.element);
+        }
+      }
+
+      draw() {
+        if (!this.element || !this.payload) {
+          return;
+        }
+        const projection = this.getProjection();
+        const pixel = projection && this.payload.latLng
+          ? projection.fromLatLngToDivPixel(
+              this.payload.latLng instanceof window.google.maps.LatLng
+                ? this.payload.latLng
+                : new window.google.maps.LatLng(Number(this.payload.latLng.lat), Number(this.payload.latLng.lng))
+            )
+          : null;
+        if (!pixel) {
+          this.element.classList.add('hidden');
+          return;
+        }
+        this.element.className = this.payload.className || 'selected-map-label';
+        if (this.payload.html) {
+          this.element.innerHTML = String(this.payload.html);
+        } else {
+          this.element.textContent = String(this.payload.label || '');
+        }
+        this.element.style.left = `${pixel.x}px`;
+        this.element.style.top = `${pixel.y - 30}px`;
+      }
+
+      onRemove() {
+        if (this.element && this.element.parentNode) {
+          this.element.parentNode.removeChild(this.element);
+        }
+        this.element = null;
+      }
+
+      update(payload) {
+        this.payload = payload || null;
+        if (!this.element) {
+          return;
+        }
+        if (!payload) {
+          this.element.classList.add('hidden');
+          return;
+        }
+        this.element.classList.remove('hidden');
+        this.draw();
+      }
+    };
+    return state.standaloneAssets.selectedLabelOverlayClass;
+  };
+
+  const syncSelectedMarkerLabelOverlay = () => {
+    const payload = getSelectedMarkerLabelPayload();
+    if (!state.map || !payload) {
+      if (state.standaloneAssets.selectedLabelOverlay) {
+        state.standaloneAssets.selectedLabelOverlay.setMap(null);
+        state.standaloneAssets.selectedLabelOverlay = null;
+      }
+      return;
+    }
+    if (!state.standaloneAssets.selectedLabelOverlay) {
+      const OverlayCtor = getSelectedLabelOverlayClass();
+      state.standaloneAssets.selectedLabelOverlay = new OverlayCtor({ map: state.map });
+    }
+    state.standaloneAssets.selectedLabelOverlay.update(payload);
+  };
+
   const spiderfyCctvMarkerGroup = (sourceEntry, customEntries = null, customCenter = null) => {
     if (!state.map || !state.cctvProjectionOverlay || !sourceEntry) {
       return false;
@@ -3655,13 +5077,25 @@
           ),
         },
         zIndex:
-          String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
-            ? getMapMarkerZIndex('selected')
-            : getMapMarkerZIndex('spiderfy'),
+          getStandaloneAssetZIndex(
+            entry.camera,
+            String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+          ) + 1,
       });
       spiderfyMarker.addListener('click', () => {
         state.cctvSuppressMapClickUntil = Date.now() + 250;
+        selectStandaloneAssetOptimistic(entry.camera, { focus: false, labelLatLng: targetLatLng });
         openCctvModal(entry.camera);
+      });
+      spiderfyMarker.addListener('mouseover', () => {
+        setPreviewMarkerLabel(
+          createMarkerLabelRef('asset', makeAssetKey(entry.camera.asset_type, entry.camera.id), {
+            latLng: targetLatLng,
+          })
+        );
+      });
+      spiderfyMarker.addListener('mouseout', () => {
+        clearPreviewMarkerLabelIfUnlocked();
       });
       state.cctvSpiderfyTempMarkers.push(spiderfyMarker);
       const leg = new window.google.maps.Polyline({
@@ -3691,14 +5125,25 @@
           getCctvMarkerScaledSize(camera)
         ),
       },
-      zIndex:
+      zIndex: getStandaloneAssetZIndex(
+        camera,
         String(camera && camera.id) === String(state.cctvSelectedCameraId)
-          ? getMapMarkerZIndex('selected')
-          : getMapMarkerZIndex('default'),
+      ),
     });
     marker.addListener('click', () => {
       state.cctvSuppressMapClickUntil = Date.now() + 250;
+      selectStandaloneAssetOptimistic(camera, { focus: false });
       void openCctvModal(camera);
+    });
+    marker.addListener('mouseover', () => {
+      setPreviewMarkerLabel(
+        createMarkerLabelRef('asset', makeAssetKey(camera.asset_type, camera.id), {
+          latLng: camera.latLng || camera.position || null,
+        })
+      );
+    });
+    marker.addListener('mouseout', () => {
+      clearPreviewMarkerLabelIfUnlocked();
     });
     return {
       marker,
@@ -3725,9 +5170,10 @@
       ),
     });
     entry.marker.setZIndex(
-      String(camera && camera.id) === String(state.cctvSelectedCameraId)
-        ? getMapMarkerZIndex('selected')
-        : getMapMarkerZIndex('default')
+      getStandaloneAssetZIndex(
+        camera,
+        String(camera && camera.id) === String(state.cctvSelectedCameraId)
+      )
     );
     return entry;
   };
@@ -3902,7 +5348,7 @@
   const buildGateAlertMarkerEntries = () => {
     const viewportBounds = isViewportCullingActive() ? getViewportBoundsWithPadding() : null;
     const gates = Array.from(state.gateAlerts.items.values()).filter(
-      (gate) => gate && gate.latLng && isLatLngInViewport(gate.latLng, viewportBounds)
+      (gate) => gate && gate.latLng && shouldDisplayGateStatus(gate) && isLatLngInViewport(gate.latLng, viewportBounds)
     );
     const projection = getGateProjection();
     if (!projection) {
@@ -4012,6 +5458,7 @@
             }
             return;
           }
+          selectGateAlertOptimistic(gateMeta && gateMeta.gate_id ? gateMeta.gate_id : gateMeta, { focus: false });
           void openGateAlertDetail(gateMeta && gateMeta.gate_id ? gateMeta.gate_id : gateMeta);
         },
       });
@@ -4032,7 +5479,46 @@
         ? null
         : String(weatherId || '');
     state.weather.selectedWeatherId = nextId;
+    if (nextId) {
+      if (state.ui.selectedEntityType === 'asset') {
+        closeCctvModal();
+      }
+      state.selectedSosId = null;
+      state.incidents.selectedSosId = null;
+      state.gateAlerts.selectedGateId = null;
+      state.standaloneAssets.selectedAssetKey = null;
+      state.cctvSelectedCameraId = '';
+      state.networkArcs.selectedEdgeKey = null;
+      state.ui.selectedEntityType = 'weather';
+      state.ui.selectedEntityId = nextId;
+      state.detailRenderKey = '';
+      clearMarkerLabelState({ preserveSosLocked: false });
+    } else if (state.ui.selectedEntityType === 'weather') {
+      state.ui.selectedEntityType = '';
+      state.ui.selectedEntityId = null;
+    }
+    renderIncidentList();
+    renderDetailPanel();
     syncWeatherMarkers();
+  };
+
+  const focusWeatherOnMap = (weatherId) => {
+    if (!state.map) {
+      return;
+    }
+    const weather = state.weather.items.find((entry) => String(entry && entry.id) === String(weatherId || ''));
+    if (!(weather && weather.latLng)) {
+      return;
+    }
+    moveMapCamera({
+      center: { lat: Number(weather.latLng.lat), lng: Number(weather.latLng.lng) },
+      zoom: 14,
+      tilt: isVectorRenderingActive() ? 30 : 0,
+      heading: 0,
+    });
+    state.mapContext.cameraMode = 'tilt';
+    renderMapCameraModeControls();
+    void persistAssetMonitoringPrefs();
   };
 
   const syncWeatherMarkers = () => {
@@ -4080,7 +5566,13 @@
       state.weather.items = [];
       state.weather.meta = null;
       state.weather.selectedWeatherId = null;
+      if (state.ui.selectedEntityType === 'weather') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+      }
       syncWeatherMarkers();
+      renderSummary();
+      renderIncidentList();
       return;
     }
     const branchKey = getWeatherBranchKey();
@@ -4088,6 +5580,8 @@
     state.weather.items = cached && Array.isArray(cached.items) ? cached.items : [];
     state.weather.meta = cached && cached.meta ? cached.meta : null;
     syncWeatherMarkers();
+    renderSummary();
+    renderIncidentList();
     try {
       const response = await window.cameraService.getMapWeather(
         isAllBranchesSelected() ? {} : { branch_id: branch.id }
@@ -4113,13 +5607,25 @@
         !items.some((item) => String(item.id) === String(state.weather.selectedWeatherId))
       ) {
         state.weather.selectedWeatherId = null;
+        if (state.ui.selectedEntityType === 'weather') {
+          state.ui.selectedEntityType = '';
+          state.ui.selectedEntityId = null;
+        }
       }
       syncWeatherMarkers();
+      renderSummary();
+      renderIncidentList();
     } catch (error) {
       state.weather.errorMessage = error && error.message ? error.message : 'Gagal memuat marker weather.';
       state.weather.hasLoaded = true;
       state.weather.selectedWeatherId = null;
+      if (state.ui.selectedEntityType === 'weather') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+      }
       syncWeatherMarkers();
+      renderSummary();
+      renderIncidentList();
     }
   };
 
@@ -4129,14 +5635,14 @@
       throw new Error((response && response.message) || 'Gagal memuat branch peta.');
     }
     const rows = unwrapCollection(response);
-    state.mapContext.availableBranches = rows.map(normalizeMapBranch).filter(Boolean);
+    state.mapContext.availableBranches = filterAllowedBranches(rows.map(normalizeMapBranch).filter(Boolean));
     const preferredBranchId = String(
       (state.mapContext.selectedBranch && state.mapContext.selectedBranch.id) ||
         (state.activeWorkspaceBranch && state.activeWorkspaceBranch.id) ||
         ''
     );
     state.mapContext.selectedBranch =
-      (preferredBranchId === ALL_BRANCHES_OPTION
+      (preferredBranchId === ALL_BRANCHES_OPTION && canViewAllBranches()
         ? { id: ALL_BRANCHES_OPTION, branch_name: 'Semua Branch', branch_code: 'ALL' }
         : null) ||
       state.mapContext.availableBranches.find((branch) => String(branch.id) === preferredBranchId) ||
@@ -4178,6 +5684,7 @@
       if (state.ui.selectedEntityType === 'gate') {
         state.ui.selectedEntityType = '';
         state.ui.selectedEntityId = null;
+        clearMarkerLabelState({ preserveSosLocked: false });
       }
     }
     syncGateAlertMarkers();
@@ -4348,8 +5855,7 @@
         marker.update(marker.gate);
       }
     });
-    sosDispatchBtn.disabled = true;
-    sosCompleteBtn.disabled = true;
+    applySosActionButtonState(null);
     setText(sosDetailTitleEl, detail.gate_name || detail.gate_code || `Gate ${detail.gate_id}`);
     setClass(sosDetailStatusEl, `status-pill ${getGateMarkerTone(detail) === 'danger' ? 'danger' : getGateMarkerTone(detail) === 'warning' ? 'warning' : 'success'}`);
     setText(sosDetailStatusEl, String(detail.status || 'normal').toUpperCase());
@@ -4359,7 +5865,6 @@
     sosDetailPanelEl.classList.remove('hidden');
     sosDetailPanelEl.classList.add('is-visible');
     replayDetailPanelAnimation();
-    focusEntityOnMap(detail.latLng, MAP_ZOOM_GATE);
     startGateDetailDurationTimer();
   };
 
@@ -4473,7 +5978,9 @@
       if (!isCurrentCctvLoad()) {
         return;
       }
-      const visibleCameras = cameras.filter(isStandaloneAssetTypeVisible);
+      const visibleCameras = cameras.filter(
+        (camera) => isStandaloneAssetTypeVisible(camera) && shouldDisplayStandaloneAssetStatus(camera)
+      );
       const viewportBounds = isViewportCullingActive() ? getViewportBoundsWithPadding() : null;
       const renderableCameras = viewportBounds
         ? visibleCameras.filter((camera) => isLatLngInViewport(camera.position, viewportBounds))
@@ -4566,17 +6073,8 @@
     }
     const branch = getSelectedBranch();
     if (isAllBranchesSelected()) {
-      const bounds = new window.google.maps.LatLngBounds();
-      let hasBounds = false;
-      (Array.isArray(state.mapContext.availableBranches) ? state.mapContext.availableBranches : []).forEach((entry) => {
-        const lat = Number(entry.center_lat);
-        const lng = Number(entry.center_lng);
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          bounds.extend({ lat, lng });
-          hasBounds = true;
-        }
-      });
-      if (hasBounds) {
+      const bounds = getAllBranchesBounds();
+      if (bounds) {
         state.map.fitBounds(bounds, 80);
       }
       return;
@@ -4618,7 +6116,7 @@
         new (getMarkerClass())({
           map: state.map,
           alert,
-          onSelect: (sosId) => selectAlert(sosId, true),
+          onSelect: (sosId) => selectAlert(sosId, false),
         })
       );
     });
@@ -4651,6 +6149,7 @@
     renderNotifications();
     syncGateAlertMarkers();
     syncMapMarkers();
+    syncSelectedMarkerLabelOverlay();
     syncWeatherMarkers();
     syncNetworkOverlay();
   };
@@ -4713,7 +6212,14 @@
     state.ui.selectedEntityType = 'sos';
     state.ui.selectedEntityId = String(sosId);
     state.gateAlerts.selectedGateId = null;
+    state.standaloneAssets.selectedAssetKey = null;
     state.networkArcs.selectedEdgeKey = null;
+    state.weather.selectedWeatherId = null;
+    if (options.lockLabel === false) {
+      clearMarkerLabelState();
+    } else {
+      setLockedMarkerLabel(createMarkerLabelRef('sos', state.selectedSosId));
+    }
     if (shouldRemoveNotification) {
       removeNotificationsByTarget('sos', (target) => String(target.sosId) === String(sosId));
     }
@@ -4723,7 +6229,7 @@
     }
   };
 
-  const selectGateAlertOptimistic = (gateId) => {
+  const selectGateAlertOptimistic = (gateId, options = {}) => {
     state.selectedSosId = null;
     state.incidents.selectedSosId = null;
     state.gateAlerts.selectedGateId = String(gateId);
@@ -4731,12 +6237,22 @@
     state.ui.selectedEntityId = String(gateId);
     state.standaloneAssets.selectedAssetKey = null;
     state.networkArcs.selectedEdgeKey = null;
+    state.weather.selectedWeatherId = null;
     state.detailRenderKey = '';
+    if (options.lockLabel === false) {
+      clearMarkerLabelState({ preserveSosLocked: false });
+    } else {
+      setLockedMarkerLabel(createMarkerLabelRef('gate', gateId));
+    }
     renderIncidentList();
     syncGateAlertMarkers();
+    const gate = state.gateAlerts.items.get(String(gateId));
+    if (options.focus && gate && gate.latLng) {
+      focusEntityOnMap(gate.latLng, MAP_ZOOM_SOS);
+    }
   };
 
-  const selectStandaloneAssetOptimistic = (asset) => {
+  const selectStandaloneAssetOptimistic = (asset, options = {}) => {
     if (!asset) {
       return;
     }
@@ -4745,12 +6261,25 @@
     state.incidents.selectedSosId = null;
     state.gateAlerts.selectedGateId = null;
     state.standaloneAssets.selectedAssetKey = assetKey;
+    state.standaloneAssets.selectedLabelLatLng =
+      options.labelLatLng || asset.latLng || asset.position || null;
     state.ui.selectedEntityType = 'asset';
     state.ui.selectedEntityId = assetKey;
     state.cctvSelectedCameraId = String(asset.id || '');
     state.networkArcs.selectedEdgeKey = null;
+    state.weather.selectedWeatherId = null;
     state.detailRenderKey = '';
+    if (options.lockLabel === false) {
+      clearMarkerLabelState({ preserveSosLocked: false });
+    } else {
+      setLockedMarkerLabel(
+        createMarkerLabelRef('asset', assetKey, { latLng: state.standaloneAssets.selectedLabelLatLng })
+      );
+    }
     renderIncidentList();
+    if (options.focus && asset.latLng) {
+      focusEntityOnMap(asset.latLng, MAP_ZOOM_SOS);
+    }
   };
 
   const clearSelectedAlert = () => {
@@ -4764,9 +6293,11 @@
     state.standaloneAssets.selectedAssetKey = null;
     state.cctvSelectedCameraId = '';
     state.networkArcs.selectedEdgeKey = null;
+    state.weather.selectedWeatherId = null;
     state.ui.selectedEntityType = '';
     state.ui.selectedEntityId = null;
     state.detailRenderKey = '';
+    clearMarkerLabelState({ preserveSosLocked: false });
     renderAll();
   };
 
@@ -4858,8 +6389,9 @@
         loadOpenTickets(),
       ]);
       state.isInitialSnapshotLoaded = true;
+      ensureDefaultSosSelection();
       renderAll();
-      setText(sosRouteTitleEl, 'ASSET MONITORING');
+      setText(sosRouteTitleEl, 'MOVISION');
       renderAll();
       focusSelectedBranchOnMap();
       syncCameraModeForBranchSelection();
@@ -5138,6 +6670,9 @@
         signal: state.streamAbortController.signal,
       });
       if (!response.ok || !response.body) {
+        if (response.status === 401 && window.auth && typeof window.auth.logout === 'function') {
+          await window.auth.logout().catch(() => {});
+        }
         throw new Error(`SSE asset monitoring gagal dengan status ${response.status}`);
       }
       debugLog('connectStream:connected', {
@@ -5184,6 +6719,8 @@
       state.map = new google.maps.Map(sosMapEl, {
         center: { lat: -6.2, lng: 106.8 },
         zoom: 12,
+        tilt: state.mapContext.cameraMode === 'tilt' ? 30 : 0,
+        heading: Number(state.mapContext.cameraHeading || 0),
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
@@ -5235,6 +6772,7 @@
         }
       });
       state.map.addListener('idle', () => {
+        syncInitialMapTiltIfNeeded();
         state.ui.mapInteractionActive = false;
         syncGateAlertMarkers();
         syncWeatherMarkers();
@@ -5255,8 +6793,14 @@
           return;
         }
         collapseCctvSpiderfy();
+        clearMarkerLabelState();
         if (state.weather.selectedWeatherId) {
           state.weather.selectedWeatherId = null;
+          if (state.ui.selectedEntityType === 'weather') {
+            state.ui.selectedEntityType = '';
+            state.ui.selectedEntityId = null;
+            renderIncidentList();
+          }
           syncWeatherMarkers();
         }
       });
@@ -5280,6 +6824,12 @@
       pagingControlEl.classList.toggle('hidden', state.isActive);
     }
     sosMonitorBtn.classList.toggle('is-active', state.isActive);
+    setText(sosMonitorBtn, state.isActive ? 'Back to CCTV' : 'Go to Map');
+    sosMonitorBtn.setAttribute(
+      'title',
+      state.isActive ? 'Kembali ke tampilan CCTV utama' : 'Buka Asset Monitoring'
+    );
+    sosMonitorBtn.disabled = !canUseAssetMonitoring() && !state.isActive;
   };
 
   const startTicketRefreshLoop = () => {
@@ -5318,7 +6868,7 @@
             ? newAlerts.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0]
             : null;
           if (latestAlert) {
-            selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true });
+            selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true, lockLabel: false });
           }
         })
         .catch(() => {});
@@ -5337,11 +6887,7 @@
       return;
     }
     const key = String(event.key || '').toLowerCase();
-    const usesCtrl = event.ctrlKey || event.metaKey;
-    const usesShift = event.shiftKey;
-    const isBlockedShortcut =
-      (usesCtrl && key === 'k') ||
-      (usesShift && ['k', 'h', 'u', 'g', 'f', 'n', 'r', 'l', 'm', 'b'].includes(key));
+    const usesShiftAlt = event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey;
 
     if (key === 'escape') {
       if (sosDispatchModalEl.classList.contains('visible')) {
@@ -5364,13 +6910,40 @@
       return;
     }
 
-    if (!isBlockedShortcut) {
+    if (!usesShiftAlt) {
       return;
     }
 
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (usesShift && key === 'b') {
+    if (key === 'h') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (typeof window.showHelp === 'function') {
+        window.showHelp();
+      }
+      return;
+    }
+
+    if (key === 'k') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (typeof window.openApiBaseUrlConfig === 'function') {
+        void window.openApiBaseUrlConfig();
+      }
+      return;
+    }
+
+    if (key === 'u') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (typeof window.openUpdateFeedConfig === 'function') {
+        void window.openUpdateFeedConfig();
+      }
+      return;
+    }
+
+    if (key === 'b') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
       toggleMapCameraDebugVisibility();
     }
   };
@@ -5404,8 +6977,21 @@
       if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'networkVisible')) {
         state.networkArcs.visible = Boolean(assetMonitoringPrefs.networkVisible);
       }
+      if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'animatedNetworkArcsEnabled')) {
+        state.networkArcs.experimentalEnabled = Boolean(assetMonitoringPrefs.animatedNetworkArcsEnabled);
+      }
       if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'weatherVisible')) {
         state.weather.visible = Boolean(assetMonitoringPrefs.weatherVisible);
+      }
+      if (assetMonitoringPrefs && Object.prototype.hasOwnProperty.call(assetMonitoringPrefs, 'weatherExpandAllBubbles')) {
+        state.weather.expandAllBubbles = Boolean(assetMonitoringPrefs.weatherExpandAllBubbles);
+      }
+      if (assetMonitoringPrefs && assetMonitoringPrefs.markerStatusFilters && typeof assetMonitoringPrefs.markerStatusFilters === 'object') {
+        state.markerStatusFilters = {
+          normal: assetMonitoringPrefs.markerStatusFilters.normal !== false,
+          warning: assetMonitoringPrefs.markerStatusFilters.warning !== false,
+          error: assetMonitoringPrefs.markerStatusFilters.error !== false,
+        };
       }
       if (
         assetMonitoringPrefs &&
@@ -5437,6 +7023,7 @@
       const workspaceState = (current && current.data) || {};
       const nextState = {
         ...workspaceState,
+        viewMode: state.isActive ? 'asset-monitoring' : 'cctv',
         assetMonitoring: {
           ...(workspaceState.assetMonitoring || {}),
           selectedBranchId:
@@ -5447,7 +7034,12 @@
           mapCameraMode: state.mapContext.cameraMode,
           mapCameraHeading: Number(state.mapContext.cameraHeading || 0),
           networkVisible: state.networkArcs.visible,
+          animatedNetworkArcsEnabled: state.networkArcs.experimentalEnabled,
           weatherVisible: state.weather.visible,
+          weatherExpandAllBubbles: state.weather.expandAllBubbles,
+          markerStatusFilters: {
+            ...state.markerStatusFilters,
+          },
         },
       };
       await window.appState.saveWorkspaceState(nextState);
@@ -5460,8 +7052,12 @@
     if (state.isActive) {
       return;
     }
+    if (!canUseAssetMonitoring()) {
+      throw new Error('Akun ini tidak memiliki akses Asset Monitoring.');
+    }
     debugLog('enterAssetMonitoringMode');
     state.isActive = true;
+    state.ui.initialTiltSyncPending = true;
     document.body.classList.add('sos-mode');
     sosDashboardEl.classList.remove('hidden');
     cameraGridEl.classList.add('hidden');
@@ -5492,11 +7088,24 @@
     if (sosNetworkToggleEl) {
       sosNetworkToggleEl.checked = state.networkArcs.visible;
     }
+    if (sosAnimatedNetworkToggleEl) {
+      sosAnimatedNetworkToggleEl.checked = state.networkArcs.experimentalEnabled;
+    }
     if (sosWeatherToggleEl) {
       syncWeatherToggleState();
     }
+    if (sosMarkerNormalToggleEl) {
+      sosMarkerNormalToggleEl.checked = state.markerStatusFilters.normal;
+    }
+    if (sosMarkerWarningToggleEl) {
+      sosMarkerWarningToggleEl.checked = state.markerStatusFilters.warning;
+    }
+    if (sosMarkerErrorToggleEl) {
+      sosMarkerErrorToggleEl.checked = state.markerStatusFilters.error;
+    }
     await ensureMap();
     await refreshDashboard();
+    void persistAssetMonitoringPrefs();
     startTicketRefreshLoop();
     void connectStream();
   };
@@ -5504,6 +7113,10 @@
   const leaveAssetMonitoringMode = () => {
     debugLog('leaveAssetMonitoringMode');
     state.isActive = false;
+    setAssetFilterPopupVisible(false);
+    setFoControlPopupVisible(false);
+    setWeatherControlPopupVisible(false);
+    setBranchControlPopupVisible(false);
     document.body.classList.remove('sos-mode');
     sosDashboardEl.classList.add('hidden');
     cameraGridEl.classList.remove('hidden');
@@ -5523,49 +7136,61 @@
     stopTicketRefreshLoop();
     setConnectionBadge('Idle', 'neutral');
     setToolbarState();
+    void persistAssetMonitoringPrefs();
     if (typeof window.__HKTV_RESUME_GRID_STREAMS__ === 'function') {
       void window.__HKTV_RESUME_GRID_STREAMS__();
     }
   };
 
   const openDispatchModal = () => {
+    if (!canDispatchSos()) {
+      setConnectionBadge('Akun ini tidak memiliki izin dispatch SOS.', 'warning');
+      return;
+    }
     const alert = getSelectedAlert();
     if (!alert) {
       return;
     }
     sosDispatchSosIdEl.value = String(alert.sos_id);
-    sosIncidentTypeInputEl.value = toCapitalizedWords(
+    sosIncidentTypeInputEl.value = toSentenceCase(
       alert.ticket && alert.ticket.incident_type ? alert.ticket.incident_type : ''
     );
-    sosVehicleTypeInputEl.value = toCapitalizedWords(
+    sosVehicleTypeInputEl.value = toSentenceCase(
       alert.ticket && alert.ticket.vehicle_type ? alert.ticket.vehicle_type : ''
     );
     sosChronologyInputEl.value =
-      toCapitalizedWords(alert.ticket && alert.ticket.initial_chronology ? alert.ticket.initial_chronology : '');
+      toSentenceCase(alert.ticket && alert.ticket.initial_chronology ? alert.ticket.initial_chronology : '');
     setClass(sosDispatchStatusEl, 'api-check-status neutral');
     setText(sosDispatchStatusEl, 'Lengkapi dispatch untuk kejadian terpilih.');
     showModal(sosDispatchModalEl);
   };
 
   const openCompleteModal = () => {
+    if (!canCompleteSos()) {
+      setConnectionBadge('Akun ini tidak memiliki izin menyelesaikan ticket SOS.', 'warning');
+      return;
+    }
     const alert = getSelectedAlert();
     if (!(alert && alert.ticket && alert.ticket.ticket_no)) {
       return;
     }
     sosCompleteTicketNoEl.value = String(alert.ticket.ticket_no);
-    sosCompletionNoteInputEl.value = toCapitalizedWords('');
+    sosCompletionNoteInputEl.value = '';
     setClass(sosCompleteStatusEl, 'api-check-status neutral');
     setText(sosCompleteStatusEl, 'Isi catatan penyelesaian untuk ticket terpilih.');
     showModal(sosCompleteModalEl);
   };
 
   const completeSelectedTicket = async () => {
+    if (!canCompleteSos()) {
+      throw new Error('Akun ini tidak memiliki izin menyelesaikan ticket SOS.');
+    }
     const alert = getSelectedAlert();
     if (!(alert && alert.ticket && alert.ticket.ticket_no)) {
       return;
     }
-    applyAutoCapitalizeValue(sosCompletionNoteInputEl);
-    const completionNote = sosCompletionNoteInputEl.value.trim();
+    applySentenceCaseValue(sosCompletionNoteInputEl);
+    const completionNote = toSentenceCase(sosCompletionNoteInputEl.value);
     if (!completionNote) {
       throw new Error('Catatan penyelesaian wajib diisi.');
     }
@@ -5595,43 +7220,33 @@
     });
   });
 
+  const restoreAssetMonitoringMode = async () => {
+    if (window.__HKTV_AUTH_BOOTSTRAP_PROMISE__) {
+      await window.__HKTV_AUTH_BOOTSTRAP_PROMISE__;
+    }
+    if (!canUseAssetMonitoring()) {
+      setToolbarState();
+      return;
+    }
+    if (!window.appState || typeof window.appState.getWorkspaceState !== 'function') {
+      return;
+    }
+    const response = await window.appState.getWorkspaceState();
+    if (!response || response.status >= 400) {
+      return;
+    }
+    const workspaceState = response.data || null;
+    if (!workspaceState || String(workspaceState.viewMode || '').toLowerCase() !== 'asset-monitoring') {
+      return;
+    }
+    await enterAssetMonitoringMode();
+  };
+
   sosRefreshBtn.addEventListener('click', () => {
     void refreshDashboard().catch((error) => {
       setConnectionBadge(error.message || 'Refresh asset monitoring gagal.', 'danger');
     });
   });
-
-  if (sosBranchSelectEl) {
-    sosBranchSelectEl.addEventListener('change', () => {
-      const nextBranchId = String(sosBranchSelectEl.value || '');
-      debugLog('branchSelect:change', {
-        previousBranchId:
-          state.mapContext.selectedBranch && state.mapContext.selectedBranch.id
-            ? String(state.mapContext.selectedBranch.id)
-            : '',
-        nextBranchId,
-      });
-      state.mapContext.selectedBranch =
-        nextBranchId === ALL_BRANCHES_OPTION
-          ? {
-              id: ALL_BRANCHES_OPTION,
-              branch_name: 'Semua Branch',
-              branch_code: 'ALL',
-            }
-          : state.mapContext.availableBranches.find((branch) => String(branch.id) === nextBranchId) || null;
-      if (nextBranchId === ALL_BRANCHES_OPTION) {
-        state.weather.visible = false;
-      }
-      resetIncidentListAnimationState();
-      resetStandaloneLayerState();
-      resetNetworkLayerState();
-      resetWeatherLayerState();
-      void persistAssetMonitoringPrefs();
-      void refreshDashboard().catch((error) => {
-        setConnectionBadge(error.message || 'Gagal mengganti branch monitoring.', 'danger');
-      });
-    });
-  }
 
   if (sosMapNormalBtn) {
     sosMapNormalBtn.addEventListener('click', () => {
@@ -5659,7 +7274,7 @@
 
   if (sosMapResetCameraBtn) {
     sosMapResetCameraBtn.addEventListener('click', () => {
-      resetMapCamera();
+      centerMapForCurrentSelection();
     });
   }
 
@@ -5731,25 +7346,277 @@
         }
       }
       void persistAssetMonitoringPrefs();
+      syncFoControlButtonState();
       renderAll();
       updateMapEmptyState('');
     });
   }
+
+  if (sosAnimatedNetworkToggleEl) {
+    sosAnimatedNetworkToggleEl.addEventListener('change', () => {
+      state.networkArcs.experimentalEnabled = Boolean(sosAnimatedNetworkToggleEl.checked);
+      if (!state.networkArcs.experimentalEnabled) {
+        stopNetworkArcAnimation({ resetTime: true });
+      }
+      void persistAssetMonitoringPrefs();
+      syncFoControlButtonState();
+      renderAssetToolbar();
+      syncNetworkOverlay();
+      updateMapEmptyState('');
+    });
+  }
+
+  if (assetFilterBtn) {
+    assetFilterBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setToolbarMenuPanelVisible(false);
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setAssetFilterPopupVisible(!(assetFilterPopup && !assetFilterPopup.classList.contains('hidden')));
+    });
+  }
+
+  if (assetFilterPopup) {
+    assetFilterPopup.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  }
+
+  if (foControlBtn) {
+    foControlBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setToolbarMenuPanelVisible(false);
+      setAssetFilterPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setFoControlPopupVisible(!(foControlPopup && !foControlPopup.classList.contains('hidden')));
+    });
+  }
+
+  if (foControlPopup) {
+    foControlPopup.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  }
+
+  if (weatherControlBtn) {
+    weatherControlBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setToolbarMenuPanelVisible(false);
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(!(weatherControlPopup && !weatherControlPopup.classList.contains('hidden')));
+    });
+  }
+
+  if (weatherControlPopup) {
+    weatherControlPopup.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  }
+
+  if (sosBranchControlBtn) {
+    sosBranchControlBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setToolbarMenuPanelVisible(false);
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setBranchControlPopupVisible(!(sosBranchControlPopup && !sosBranchControlPopup.classList.contains('hidden')));
+    });
+  }
+
+  if (sosBranchControlPopup) {
+    sosBranchControlPopup.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  }
+
+  if (sosBranchControlOptionsEl) {
+    sosBranchControlOptionsEl.addEventListener('click', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest('[data-branch-option]') : null;
+      if (!target) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const nextBranchId = String(target.getAttribute('data-branch-option') || '');
+      setBranchControlPopupVisible(false);
+      applySelectedMonitoringBranch(nextBranchId);
+    });
+  }
+
+  const handleMarkerStatusFilterChange = () => {
+    state.markerStatusFilters.normal = sosMarkerNormalToggleEl ? Boolean(sosMarkerNormalToggleEl.checked) : true;
+    state.markerStatusFilters.warning = sosMarkerWarningToggleEl ? Boolean(sosMarkerWarningToggleEl.checked) : true;
+    state.markerStatusFilters.error = sosMarkerErrorToggleEl ? Boolean(sosMarkerErrorToggleEl.checked) : true;
+    const selectedGate = state.gateAlerts.selectedGateId
+      ? state.gateAlerts.items.get(String(state.gateAlerts.selectedGateId))
+      : null;
+    if (selectedGate && !shouldDisplayGateStatus(selectedGate)) {
+      state.gateAlerts.selectedGateId = null;
+      if (state.ui.selectedEntityType === 'gate') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+        clearMarkerLabelState({ preserveSosLocked: false });
+      }
+    }
+    const selectedAsset = state.standaloneAssets.selectedAssetKey
+      ? state.standaloneAssets.items.get(String(state.standaloneAssets.selectedAssetKey))
+      : null;
+    if (selectedAsset && !shouldDisplayStandaloneAssetStatus(selectedAsset)) {
+      state.standaloneAssets.selectedAssetKey = null;
+      closeCctvModal();
+      if (state.ui.selectedEntityType === 'asset') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+        clearMarkerLabelState({ preserveSosLocked: false });
+      }
+    }
+    void persistAssetMonitoringPrefs();
+    syncGateAlertMarkers();
+    void updateDefaultCctvMarkers();
+    renderAll();
+    updateMapEmptyState('');
+  };
+
+  if (sosMarkerNormalToggleEl) {
+    sosMarkerNormalToggleEl.addEventListener('change', handleMarkerStatusFilterChange);
+  }
+
+  if (sosMarkerWarningToggleEl) {
+    sosMarkerWarningToggleEl.addEventListener('change', handleMarkerStatusFilterChange);
+  }
+
+  if (sosMarkerErrorToggleEl) {
+    sosMarkerErrorToggleEl.addEventListener('change', handleMarkerStatusFilterChange);
+  }
+
+  document.addEventListener('click', (event) => {
+    if (!assetFilterPopup || assetFilterPopup.classList.contains('hidden')) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target || (!assetFilterPopup.contains(target) && !(assetFilterBtn && assetFilterBtn.contains(target)))) {
+      setAssetFilterPopupVisible(false);
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!foControlPopup || foControlPopup.classList.contains('hidden')) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target || (!foControlPopup.contains(target) && !(foControlBtn && foControlBtn.contains(target)))) {
+      setFoControlPopupVisible(false);
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!weatherControlPopup || weatherControlPopup.classList.contains('hidden')) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target || (!weatherControlPopup.contains(target) && !(weatherControlBtn && weatherControlBtn.contains(target)))) {
+      setWeatherControlPopupVisible(false);
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!sosBranchControlPopup || sosBranchControlPopup.classList.contains('hidden')) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target || (!sosBranchControlPopup.contains(target) && !(sosBranchControlBtn && sosBranchControlBtn.contains(target)))) {
+      setBranchControlPopupVisible(false);
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (Date.now() < state.cctvSuppressMapClickUntil) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) {
+      return;
+    }
+    if (toolbarMenuBtnEl && toolbarMenuBtnEl.contains(target)) {
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setBranchControlPopupVisible(false);
+      return;
+    }
+    if (assetFilterBtn && assetFilterBtn.contains(target)) {
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setBranchControlPopupVisible(false);
+      setToolbarMenuPanelVisible(false);
+      return;
+    }
+    if (foControlBtn && foControlBtn.contains(target)) {
+      setAssetFilterPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setBranchControlPopupVisible(false);
+      setToolbarMenuPanelVisible(false);
+      return;
+    }
+    if (weatherControlBtn && weatherControlBtn.contains(target)) {
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
+      setBranchControlPopupVisible(false);
+      setToolbarMenuPanelVisible(false);
+      return;
+    }
+    if (sosBranchControlBtn && sosBranchControlBtn.contains(target)) {
+      setAssetFilterPopupVisible(false);
+      setFoControlPopupVisible(false);
+      setWeatherControlPopupVisible(false);
+      setToolbarMenuPanelVisible(false);
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) {
+      return;
+    }
+    if (
+      target.closest('.sos-map-marker') ||
+      target.closest('[data-entity-type]') ||
+      target.closest('[data-notification-open]') ||
+      target.closest('.selected-map-label')
+    ) {
+      return;
+    }
+    clearMarkerLabelState();
+  });
 
   if (sosWeatherToggleEl) {
     sosWeatherToggleEl.addEventListener('change', () => {
       state.weather.visible = Boolean(sosWeatherToggleEl.checked);
       if (!state.weather.visible) {
         state.weather.selectedWeatherId = null;
+        if (state.ui.selectedEntityType === 'weather') {
+          state.ui.selectedEntityType = '';
+          state.ui.selectedEntityId = null;
+        }
         clearWeatherMarkers();
+        renderSummary();
         renderAssetToolbar();
+        renderIncidentList();
         updateMapEmptyState('');
         void persistAssetMonitoringPrefs();
         return;
       }
       void loadWeatherMarkers()
         .then(() => {
+          renderSummary();
           renderAssetToolbar();
+          renderIncidentList();
           updateMapEmptyState('');
         })
         .catch((error) => {
@@ -5762,6 +7629,25 @@
       void persistAssetMonitoringPrefs();
     });
   }
+
+  if (sosWeatherBubbleToggleEl) {
+    sosWeatherBubbleToggleEl.addEventListener('change', () => {
+      state.weather.expandAllBubbles = Boolean(sosWeatherBubbleToggleEl.checked);
+      syncWeatherMarkers();
+      renderAssetToolbar();
+      void persistAssetMonitoringPrefs();
+    });
+  }
+
+  window.addEventListener('app-appearance-change', () => {
+    weatherIconSourceCache.clear();
+    weatherIconSourcePromiseCache.clear();
+    if (!state.isActive) {
+      return;
+    }
+    syncWeatherMarkers();
+    renderIncidentList();
+  });
 
   sosNotificationListEl.addEventListener('click', (event) => {
     const closeButton =
@@ -5781,11 +7667,11 @@
         return;
       }
       if (entry.target.type === 'sos') {
-        selectAlert(entry.target.sosId, true);
+        selectAlert(entry.target.sosId, false, { lockLabel: false });
         return;
       }
       if (entry.target.type === 'gate') {
-        selectGateAlertOptimistic(entry.target.gateId);
+        selectGateAlertOptimistic(entry.target.gateId, { focus: false, lockLabel: false });
         void openGateAlertDetail(entry.target.gateId);
         return;
       }
@@ -5794,14 +7680,11 @@
         selectStandaloneAssetOptimistic(asset || {
           asset_type: entry.target.assetType,
           id: entry.target.assetId,
-        });
+        }, { focus: false, lockLabel: false });
         void openCctvModal(asset || {
           asset_type: entry.target.assetType,
           id: entry.target.assetId,
         });
-        if (asset && asset.latLng) {
-          focusEntityOnMap(asset.latLng, MAP_ZOOM_ASSET);
-        }
       }
     }
   });
@@ -5827,11 +7710,11 @@
     }
     const entityType = target.getAttribute('data-entity-type') || '';
     if (entityType === 'sos' && target.dataset.sosId) {
-      selectAlert(target.dataset.sosId, true, { forceFocus: true });
+      selectAlert(target.dataset.sosId, true, { forceFocus: true, lockLabel: false });
       return;
     }
     if (entityType === 'gate' && target.dataset.gateId) {
-      selectGateAlertOptimistic(target.dataset.gateId);
+      selectGateAlertOptimistic(target.dataset.gateId, { focus: true, lockLabel: false });
       void openGateAlertDetail(target.dataset.gateId);
       return;
     }
@@ -5839,10 +7722,15 @@
       const assetKey = makeAssetKey(target.dataset.assetType, target.dataset.assetId);
       const asset = state.standaloneAssets.items.get(assetKey);
       if (asset) {
-        selectStandaloneAssetOptimistic(asset);
-        focusEntityOnMap(asset.latLng, MAP_ZOOM_ASSET);
+        selectStandaloneAssetOptimistic(asset, { focus: true, lockLabel: false });
         void openCctvModal(asset);
       }
+      return;
+    }
+    if (entityType === 'weather' && target.dataset.weatherId) {
+      selectWeatherMarker(target.dataset.weatherId);
+      focusWeatherOnMap(target.dataset.weatherId);
+      return;
     }
   });
 
@@ -5856,14 +7744,6 @@
       target.click();
     }
   });
-
-  [
-    sosIncidentTypeInputEl,
-    sosVehicleTypeInputEl,
-    sosChronologyInputEl,
-    sosCompletionNoteInputEl,
-  ].forEach(bindAutoCapitalizeInput);
-
   sosDispatchBtn.addEventListener('click', openDispatchModal);
   sosCompleteBtn.addEventListener('click', openCompleteModal);
   closeSosDetailBtn.addEventListener('click', clearSelectedAlert);
@@ -5871,16 +7751,25 @@
   closeSosCompleteBtn.addEventListener('click', () => hideModal(sosCompleteModalEl));
   closeSosCctvModalBtn.addEventListener('click', closeCctvModal);
 
+  [
+    sosIncidentTypeInputEl,
+    sosVehicleTypeInputEl,
+    sosChronologyInputEl,
+    sosCompletionNoteInputEl,
+  ].forEach(bindSentenceCaseInput);
+
   sosDispatchFormEl.addEventListener('submit', async (event) => {
     event.preventDefault();
-    applyAutoCapitalizeValue(sosIncidentTypeInputEl);
-    applyAutoCapitalizeValue(sosVehicleTypeInputEl);
-    applyAutoCapitalizeValue(sosChronologyInputEl);
+    if (!canDispatchSos()) {
+      setClass(sosDispatchStatusEl, 'api-check-status danger');
+      setText(sosDispatchStatusEl, 'Akun ini tidak memiliki izin dispatch SOS.');
+      return;
+    }
     const payload = {
       sos_id: Number(sosDispatchSosIdEl.value),
-      incident_type: sosIncidentTypeInputEl.value.trim(),
-      vehicle_type: sosVehicleTypeInputEl.value.trim(),
-      initial_chronology: sosChronologyInputEl.value.trim(),
+      incident_type: toSentenceCase(sosIncidentTypeInputEl.value),
+      vehicle_type: toSentenceCase(sosVehicleTypeInputEl.value),
+      initial_chronology: toSentenceCase(sosChronologyInputEl.value),
     };
     setClass(sosDispatchStatusEl, 'api-check-status warning');
     setText(sosDispatchStatusEl, 'Mengirim dispatch...');
@@ -5917,6 +7806,11 @@
 
   sosCompleteFormEl.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (!canCompleteSos()) {
+      setClass(sosCompleteStatusEl, 'api-check-status danger');
+      setText(sosCompleteStatusEl, 'Akun ini tidak memiliki izin menyelesaikan ticket SOS.');
+      return;
+    }
     setClass(sosCompleteStatusEl, 'api-check-status warning');
     setText(sosCompleteStatusEl, 'Menyelesaikan ticket...');
     try {
@@ -5939,9 +7833,27 @@
     }
   });
   document.addEventListener('keydown', handleSosKeyboardGuards, true);
+  window.addEventListener('app-session-changed', () => {
+    setToolbarState();
+    renderBranchOptions();
+    renderSummary();
+    renderIncidentList();
+    if (state.isActive && !canUseAssetMonitoring()) {
+      leaveAssetMonitoringMode();
+      setConnectionBadge('Session saat ini tidak memiliki akses Asset Monitoring.', 'warning');
+    }
+    applySosActionButtonState(getSelectedAlert());
+  });
 
+  setToolbarState();
   renderNotifications();
   renderSummary();
+  void restoreAssetMonitoringMode().catch((error) => {
+    setConnectionBadge(
+      (error && error.message) || 'Gagal memulihkan asset monitoring.',
+      'danger'
+    );
+  });
 })();
 
 

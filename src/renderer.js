@@ -7,6 +7,7 @@ const quickSearchBtn = document.getElementById('quickSearchBtn');
 const layoutConfigBtn = document.getElementById('layoutConfigBtn');
 const focusModeBtn = document.getElementById('focusModeBtn');
 const normalModeBtn = document.getElementById('normalModeBtn');
+const menuAppearanceBtn = document.getElementById('menuAppearanceBtn');
 const menuApiConfigBtn = document.getElementById('menuApiConfigBtn');
 const menuUpdateInfoBtn = document.getElementById('menuUpdateInfoBtn');
 const menuHelpBtn = document.getElementById('menuHelpBtn');
@@ -21,6 +22,7 @@ const modeBadgeEl = document.getElementById('modeBadge');
 const activeRouteTitleEl = document.getElementById('activeRouteTitle');
 const currentBranchMiniEl = document.getElementById('currentBranchMini');
 const activityVersionEl = document.getElementById('activityVersion');
+const assetMapVersionEyebrowEl = document.getElementById('assetMapVersionEyebrow');
 const apiBaseUrlLabelEl = document.getElementById('apiBaseUrlLabel');
 const updateStatusBadgeEl = document.getElementById('updateStatusBadge');
 const activityFeedEl = document.getElementById('activityFeed');
@@ -50,14 +52,15 @@ const apiConfigModalEl = document.getElementById('apiConfigModal');
 const closeApiConfigBtn = document.getElementById('closeApiConfigBtn');
 const apiConfigFormEl = document.getElementById('apiConfigForm');
 const apiBaseUrlInputEl = document.getElementById('apiBaseUrlInput');
-const apiAuthTokenInputEl = document.getElementById('apiAuthTokenInput');
-const apiTokenInfoEl = document.getElementById('apiTokenInfo');
-const apiTokenUsernameEl = document.getElementById('apiTokenUsername');
-const apiTokenRoleEl = document.getElementById('apiTokenRole');
-const apiTokenStatusEl = document.getElementById('apiTokenStatus');
-const apiTokenExpiryEl = document.getElementById('apiTokenExpiry');
 const checkApiConfigBtn = document.getElementById('checkApiConfigBtn');
 const apiCheckStatusEl = document.getElementById('apiCheckStatus');
+const appearanceConfigModalEl = document.getElementById('appearanceConfigModal');
+const closeAppearanceConfigBtn = document.getElementById('closeAppearanceConfigBtn');
+const appearanceConfigFormEl = document.getElementById('appearanceConfigForm');
+const appearanceFontFamilySelectEl = document.getElementById('appearanceFontFamilySelect');
+const appearanceWeatherIconStyleSelectEl = document.getElementById('appearanceWeatherIconStyleSelect');
+const appearanceWeatherIconColorInputEl = document.getElementById('appearanceWeatherIconColorInput');
+const appearanceWeatherIconAnimatedEl = document.getElementById('appearanceWeatherIconAnimated');
 const layoutConfigModalEl = document.getElementById('layoutConfigModal');
 const closeLayoutConfigBtn = document.getElementById('closeLayoutConfigBtn');
 const layoutConfigFormEl = document.getElementById('layoutConfigForm');
@@ -81,6 +84,21 @@ const closeHelpBtn = document.getElementById('closeHelpBtn');
 const healthMonitorPanelEl = document.getElementById('healthMonitorPanel');
 const healthMonitorGridEl = document.getElementById('healthMonitorGrid');
 const closeHealthMonitorBtn = document.getElementById('closeHealthMonitorBtn');
+const authModalEl = document.getElementById('authModal');
+const authFormEl = document.getElementById('authForm');
+const authStatusEl = document.getElementById('authStatus');
+const authUsernameInputEl = document.getElementById('authUsernameInput');
+const authPasswordInputEl = document.getElementById('authPasswordInput');
+const authLoginBtn = document.getElementById('authLoginBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const profileMenuBtn = document.getElementById('profileMenuBtn');
+const profileMenuBtnLabel = document.getElementById('profileMenuBtnLabel');
+const profileMenuPanel = document.getElementById('profileMenuPanel');
+const profileDisplayNameEl = document.getElementById('profileDisplayName');
+const profileRoleTextEl = document.getElementById('profileRoleText');
+const profileEmailTextEl = document.getElementById('profileEmailText');
+const capabilityApi = window.appCapability;
+const sessionStore = window.appSessionStore;
 
 const hlsPlayers = [];
 const selectedCameraIds = new Set();
@@ -98,6 +116,7 @@ let activeBranch = null;
 let activePage = 1;
 let totalPages = 1;
 let lastApiConfigOpenAt = 0;
+let lastAppearanceConfigOpenAt = 0;
 let lastUpdateConfigOpenAt = 0;
 let toolbarVisible = false;
 let isCheckingUpdate = false;
@@ -145,6 +164,8 @@ let spiderfySourceCameraId = null;
 let spiderfyClusterMarker = null;
 let selectedMapCameraId = null;
 let suppressSidebarMapClickUntil = 0;
+let authBootstrapCompleted = false;
+let isSubmittingLogin = false;
 let gridLayout = {
   type: '5x4',
   columns: 5,
@@ -175,6 +196,18 @@ const STREAM_SOURCE_FAST_RETRIES = 3;
 const STREAM_SOURCE_COOLDOWN_DELAYS_MS = [30000, 60000, 120000, 300000];
 const ONLINE_MARKER_URL = new URL('./assets/marker-map-online.svg', window.location.href).toString();
 const OFFLINE_MARKER_URL = new URL('./assets/marker-map-offline.svg', window.location.href).toString();
+const ANONYMOUS_SESSION =
+  capabilityApi && typeof capabilityApi.createAnonymousSession === 'function'
+    ? capabilityApi.createAnonymousSession()
+    : {
+        isAuthenticated: false,
+        token: '',
+        user: null,
+        roles: [],
+        permissions: [],
+        branchScopes: [],
+        canViewAllBranches: false,
+      };
 
 const setTextIfChanged = (element, value) => {
   if (!element) {
@@ -247,6 +280,60 @@ const setApiBaseUrlText = (value) => {
 const setInstalledVersionText = (value) => {
   const nextValue = `Version: ${value || '-'}`;
   setTextIfChanged(activityVersionEl, nextValue);
+  setTextIfChanged(assetMapVersionEyebrowEl, value || '-');
+};
+
+const normalizeAppearanceConfig = (payload) => {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const requestedFontFamily = String(source.fontFamily || '').trim().toLowerCase();
+  const requestedWeatherIconStyle = String(source.weatherIconStyle || '').trim().toLowerCase();
+  const rawMonochromeColor = String(source.weatherIconMonochromeColor || '').trim();
+  const normalizedColorValue = rawMonochromeColor.startsWith('#')
+    ? rawMonochromeColor.slice(1)
+    : rawMonochromeColor;
+  return {
+    fontFamily: APP_FONT_FAMILIES[requestedFontFamily] ? requestedFontFamily : DEFAULT_APPEARANCE_CONFIG.fontFamily,
+    weatherIconStyle: WEATHER_ICON_STYLES.has(requestedWeatherIconStyle)
+      ? requestedWeatherIconStyle
+      : DEFAULT_APPEARANCE_CONFIG.weatherIconStyle,
+    weatherIconMonochromeColor: /^[0-9a-fA-F]{6}$/.test(normalizedColorValue)
+      ? `#${normalizedColorValue.toUpperCase()}`
+      : DEFAULT_APPEARANCE_CONFIG.weatherIconMonochromeColor,
+    weatherIconAnimated:
+      source.weatherIconAnimated === undefined
+        ? DEFAULT_APPEARANCE_CONFIG.weatherIconAnimated
+        : Boolean(source.weatherIconAnimated),
+  };
+};
+
+const getAppFontFamilyStack = (fontFamily) =>
+  APP_FONT_FAMILIES[String(fontFamily || '').trim().toLowerCase()] ||
+  APP_FONT_FAMILIES[DEFAULT_APPEARANCE_CONFIG.fontFamily];
+
+const applyAppearanceConfig = (payload) => {
+  currentAppearanceConfig = normalizeAppearanceConfig(payload);
+  const fontStack = getAppFontFamilyStack(currentAppearanceConfig.fontFamily);
+  document.documentElement.style.setProperty('--font-family-base', fontStack);
+  window.__APP_FONT_FAMILY_STACK = fontStack;
+  window.__APP_APPEARANCE = { ...currentAppearanceConfig };
+  if (appearanceFontFamilySelectEl) {
+    appearanceFontFamilySelectEl.value = currentAppearanceConfig.fontFamily;
+  }
+  if (appearanceWeatherIconStyleSelectEl) {
+    appearanceWeatherIconStyleSelectEl.value = currentAppearanceConfig.weatherIconStyle;
+  }
+  if (appearanceWeatherIconColorInputEl) {
+    appearanceWeatherIconColorInputEl.value = currentAppearanceConfig.weatherIconMonochromeColor;
+    appearanceWeatherIconColorInputEl.disabled = currentAppearanceConfig.weatherIconStyle !== 'monochrome-color';
+  }
+  if (appearanceWeatherIconAnimatedEl) {
+    appearanceWeatherIconAnimatedEl.checked = Boolean(currentAppearanceConfig.weatherIconAnimated);
+  }
+  window.dispatchEvent(
+    new CustomEvent('app-appearance-change', {
+      detail: { ...currentAppearanceConfig },
+    })
+  );
 };
 
 const getUpdateTone = (state) => {
@@ -380,83 +467,142 @@ const setApiCheckButtonState = (checking) => {
   checkApiConfigBtn.textContent = checking ? 'Checking...' : 'Check URL';
 };
 
-const decodeJwtPayload = (token) => {
-  const rawToken = String(token || '').trim();
-  if (!rawToken) {
-    return null;
-  }
+const getSessionSnapshot = () =>
+  sessionStore && typeof sessionStore.getState === 'function'
+    ? sessionStore.getState()
+    : { ...ANONYMOUS_SESSION };
 
-  const jwt = rawToken.startsWith('Bearer ') ? rawToken.slice(7).trim() : rawToken;
-  const parts = jwt.split('.');
-  if (parts.length < 2) {
-    return null;
-  }
+const hasPermission = (permissionCode) =>
+  Boolean(capabilityApi && capabilityApi.hasPermission(getSessionSnapshot(), permissionCode));
 
-  try {
-    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
-    const decoded = window.atob(padded);
-    return JSON.parse(decoded);
-  } catch (_) {
-    return null;
+const canUseCctv = () =>
+  Boolean(capabilityApi && capabilityApi.canUseCctv(getSessionSnapshot()));
+
+const canUseAssetMonitoring = () =>
+  Boolean(capabilityApi && capabilityApi.canUseAssetMonitoring(getSessionSnapshot()));
+
+const isBranchAllowed = (branchId) =>
+  Boolean(capabilityApi && capabilityApi.canAccessBranch(getSessionSnapshot(), branchId));
+
+const getAllowedBranches = (branches) =>
+  capabilityApi && typeof capabilityApi.filterAllowedBranches === 'function'
+    ? capabilityApi.filterAllowedBranches(getSessionSnapshot(), branches)
+    : Array.isArray(branches)
+      ? branches
+      : [];
+
+const applySessionToUi = (session) => {
+  const normalizedSession =
+    session && typeof session === 'object' ? session : { ...ANONYMOUS_SESSION };
+  const displayName =
+    normalizedSession.user &&
+    (normalizedSession.user.display_name ||
+      normalizedSession.user.username ||
+      normalizedSession.user.email)
+      ? normalizedSession.user.display_name ||
+        normalizedSession.user.username ||
+        normalizedSession.user.email
+      : '-';
+  const primaryRole =
+    Array.isArray(normalizedSession.roles) && normalizedSession.roles.length
+      ? normalizedSession.roles[0]
+      : '-';
+  const email =
+    normalizedSession.user && normalizedSession.user.email
+      ? normalizedSession.user.email
+      : '-';
+  const greetingName =
+    normalizedSession.user &&
+    (normalizedSession.user.username || normalizedSession.user.display_name || normalizedSession.user.email)
+      ? normalizedSession.user.username ||
+        normalizedSession.user.display_name ||
+        normalizedSession.user.email
+      : '-';
+
+  setTextIfChanged(profileMenuBtnLabel, `Hi, ${greetingName}`);
+  setTextIfChanged(profileDisplayNameEl, displayName);
+  setTextIfChanged(profileRoleTextEl, `Role: ${primaryRole}`);
+  setTextIfChanged(profileEmailTextEl, `Email: ${email}`);
+
+  if (logoutBtn) {
+    logoutBtn.disabled = !normalizedSession.isAuthenticated;
+  }
+  if (profileMenuBtn) {
+    profileMenuBtn.disabled = !normalizedSession.isAuthenticated;
+  }
+  if (!normalizedSession.isAuthenticated) {
+    setProfileMenuVisible(false);
+  }
+  if (openBranchBtn) {
+    openBranchBtn.disabled = !normalizedSession.isAuthenticated || !canUseCctv();
+  }
+  if (quickSearchBtn) {
+    quickSearchBtn.disabled = !normalizedSession.isAuthenticated || !canUseCctv();
+  }
+  if (layoutConfigBtn) {
+    layoutConfigBtn.disabled = !normalizedSession.isAuthenticated || !canUseCctv();
+  }
+  if (focusModeBtn) {
+    focusModeBtn.disabled = !normalizedSession.isAuthenticated || !canUseCctv() || selectedCameraIds.size === 0;
+  }
+  if (reloadStreamBtn) {
+    reloadStreamBtn.disabled = !normalizedSession.isAuthenticated || !canUseCctv() || !activeBranch;
+  }
+  document.body.classList.toggle('auth-locked', !normalizedSession.isAuthenticated);
+};
+
+const setAuthStatus = (message, tone = 'neutral') => {
+  if (!authStatusEl) {
+    return;
+  }
+  setClassNameIfChanged(authStatusEl, `picker-status auth-status ${tone}`);
+  setTextIfChanged(authStatusEl, String(message || '-'));
+};
+
+const setAuthModalVisible = (visible) => {
+  if (!authModalEl) {
+    return;
+  }
+  authModalEl.classList.toggle('visible', visible);
+  authModalEl.classList.toggle('hidden', !visible);
+  authModalEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  document.body.classList.toggle('auth-modal-open', visible);
+  if (visible && authUsernameInputEl) {
+    window.setTimeout(() => focusAndSelectInput(authUsernameInputEl), 20);
   }
 };
 
-const formatTokenExpiry = (expValue) => {
-  const expNumber = Number(expValue);
-  if (!Number.isFinite(expNumber) || expNumber <= 0) {
-    return {
-      text: '-',
-      expired: null,
-    };
+const setLoginButtonState = (submitting) => {
+  isSubmittingLogin = submitting;
+  if (!authLoginBtn) {
+    return;
   }
-
-  const expiryDate = new Date(expNumber * 1000);
-  const expired = expiryDate.getTime() <= Date.now();
-  return {
-    text: `${expiryDate.toLocaleDateString('id-ID')} ${expiryDate.toLocaleTimeString('id-ID')}`,
-    expired,
-  };
+  authLoginBtn.disabled = submitting;
+  authLoginBtn.textContent = submitting ? 'Logging in...' : 'Login';
 };
 
-const updateApiTokenInfo = (token) => {
-  const payload = decodeJwtPayload(token);
-  const hasToken = Boolean(String(token || '').trim());
+const ensureAuthenticated = (message = 'Silakan login terlebih dahulu.') => {
+  const session = getSessionSnapshot();
+  if (session && session.isAuthenticated) {
+    return session;
+  }
+  setAuthStatus(message, 'warning');
+  setAuthModalVisible(true);
+  throw new Error(message);
+};
 
-  if (!hasToken) {
-    apiTokenInfoEl.classList.add('hidden');
-    setTextIfChanged(apiTokenUsernameEl, '-');
-    setTextIfChanged(apiTokenRoleEl, '-');
-    setTextIfChanged(apiTokenStatusEl, '-');
-    setTextIfChanged(apiTokenExpiryEl, '-');
+const ensureCctvAccess = () => {
+  ensureAuthenticated();
+  if (canUseCctv()) {
     return;
   }
+  throw new Error('Akun ini tidak memiliki akses CCTV.');
+};
 
-  apiTokenInfoEl.classList.remove('hidden');
-
-  if (!payload || typeof payload !== 'object') {
-    setTextIfChanged(apiTokenUsernameEl, '-');
-    setTextIfChanged(apiTokenRoleEl, '-');
-    setTextIfChanged(apiTokenStatusEl, 'Invalid token');
-    setTextIfChanged(apiTokenExpiryEl, '-');
-    return;
+const syncSessionState = (session) => {
+  if (sessionStore && typeof sessionStore.set === 'function') {
+    sessionStore.set(session || ANONYMOUS_SESSION);
   }
-
-  const username =
-    payload.username || payload.user_name || payload.name || payload.email || payload.sub || '-';
-  const role = payload.role || payload.roles || payload.user_role || '-';
-  const expiryInfo = formatTokenExpiry(payload.exp);
-
-  setTextIfChanged(apiTokenUsernameEl, String(username));
-  setTextIfChanged(
-    apiTokenRoleEl,
-    Array.isArray(role) ? role.map((item) => String(item)).join(', ') || '-' : String(role)
-  );
-  setTextIfChanged(
-    apiTokenStatusEl,
-    expiryInfo.expired === null ? 'No expiry info' : expiryInfo.expired ? 'Expired' : 'Active'
-  );
-  setTextIfChanged(apiTokenExpiryEl, expiryInfo.text);
 };
 
 const syncUpdateInfoCard = (payload, configData) => {
@@ -494,7 +640,7 @@ const setUpdateButtonState = (checking) => {
 const setReloadButtonState = (refreshing) => {
   isRefreshingStreams = refreshing;
   const hasActiveBranch = Boolean(activeBranch && activeBranch.id);
-  reloadStreamBtn.disabled = refreshing || !hasActiveBranch;
+  reloadStreamBtn.disabled = refreshing || !hasActiveBranch || !canUseCctv();
   reloadStreamBtn.innerHTML = refreshing
     ? '<span class="btn-icon" aria-hidden="true">&#x21bb;</span><span>Refreshing...</span>'
     : '<span class="btn-icon" aria-hidden="true">&#x21bb;</span><span>Reload</span>';
@@ -519,6 +665,7 @@ const hideModal = (modalEl) => {
 };
 
 const showHelp = () => showModal(helpModalEl);
+window.showHelp = showHelp;
 const hideHelp = () => hideModal(helpModalEl);
 
 const focusAndSelectInput = (inputEl) => {
@@ -541,10 +688,58 @@ const setToolbarVisible = (visible) => {
 
 const setToolbarMenuVisible = (visible) => {
   toolbarMenuPanel.classList.toggle('hidden', !visible);
+  toolbarMenuBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
 };
 
+const setProfileMenuVisible = (visible) => {
+  if (!profileMenuBtn || !profileMenuPanel) {
+    return;
+  }
+  profileMenuPanel.classList.toggle('hidden', !visible);
+  profileMenuBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+};
+window.__HKTV_SET_PROFILE_MENU_VISIBLE__ = setProfileMenuVisible;
+
+const DEFAULT_APPEARANCE_CONFIG = {
+  fontFamily: 'inter',
+  weatherIconStyle: 'flat',
+  weatherIconMonochromeColor: '#FFFFFF',
+  weatherIconAnimated: true,
+};
+
+const APP_FONT_FAMILIES = {
+  inter: "'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+  sora: "'Sora', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+  nunito: "'Nunito', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+  rajdhani: "'Rajdhani', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+};
+
+const WEATHER_ICON_STYLES = new Set(['flat', 'fill', 'monochrome', 'monochrome-color']);
+
+let currentAppearanceConfig = { ...DEFAULT_APPEARANCE_CONFIG };
+
 const toggleToolbarMenu = () => {
-  setToolbarMenuVisible(toolbarMenuPanel.classList.contains('hidden'));
+  const nextVisible = toolbarMenuPanel.classList.contains('hidden');
+  if (nextVisible) {
+    setProfileMenuVisible(false);
+    const assetFilterPopupEl = document.getElementById('assetFilterPopup');
+    const assetFilterBtnEl = document.getElementById('assetFilterBtn');
+    const foControlPopupEl = document.getElementById('foControlPopup');
+    const foControlBtnEl = document.getElementById('foControlBtn');
+    if (assetFilterPopupEl) {
+      assetFilterPopupEl.classList.add('hidden');
+    }
+    if (assetFilterBtnEl) {
+      assetFilterBtnEl.setAttribute('aria-expanded', 'false');
+    }
+    if (foControlPopupEl) {
+      foControlPopupEl.classList.add('hidden');
+    }
+    if (foControlBtnEl) {
+      foControlBtnEl.setAttribute('aria-expanded', 'false');
+    }
+  }
+  setToolbarMenuVisible(nextVisible);
 };
 
 const scheduleToolbarAutoHide = () => {
@@ -1619,6 +1814,7 @@ const sanitizeCameraForPersistence = (camera) => {
 
 const serializeWorkspaceState = () => ({
   version: WORKSPACE_STATE_VERSION,
+  viewMode: isSosModeActive() ? 'asset-monitoring' : 'cctv',
   activeBranch: activeBranch
     ? {
         id: activeBranch.id,
@@ -1716,9 +1912,62 @@ const resetWorkspaceState = async () => {
   addActivity('Workspace reset', 'Workspace preferences were cleared for this device.', 'success');
 };
 
+const validateActiveBranchAccess = async () => {
+  if (!activeBranch || !activeBranch.id) {
+    return;
+  }
+  if (isBranchAllowed(activeBranch.id)) {
+    return;
+  }
+  clearWorkspaceVisualState();
+  await window.appState.clearWorkspaceState().catch(() => {});
+  addActivity(
+    'Branch access updated',
+    'Branch aktif sebelumnya tidak lagi tersedia untuk akun ini.',
+    'warning'
+  );
+};
+
+const handleSessionStateChange = async (session) => {
+  const normalizedSession =
+    session && typeof session === 'object' ? session : { ...ANONYMOUS_SESSION };
+  applySessionToUi(normalizedSession);
+
+  if (!normalizedSession.isAuthenticated) {
+    clearWorkspaceVisualState();
+    setAuthStatus('Masukkan username dan password backend untuk memulai session.', 'neutral');
+    setAuthModalVisible(true);
+    return;
+  }
+
+  setAuthStatus(
+    normalizedSession.user && normalizedSession.user.username
+      ? `Login sebagai ${normalizedSession.user.username}.`
+      : 'Session aktif.',
+    'success'
+  );
+  setAuthModalVisible(false);
+
+  availableBranches = [];
+  await validateActiveBranchAccess();
+
+  if (!canUseCctv()) {
+    clearWorkspaceVisualState();
+    renderWelcomeState();
+    if (canUseAssetMonitoring()) {
+      addActivity('Capability loaded', 'Akses CCTV tidak tersedia untuk akun ini.', 'warning');
+    }
+  }
+};
+
 const restoreWorkspaceState = async () => {
   workspaceRestoreInProgress = true;
   try {
+    if (!canUseCctv()) {
+      clearWorkspaceVisualState();
+      renderWelcomeState();
+      return;
+    }
     const response = await window.appState.getWorkspaceState();
     if (response.status >= 400) {
       throw new Error(response.message || 'Failed to load workspace state.');
@@ -1726,6 +1975,12 @@ const restoreWorkspaceState = async () => {
 
     const state = response.data;
     if (!state || typeof state !== 'object') {
+      renderWelcomeState();
+      return;
+    }
+
+    const persistedViewMode = String(state.viewMode || '').toLowerCase();
+    if (persistedViewMode === 'asset-monitoring') {
       renderWelcomeState();
       return;
     }
@@ -1770,7 +2025,8 @@ const restoreWorkspaceState = async () => {
     if (
       !persistedBranch ||
       typeof persistedBranch !== 'object' ||
-      !persistedBranch.id
+      !persistedBranch.id ||
+      !isBranchAllowed(persistedBranch.id)
     ) {
       renderWelcomeState();
       return;
@@ -1934,7 +2190,7 @@ const updateMiniPanel = () => {
     modeBadgeEl,
     currentMode === 'focus' ? `Focus Mode (${visibleCameras.length} cams)` : 'Normal Mode'
   );
-  focusModeBtn.disabled = selectedCameraIds.size === 0;
+  focusModeBtn.disabled = selectedCameraIds.size === 0 || !canUseCctv();
 };
 
 const updatePagingUi = () => {
@@ -2050,16 +2306,16 @@ const renderWelcomeState = () => {
   panel.className = 'welcome-state';
   panel.innerHTML = `
     <div class="welcome-state__inner">
-      <p class="welcome-state__eyebrow">HK Toll Vision</p>
+      <p class="welcome-state__eyebrow">MOVISION</p>
       <h2 class="welcome-state__title">Pilih Ruas Untuk Memulai</h2>
       <p class="welcome-state__message">
         Pilih ruas terlebih dahulu untuk memuat grid CCTV. Setelah itu kamu bisa masuk ke focus mode,
         mencari kamera tertentu, dan menyesuaikan layout sesuai kebutuhan command center.
       </p>
       <div class="welcome-state__actions">
-        <span class="welcome-state__chip">Shift+L Pilih Ruas</span>
+        <span class="welcome-state__chip">Shift+Alt+L Pilih Ruas</span>
         <span class="welcome-state__chip">Ctrl+K Cari Kamera</span>
-        <span class="welcome-state__chip">Shift+H Buka Help</span>
+        <span class="welcome-state__chip">Shift+Alt+H Buka Help</span>
       </div>
       <p class="welcome-state__hint">
         Gunakan menu Help untuk melihat shortcut lengkap dan panduan penggunaan.
@@ -2564,6 +2820,10 @@ const toggleSelectedCamera = (cameraId, cameraData) => {
 };
 
 const enterFocusMode = () => {
+  if (!canUseCctv()) {
+    addActivity('Focus mode blocked', 'Akun ini tidak memiliki akses CCTV.', 'warning');
+    return;
+  }
   if (selectedCameraIds.size === 0) {
     addActivity('Focus mode skipped', 'Select one or more cameras first.', 'warning');
     return;
@@ -2768,6 +3028,10 @@ function renderCameras(cameras = []) {
 }
 
 const loadBranchPages = async (branchId) => {
+  ensureCctvAccess();
+  if (!isBranchAllowed(branchId)) {
+    throw new Error('Branch ini tidak termasuk scope akses Anda.');
+  }
   const pageResponse = await window.cameraService.getBranchPages(branchId);
   if (pageResponse.status >= 400) {
     throw new Error(pageResponse.message || 'Failed to load total pages.');
@@ -2785,6 +3049,11 @@ const loadAllBranchCamerasForMap = async (branch) => {
     sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
     scheduleSidebarMapRefresh();
     return;
+  }
+
+  ensureCctvAccess();
+  if (!isBranchAllowed(branch.id)) {
+    throw new Error('Branch map ini tidak termasuk scope akses Anda.');
   }
 
   const cacheKey = String(branch.id);
@@ -2821,6 +3090,10 @@ const loadAllBranchCamerasForMap = async (branch) => {
 };
 
 const loadBranchCameras = async (branch, page = 1) => {
+  ensureCctvAccess();
+  if (!(branch && branch.id) || !isBranchAllowed(branch.id)) {
+    throw new Error('Branch ini tidak termasuk scope akses Anda.');
+  }
   pickerStatusEl.textContent = `Loading cameras for ${branch.branch_name}...`;
   branchWideCameras = [];
   renderSkeletonCards(currentMode === 'focus' ? Math.max(selectedCameraIds.size, 1) : getLayoutCount());
@@ -2866,6 +3139,8 @@ const refreshCurrentStreams = async () => {
   if (isRefreshingStreams) {
     return;
   }
+
+  ensureCctvAccess();
 
   if (!activeBranch || !activeBranch.id) {
     pickerStatusEl.textContent = 'Select branch first before reloading streams.';
@@ -2947,7 +3222,7 @@ const ensureBranchList = async () => {
     throw new Error(response.message || 'Failed to load branches.');
   }
 
-  availableBranches = Array.isArray(response.data) ? response.data : [];
+  availableBranches = getAllowedBranches(Array.isArray(response.data) ? response.data : []);
   return availableBranches;
 };
 
@@ -3067,6 +3342,7 @@ const scheduleQuickSearch = () => {
 };
 
 const openBranchPicker = async () => {
+  ensureCctvAccess();
   showModal(pickerEl);
   pickerStatusEl.textContent = 'Loading branch list...';
   branchListEl.innerHTML = '';
@@ -3084,6 +3360,7 @@ const openBranchPicker = async () => {
 };
 
 const openQuickSearch = async (options = {}) => {
+  ensureCctvAccess();
   quickSearchContext = {
     mode: options.mode === 'replace-slot' ? 'replace-slot' : 'select',
     slotIndex: Number.isInteger(options.slotIndex) ? options.slotIndex : null,
@@ -3127,15 +3404,49 @@ const openApiBaseUrlConfig = async () => {
   lastApiConfigOpenAt = now;
 
   const currentApiBaseUrl = await window.cameraService.getApiBaseUrl();
-  const currentApiAuthToken = await window.cameraService.getApiAuthToken();
   apiBaseUrlInputEl.value = currentApiBaseUrl || '';
-  apiAuthTokenInputEl.value = currentApiAuthToken || '';
-  updateApiTokenInfo(currentApiAuthToken || '');
   setApiCheckStatus('Enter an API URL, then use Check URL to verify connectivity.', 'neutral');
   setApiCheckButtonState(false);
   showModal(apiConfigModalEl);
   focusAndSelectInput(apiBaseUrlInputEl);
 };
+window.openApiBaseUrlConfig = openApiBaseUrlConfig;
+
+const openAppearanceConfig = async () => {
+  const now = Date.now();
+  if (now - lastAppearanceConfigOpenAt < 300) {
+    return;
+  }
+  lastAppearanceConfigOpenAt = now;
+
+  if (window.appConfig && typeof window.appConfig.getAppearance === 'function') {
+    const response = await window.appConfig.getAppearance();
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Failed to load appearance configuration.');
+    }
+    applyAppearanceConfig(response.data || DEFAULT_APPEARANCE_CONFIG);
+  } else {
+    applyAppearanceConfig(currentAppearanceConfig);
+  }
+
+  showModal(appearanceConfigModalEl);
+  if (appearanceFontFamilySelectEl) {
+    appearanceFontFamilySelectEl.focus();
+  }
+};
+
+const loadAppearanceConfig = async () => {
+  if (!window.appConfig || typeof window.appConfig.getAppearance !== 'function') {
+    applyAppearanceConfig(DEFAULT_APPEARANCE_CONFIG);
+    return;
+  }
+  const response = await window.appConfig.getAppearance();
+  if (response.status >= 400) {
+    throw new Error(response.message || 'Failed to load appearance configuration.');
+  }
+  applyAppearanceConfig(response.data || DEFAULT_APPEARANCE_CONFIG);
+};
+window.openAppearanceConfig = openAppearanceConfig;
 
 const openLayoutConfig = () => {
   syncLayoutControls();
@@ -3172,11 +3483,14 @@ const openUpdateFeedConfig = async () => {
   showModal(updateConfigModalEl);
   focusAndSelectInput(updateFeedUrlInputEl);
 };
+window.openUpdateFeedConfig = openUpdateFeedConfig;
 
 const closeAllTransientUi = () => {
   setToolbarMenuVisible(false);
+  setProfileMenuVisible(false);
   hideModal(pickerEl);
   hideModal(searchModalEl);
+  hideModal(appearanceConfigModalEl);
   hideModal(layoutConfigModalEl);
   hideModal(apiConfigModalEl);
   hideModal(updateConfigModalEl);
@@ -3277,60 +3591,10 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (
-    isSosModeActive() &&
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey
-  ) {
-    event.preventDefault();
-    return;
-  }
-
   const typing = isTypingField(event.target);
-  const pressedShiftK =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'k';
-  const pressedShiftH =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'h';
-  const pressedShiftU =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'u';
-  const pressedShiftG =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'g';
-  const pressedShiftF =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'f';
-  const pressedShiftN =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'n';
-  const pressedShiftR =
-    event.shiftKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    String(event.key || '').toLowerCase() === 'r';
+  const inSosMode = isSosModeActive();
+  const pressedAltShift = event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey;
+  const altShiftKey = pressedAltShift ? String(event.key || '').toLowerCase() : '';
   const pressedQuickSearch =
     !event.shiftKey &&
     !event.altKey &&
@@ -3344,50 +3608,6 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (pressedShiftH) {
-    event.preventDefault();
-    showHelp();
-    return;
-  }
-
-  if (pressedShiftU) {
-    event.preventDefault();
-    openUpdateFeedConfig().catch(() => {
-      pickerStatusEl.textContent = 'Failed to open auto update feed configuration.';
-    });
-    return;
-  }
-
-  if (pressedShiftG) {
-    event.preventDefault();
-    openLayoutConfig();
-    return;
-  }
-
-  if (pressedShiftF) {
-    event.preventDefault();
-    enterFocusMode();
-    return;
-  }
-
-  if (pressedShiftN) {
-    event.preventDefault();
-    leaveFocusMode();
-    return;
-  }
-
-  if (pressedShiftR) {
-    event.preventDefault();
-    refreshCurrentStreams();
-    return;
-  }
-
-  if (event.shiftKey && event.key.toLowerCase() === 'm' && !typing) {
-    event.preventDefault();
-    toggleHealthMonitor();
-    return;
-  }
-
   if (pressedQuickSearch && !typing) {
     event.preventDefault();
     openQuickSearch().catch(() => {
@@ -3396,23 +3616,96 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (!pressedShiftK) {
+  if (inSosMode) {
     return;
   }
 
-  event.preventDefault();
-  openApiBaseUrlConfig().catch(() => {
-    pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';
-  });
+  if (!pressedAltShift) {
+    return;
+  }
+
+  if (altShiftKey === 'h') {
+    event.preventDefault();
+    showHelp();
+    return;
+  }
+
+  if (altShiftKey === 'l' && !typing) {
+    event.preventDefault();
+    openBranchPicker().catch((error) => {
+      pickerStatusEl.textContent = error.message || 'Failed to open branch picker.';
+    });
+    return;
+  }
+
+  if (altShiftKey === 'u') {
+    event.preventDefault();
+    openUpdateFeedConfig().catch(() => {
+      pickerStatusEl.textContent = 'Failed to open auto update feed configuration.';
+    });
+    return;
+  }
+
+  if (altShiftKey === 'g') {
+    event.preventDefault();
+    openLayoutConfig();
+    return;
+  }
+
+  if (altShiftKey === 'f') {
+    event.preventDefault();
+    enterFocusMode();
+    return;
+  }
+
+  if (altShiftKey === 'n') {
+    event.preventDefault();
+    leaveFocusMode();
+    return;
+  }
+
+  if (altShiftKey === 'r') {
+    event.preventDefault();
+    refreshCurrentStreams();
+    return;
+  }
+
+  if (altShiftKey === 'm' && !typing) {
+    event.preventDefault();
+    toggleHealthMonitor();
+    return;
+  }
+
+  if (altShiftKey === 'k') {
+    event.preventDefault();
+    openApiBaseUrlConfig().catch(() => {
+      pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';
+    });
+    return;
+  }
+
+  if (altShiftKey === 'x') {
+    event.preventDefault();
+    window.close();
+  }
 });
 
 closePickerBtn.addEventListener('click', () => hideModal(pickerEl));
 closeSearchBtn.addEventListener('click', () => hideModal(searchModalEl));
+closeAppearanceConfigBtn.addEventListener('click', () => hideModal(appearanceConfigModalEl));
 closeLayoutConfigBtn.addEventListener('click', () => hideModal(layoutConfigModalEl));
 toolbarMenuBtn.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleToolbarMenu();
 });
+if (profileMenuBtn) {
+  profileMenuBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setToolbarMenuVisible(false);
+    const nextVisible = profileMenuPanel.classList.contains('hidden');
+    setProfileMenuVisible(nextVisible);
+  });
+}
 openBranchBtn.addEventListener('click', () => {
   openBranchPicker().catch((error) => {
     addActivity('Branch picker failed', error.message || 'Unable to open branch picker.', 'danger');
@@ -3426,11 +3719,32 @@ quickSearchBtn.addEventListener('click', () => {
 layoutConfigBtn.addEventListener('click', openLayoutConfig);
 focusModeBtn.addEventListener('click', enterFocusMode);
 normalModeBtn.addEventListener('click', leaveFocusMode);
+menuAppearanceBtn.addEventListener('click', () => {
+  setToolbarMenuVisible(false);
+  openAppearanceConfig().catch(() => {
+    pickerStatusEl.textContent = 'Failed to open appearance configuration.';
+  });
+});
 menuApiConfigBtn.addEventListener('click', () => {
   setToolbarMenuVisible(false);
   openApiBaseUrlConfig().catch(() => {
     pickerStatusEl.textContent = 'Failed to open API_BASE_URL configuration.';
   });
+});
+logoutBtn.addEventListener('click', async () => {
+  setToolbarMenuVisible(false);
+  setProfileMenuVisible(false);
+  try {
+    const response = await window.auth.logout();
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Logout gagal.');
+    }
+    syncSessionState(response.data || ANONYMOUS_SESSION);
+    await handleSessionStateChange(response.data || ANONYMOUS_SESSION);
+    addActivity('Session closed', 'Anda telah logout dari aplikasi.', 'success');
+  } catch (error) {
+    addActivity('Logout failed', error.message || 'Gagal mengakhiri session.', 'danger');
+  }
 });
 menuUpdateInfoBtn.addEventListener('click', () => {
   setToolbarMenuVisible(false);
@@ -3464,7 +3778,15 @@ document.addEventListener('click', (event) => {
     }
   }
 
-  [pickerEl, searchModalEl, layoutConfigModalEl, apiConfigModalEl, updateConfigModalEl, helpModalEl].forEach((modalEl) => {
+  if (profileMenuPanel && !profileMenuPanel.classList.contains('hidden')) {
+    const clickedInsideProfile =
+      profileMenuPanel.contains(event.target) || (profileMenuBtn && profileMenuBtn.contains(event.target));
+    if (!clickedInsideProfile) {
+      setProfileMenuVisible(false);
+    }
+  }
+
+  [pickerEl, searchModalEl, appearanceConfigModalEl, layoutConfigModalEl, apiConfigModalEl, updateConfigModalEl, helpModalEl].forEach((modalEl) => {
     if (event.target === modalEl) {
       hideModal(modalEl);
     }
@@ -3495,21 +3817,142 @@ layoutPresetSelectEl.addEventListener('change', updateLayoutInputAvailability);
 apiBaseUrlInputEl.addEventListener('input', () => {
   setApiCheckStatus('Click Check URL to validate the current API address.', 'neutral');
 });
-apiAuthTokenInputEl.addEventListener('input', () => {
-  setApiCheckStatus('Click Check URL to validate the current API address.', 'neutral');
-  updateApiTokenInfo(apiAuthTokenInputEl.value);
+
+authFormEl.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (isSubmittingLogin) {
+    return;
+  }
+
+  const username = String(authUsernameInputEl.value || '').trim();
+  const password = String(authPasswordInputEl.value || '');
+  if (!username || !password) {
+    setAuthStatus('Username dan password wajib diisi.', 'warning');
+    return;
+  }
+
+  setLoginButtonState(true);
+  setAuthStatus('Memverifikasi login dan capability...', 'warning');
+  try {
+    const response = await window.auth.login(username, password);
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Login gagal.');
+    }
+    syncSessionState(response.data || ANONYMOUS_SESSION);
+    authPasswordInputEl.value = '';
+    await handleSessionStateChange(response.data || ANONYMOUS_SESSION);
+    if (canUseCctv()) {
+      await restoreWorkspaceState();
+    }
+  } catch (error) {
+    setAuthStatus(error.message || 'Login gagal.', 'danger');
+  } finally {
+    setLoginButtonState(false);
+  }
 });
+
+appearanceConfigFormEl.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const nextAppearance = normalizeAppearanceConfig({
+    fontFamily: appearanceFontFamilySelectEl.value,
+    weatherIconStyle: appearanceWeatherIconStyleSelectEl ? appearanceWeatherIconStyleSelectEl.value : DEFAULT_APPEARANCE_CONFIG.weatherIconStyle,
+    weatherIconMonochromeColor: appearanceWeatherIconColorInputEl ? appearanceWeatherIconColorInputEl.value : DEFAULT_APPEARANCE_CONFIG.weatherIconMonochromeColor,
+    weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : DEFAULT_APPEARANCE_CONFIG.weatherIconAnimated,
+  });
+
+  if (!window.appConfig || typeof window.appConfig.setAppearance !== 'function') {
+    applyAppearanceConfig(nextAppearance);
+    hideModal(appearanceConfigModalEl);
+    addActivity('Appearance updated', `Font set to ${nextAppearance.fontFamily}.`, 'success');
+    return;
+  }
+
+  const response = await window.appConfig.setAppearance(nextAppearance);
+  if (response.status >= 400) {
+    pickerStatusEl.textContent = response.message || 'Failed to save appearance configuration.';
+    addActivity('Appearance update failed', response.message || 'Failed to save font setting.', 'danger');
+    return;
+  }
+
+  applyAppearanceConfig(response.data || nextAppearance);
+  hideModal(appearanceConfigModalEl);
+  addActivity('Appearance updated', `Font set to ${String(nextAppearance.fontFamily || '').toUpperCase()}.`, 'success');
+});
+
+if (appearanceWeatherIconStyleSelectEl && appearanceWeatherIconColorInputEl) {
+  appearanceWeatherIconStyleSelectEl.addEventListener('change', () => {
+    const nextAppearance = normalizeAppearanceConfig({
+      ...currentAppearanceConfig,
+      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
+      weatherIconMonochromeColor: appearanceWeatherIconColorInputEl.value,
+      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
+    });
+    applyAppearanceConfig(nextAppearance);
+  });
+}
+
+if (appearanceWeatherIconColorInputEl) {
+  const isValidAppearanceHexColor = (value) => {
+    const raw = String(value || '').trim();
+    const normalized = raw.startsWith('#') ? raw.slice(1) : raw;
+    return /^[0-9a-fA-F]{6}$/.test(normalized);
+  };
+
+  appearanceWeatherIconColorInputEl.addEventListener('input', () => {
+    if (!appearanceWeatherIconStyleSelectEl || appearanceWeatherIconStyleSelectEl.value !== 'monochrome-color') {
+      return;
+    }
+    const typedValue = String(appearanceWeatherIconColorInputEl.value || '').trim();
+    if (!isValidAppearanceHexColor(typedValue)) {
+      return;
+    }
+    const nextAppearance = normalizeAppearanceConfig({
+      ...currentAppearanceConfig,
+      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
+      weatherIconMonochromeColor: typedValue,
+      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
+    });
+    applyAppearanceConfig(nextAppearance);
+  });
+
+  appearanceWeatherIconColorInputEl.addEventListener('blur', () => {
+    if (!appearanceWeatherIconStyleSelectEl || appearanceWeatherIconStyleSelectEl.value !== 'monochrome-color') {
+      return;
+    }
+    const typedValue = String(appearanceWeatherIconColorInputEl.value || '').trim();
+    const nextAppearance = normalizeAppearanceConfig({
+      ...currentAppearanceConfig,
+      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
+      weatherIconMonochromeColor: isValidAppearanceHexColor(typedValue)
+        ? typedValue
+        : currentAppearanceConfig.weatherIconMonochromeColor,
+      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
+    });
+    applyAppearanceConfig(nextAppearance);
+  });
+}
+
+if (appearanceWeatherIconAnimatedEl) {
+  appearanceWeatherIconAnimatedEl.addEventListener('change', () => {
+    const nextAppearance = normalizeAppearanceConfig({
+      ...currentAppearanceConfig,
+      weatherIconStyle: appearanceWeatherIconStyleSelectEl ? appearanceWeatherIconStyleSelectEl.value : currentAppearanceConfig.weatherIconStyle,
+      weatherIconMonochromeColor: appearanceWeatherIconColorInputEl ? appearanceWeatherIconColorInputEl.value : currentAppearanceConfig.weatherIconMonochromeColor,
+      weatherIconAnimated: appearanceWeatherIconAnimatedEl.checked,
+    });
+    applyAppearanceConfig(nextAppearance);
+  });
+}
 
 apiConfigFormEl.addEventListener('submit', async (event) => {
   event.preventDefault();
   const nextApiBaseUrl = apiBaseUrlInputEl.value.trim();
-  const nextApiAuthToken = apiAuthTokenInputEl.value.trim();
   if (!nextApiBaseUrl) {
     pickerStatusEl.textContent = 'API_BASE_URL cannot be empty.';
     return;
   }
 
-  const response = await window.cameraService.setApiConfig(nextApiBaseUrl, nextApiAuthToken);
+  const response = await window.cameraService.setApiConfig(nextApiBaseUrl);
   if (response.status >= 400) {
     pickerStatusEl.textContent = response.message || 'Failed to update API_BASE_URL.';
     addActivity('API update failed', response.message || 'Failed to update API base URL.', 'danger');
@@ -3521,13 +3964,7 @@ apiConfigFormEl.addEventListener('submit', async (event) => {
   setApiBaseUrlText(updatedApiBaseUrl);
   pickerStatusEl.textContent = `API_BASE_URL updated to ${updatedApiBaseUrl}`;
   hideModal(apiConfigModalEl);
-  addActivity(
-    'API updated',
-    nextApiAuthToken
-      ? `API base URL and bearer token updated for ${updatedApiBaseUrl}.`
-      : `API base URL updated to ${updatedApiBaseUrl}.`,
-    'success'
-  );
+  addActivity('API updated', `API base URL updated to ${updatedApiBaseUrl}.`, 'success');
 });
 
 checkApiConfigBtn.addEventListener('click', async () => {
@@ -3536,7 +3973,6 @@ checkApiConfigBtn.addEventListener('click', async () => {
   }
 
   const candidateApiBaseUrl = apiBaseUrlInputEl.value.trim();
-  const candidateApiAuthToken = apiAuthTokenInputEl.value.trim();
   if (!candidateApiBaseUrl) {
     setApiCheckStatus('API_BASE_URL cannot be empty.', 'warning');
     return;
@@ -3546,10 +3982,7 @@ checkApiConfigBtn.addEventListener('click', async () => {
   setApiCheckStatus('Checking API health endpoint...', 'neutral');
 
   try {
-    const response = await window.cameraService.checkApiBaseUrl(
-      candidateApiBaseUrl,
-      candidateApiAuthToken
-    );
+    const response = await window.cameraService.checkApiBaseUrl(candidateApiBaseUrl);
     if (response.status >= 400) {
       throw new Error(response.message || 'Failed to verify API URL.');
     }
@@ -3688,6 +4121,7 @@ setPagingVisible(false);
 setReloadButtonState(false);
 setToolbarMenuVisible(false);
 setToolbarVisible(false);
+applyAppearanceConfig(DEFAULT_APPEARANCE_CONFIG);
 if (ACTIVE_UI_THEME) {
   document.body.classList.add(ACTIVE_UI_THEME);
 }
@@ -3696,6 +4130,9 @@ renderWelcomeState();
 setUpdateStatusText('Updater idle', 'ready');
 addActivity('Dashboard ready', 'Waiting for branch selection or quick search.', 'neutral');
 startPerfObserver();
+applySessionToUi(ANONYMOUS_SESSION);
+setAuthModalVisible(true);
+setAuthStatus('Memuat session yang tersimpan...', 'neutral');
 window.addEventListener('beforeunload', () => {
   stopPerfObserver();
   clearPlayers();
@@ -3706,9 +4143,8 @@ window.appInfo
   .then((version) => setInstalledVersionText(version))
   .catch(() => setInstalledVersionText('-'));
 
-restoreWorkspaceState().catch((error) => {
-  addActivity('Workspace restore failed', error.message || 'Failed to restore workspace state.', 'warning');
-  renderWelcomeState();
+loadAppearanceConfig().catch((error) => {
+  addActivity('Appearance restore failed', error.message || 'Failed to restore appearance setting.', 'warning');
 });
 
 window.setTimeout(ensureGridHasVisibleContent, 250);
@@ -3718,6 +4154,37 @@ window.cameraService
   .getApiBaseUrl()
   .then((apiBaseUrl) => setApiBaseUrlText(apiBaseUrl))
   .catch(() => setApiBaseUrlText('-'));
+
+window.auth.onSessionChanged((session) => {
+  syncSessionState(session || ANONYMOUS_SESSION);
+  void handleSessionStateChange(session || ANONYMOUS_SESSION);
+});
+
+const bootstrapAuthSession = async () => {
+  try {
+    const response = await window.auth.restoreSession();
+    if (response.status >= 400) {
+      throw new Error(response.message || 'Failed to restore session.');
+    }
+    const session = response.data || ANONYMOUS_SESSION;
+    syncSessionState(session);
+    await handleSessionStateChange(session);
+    if (session.isAuthenticated && canUseCctv()) {
+      await restoreWorkspaceState();
+    } else {
+      renderWelcomeState();
+    }
+  } catch (error) {
+    addActivity('Session restore failed', error.message || 'Failed to restore session.', 'warning');
+    syncSessionState(ANONYMOUS_SESSION);
+    await handleSessionStateChange(ANONYMOUS_SESSION);
+    renderWelcomeState();
+  } finally {
+    authBootstrapCompleted = true;
+  }
+};
+
+window.__HKTV_AUTH_BOOTSTRAP_PROMISE__ = bootstrapAuthSession();
 
 window.appUpdater
   .getStatus()
@@ -3754,7 +4221,9 @@ window.cameraService.onOpenBranchPicker(() => {
   if (isSosModeActive()) {
     return;
   }
-  openBranchPicker();
+  openBranchPicker().catch((error) => {
+    addActivity('Branch picker failed', error.message || 'Unable to open branch picker.', 'danger');
+  });
 });
 window.cameraService.onOpenApiBaseUrlConfig(() => {
   if (isSosModeActive()) {
@@ -3804,7 +4273,9 @@ window.cameraService.onReloadStreams(() => {
   if (isSosModeActive()) {
     return;
   }
-  refreshCurrentStreams();
+  refreshCurrentStreams().catch((error) => {
+    addActivity('Reload failed', error.message || 'Failed to reload streams.', 'danger');
+  });
 });
 
 window.__HKTV_PAUSE_GRID_STREAMS__ = () => {

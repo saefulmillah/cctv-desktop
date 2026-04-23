@@ -89,8 +89,21 @@ contextBridge.exposeInMainWorld('cameraService', {
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   },
-  setApiConfig: (nextApiBaseUrl, nextApiAuthToken) =>
-    ipcRenderer.invoke('camera-service:set-api-config', nextApiBaseUrl, nextApiAuthToken),
+  setApiConfig: (nextApiBaseUrl) =>
+    ipcRenderer.invoke('camera-service:set-api-config', nextApiBaseUrl),
+});
+
+contextBridge.exposeInMainWorld('auth', {
+  getSession: () => ipcRenderer.invoke('auth:get-session'),
+  login: (username, password) => ipcRenderer.invoke('auth:login', username, password),
+  logout: () => ipcRenderer.invoke('auth:logout'),
+  restoreSession: () => ipcRenderer.invoke('auth:restore-session'),
+  onSessionChanged: (callback) => {
+    const channel = 'auth:session-changed';
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
 });
 
 contextBridge.exposeInMainWorld('appUpdater', {
@@ -114,4 +127,9 @@ contextBridge.exposeInMainWorld('appState', {
   getWorkspaceState: () => ipcRenderer.invoke('app-state:get-workspace'),
   saveWorkspaceState: (payload) => ipcRenderer.invoke('app-state:save-workspace', payload),
   clearWorkspaceState: () => ipcRenderer.invoke('app-state:clear-workspace'),
+});
+
+contextBridge.exposeInMainWorld('appConfig', {
+  getAppearance: () => ipcRenderer.invoke('app-config:get-appearance'),
+  setAppearance: (payload) => ipcRenderer.invoke('app-config:set-appearance', payload),
 });

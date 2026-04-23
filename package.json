@@ -1,7 +1,7 @@
 {
   "name": "cctv-desktop",
-  "productName": "HK Toll Vision (HKTV)",
-  "version": "2.1.0",
+  "productName": "MOVISION",
+  "version": "2.1.2",
   "description": "My Electron application description",
   "main": "src/index.js",
   "private": true,
@@ -25,6 +25,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@meteocons/svg": "^0.1.0",
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
@@ -41,7 +42,7 @@
   },
   "build": {
     "appId": "com.saefulmillah.cctvdesktop",
-    "productName": "HK Toll Vision (HKTV)",
+    "productName": "MOVISION",
     "asar": true,
     "compression": "maximum",
     "directories": {
@@ -58,7 +59,7 @@
     "win": {
       "signAndEditExecutable": false,
       "icon": "build/icon.ico",
-      "artifactName": "HKTV-Setup-${version}.${ext}",
+      "artifactName": "MOVISION-Setup-${version}.${ext}",
       "target": [
         {
           "target": "nsis",
