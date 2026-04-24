@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('cameraService', {
   createCamera: (payload) => ipcRenderer.invoke('camera-service:create-camera', payload),
   getApiAuthToken: () => ipcRenderer.invoke('camera-service:get-api-auth-token'),
   getApiBaseUrl: () => ipcRenderer.invoke('camera-service:get-api-base-url'),
+  getApiConfigState: () => ipcRenderer.invoke('camera-service:get-api-config-state'),
   getApiDocsUrl: () => ipcRenderer.invoke('camera-service:get-api-docs-url'),
   checkApiBaseUrl: (candidateApiBaseUrl, candidateApiAuthToken) =>
     ipcRenderer.invoke(

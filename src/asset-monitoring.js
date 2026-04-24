@@ -240,6 +240,7 @@
     incidents: {
       alerts: new Map(),
       ticketsBySosId: new Map(),
+      suppressedCompletedSosIds: new Set(),
       selectedSosId: null,
       notifications: [],
       animation: {
@@ -2150,6 +2151,15 @@
     if (!ticket || typeof ticket !== 'object') {
       return null;
     }
+    const hasTicketFields =
+      Object.prototype.hasOwnProperty.call(ticket, 'ticket_no') ||
+      Object.prototype.hasOwnProperty.call(ticket, 'ticket_status') ||
+      Object.prototype.hasOwnProperty.call(ticket, 'dispatched_at') ||
+      Object.prototype.hasOwnProperty.call(ticket, 'completion_note') ||
+      Object.prototype.hasOwnProperty.call(ticket, 'completed_at');
+    if (!hasTicketFields) {
+      return null;
+    }
     const sosId = Number(ticket.sos_id || (ticket.sos && ticket.sos.sos_id));
     if (!Number.isFinite(sosId)) {
       return null;
@@ -3166,7 +3176,13 @@
 
   const getVisibleAlerts = () =>
     Array.from(state.incidents.alerts.values())
-      .filter((alert) => alert && Number(alert.status) !== 2 && isEntityInSelectedBranch(alert.branch_id))
+      .filter(
+        (alert) =>
+          alert &&
+          Number(alert.status) !== 2 &&
+          !state.incidents.suppressedCompletedSosIds.has(Number(alert.sos_id)) &&
+          isEntityInSelectedBranch(alert.branch_id)
+      )
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
   const INCIDENT_FILTER_KEYS = ['sos', 'cctv', 'vms', 'gate', 'weather'];
@@ -3555,7 +3571,13 @@
 
   const isSelectedEntityVisibleInIncidentList = () => {
     if (state.ui.selectedEntityType === 'sos') {
-      return isIncidentFilterEnabled('sos') && Boolean(getSelectedAlert());
+      const alert = getSelectedAlert();
+      return Boolean(
+        isIncidentFilterEnabled('sos') &&
+          alert &&
+          Number(alert.status) !== 2 &&
+          isEntityInSelectedBranch(alert.branch_id)
+      );
     }
     if (state.ui.selectedEntityType === 'gate') {
       if (!isIncidentFilterEnabled('gate') || !state.gateAlerts.selectedGateId) {
@@ -6166,6 +6188,79 @@
     return alert;
   };
 
+  const applyTicketPatch = (payload) => {
+    const source =
+      payload && typeof payload === 'object' && payload.ticket && typeof payload.ticket === 'object'
+        ? payload.ticket
+        : null;
+    const normalized = normalizeTicket(source);
+    if (!normalized) {
+      return null;
+    }
+    if (normalized.ticket_status === 2) {
+      state.ticketsBySosId.delete(normalized.sos_id);
+    } else {
+      state.ticketsBySosId.set(normalized.sos_id, normalized);
+    }
+    state.incidents.ticketsBySosId = state.ticketsBySosId;
+    const alert = state.alerts.get(normalized.sos_id);
+    if (!alert) {
+      return null;
+    }
+    alert.ticket = {
+      ...(alert.ticket || {}),
+      ...normalized,
+      ticket_status: normalized.ticket_status,
+    };
+    alert.status = normalized.ticket_status === 2 ? 2 : 1;
+    return alert;
+  };
+
+  const removeSosAlertFromActiveView = (sosId, options = {}) => {
+    const normalizedSosId = Number(sosId);
+    if (!Number.isFinite(normalizedSosId)) {
+      return;
+    }
+    state.incidents.suppressedCompletedSosIds.add(normalizedSosId);
+    const incidentKey = `sos:${normalizedSosId}`;
+    const animationState = getIncidentAnimationState();
+    clearIncidentEnterTimer(incidentKey);
+    clearIncidentLeaveTimer(incidentKey);
+    animationState.enteringKeys.delete(incidentKey);
+    animationState.leavingItems.delete(incidentKey);
+    animationState.previousVisibleItems.delete(incidentKey);
+
+    const marker = state.markers.get(normalizedSosId);
+    if (marker) {
+      marker.setMap(null);
+      state.markers.delete(normalizedSosId);
+    }
+
+    if (
+      state.ui.lockedMarkerLabel &&
+      state.ui.lockedMarkerLabel.kind === 'sos' &&
+      String(state.ui.lockedMarkerLabel.id || '') === String(normalizedSosId)
+    ) {
+      state.ui.lockedMarkerLabel = null;
+    }
+    if (
+      state.ui.previewMarkerLabel &&
+      state.ui.previewMarkerLabel.kind === 'sos' &&
+      String(state.ui.previewMarkerLabel.id || '') === String(normalizedSosId)
+    ) {
+      state.ui.previewMarkerLabel = null;
+    }
+
+    removeNotificationsByTarget('sos', (target) => String(target.sosId) === String(normalizedSosId));
+
+    if (state.selectedSosId === normalizedSosId || options.clearSelection) {
+      clearSelectedAlert();
+      return;
+    }
+
+    syncSelectedMarkerLabelOverlay();
+  };
+
   const upsertAlert = (item, pushStatusNotification = true) => {
     const normalized = normalizeAlert(item);
     if (!normalized) {
@@ -6174,6 +6269,19 @@
         payload: item,
       });
       return null;
+    }
+    if (state.incidents.suppressedCompletedSosIds.has(normalized.sos_id)) {
+      const previousSuppressed = state.alerts.get(normalized.sos_id);
+      if (previousSuppressed) {
+        previousSuppressed.status = 2;
+        if (previousSuppressed.ticket) {
+          previousSuppressed.ticket = {
+            ...previousSuppressed.ticket,
+            ticket_status: 2,
+          };
+        }
+      }
+      return previousSuppressed || null;
     }
     const previous = state.alerts.get(normalized.sos_id);
     const merged = mergeTicketToAlert({
@@ -6326,7 +6434,24 @@
       count: state.ticketsBySosId.size,
       sosIds: Array.from(state.ticketsBySosId.keys()),
     });
-    Array.from(state.alerts.values()).forEach((alert) => mergeTicketToAlert(alert));
+    Array.from(state.alerts.values()).forEach((alert) => {
+      const hasOpenTicket = state.ticketsBySosId.has(alert.sos_id);
+      const wasDispatched =
+        Number(alert.status) === 1 ||
+        Boolean(alert.ticket && alert.ticket.ticket_no);
+      if (!hasOpenTicket && wasDispatched) {
+        alert.status = 2;
+        if (alert.ticket) {
+          alert.ticket = {
+            ...alert.ticket,
+            ticket_status: 2,
+          };
+        }
+        removeSosAlertFromActiveView(alert.sos_id);
+        return;
+      }
+      mergeTicketToAlert(alert);
+    });
   };
 
   const loadSnapshot = async () => {
@@ -6608,6 +6733,13 @@
       return;
     }
     let latestAlert = null;
+    const patchedAlert = applyTicketPatch(payload);
+    if (patchedAlert) {
+      if (Number(patchedAlert.status) === 2) {
+        removeSosAlertFromActiveView(patchedAlert.sos_id);
+      }
+      latestAlert = patchedAlert;
+    }
     unwrapStreamPayload(payload).forEach((item) => {
       const updated = upsertAlert(item, true);
       if (updated) {
@@ -6615,7 +6747,9 @@
       }
     });
     requestIncidentListAnimation('data');
-    renderAll();
+    if (!reconcileIncidentSelectionWithFilters()) {
+      renderAll();
+    }
     if (latestAlert && Number(latestAlert.status) !== 2) {
       selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true });
     }
@@ -6838,7 +6972,11 @@
     }
     state.ticketRefreshTimer = window.setInterval(() => {
       void loadOpenTickets()
-        .then(() => renderAll())
+        .then(() => {
+          if (!reconcileIncidentSelectionWithFilters()) {
+            renderAll();
+          }
+        })
         .catch(() => {});
     }, SOS_TICKET_REFRESH_MS);
   };
@@ -7204,9 +7342,10 @@
     if (alert.ticket) {
       alert.ticket.ticket_status = 2;
     }
+    state.ticketsBySosId.delete(alert.sos_id);
+    state.incidents.ticketsBySosId = state.ticketsBySosId;
     pushNotification(alert, 'Ticket SOS diselesaikan');
-    requestIncidentListAnimation('data');
-    renderAll();
+    removeSosAlertFromActiveView(alert.sos_id, { clearSelection: true });
     hideModal(sosCompleteModalEl);
   };
 

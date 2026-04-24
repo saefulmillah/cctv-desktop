@@ -166,6 +166,13 @@ let selectedMapCameraId = null;
 let suppressSidebarMapClickUntil = 0;
 let authBootstrapCompleted = false;
 let isSubmittingLogin = false;
+let apiConfigBootstrapState = {
+  apiBaseUrl: '',
+  isPersisted: false,
+  isUsingDefault: true,
+};
+let isApiConfigRequired = false;
+let shouldReturnToAuthAfterApiConfig = false;
 let gridLayout = {
   type: '5x4',
   columns: 5,
@@ -366,6 +373,21 @@ const setSidebarMapLoadingVisible = (visible) => {
 const setApiCheckStatus = (message, tone = 'neutral') => {
   setClassNameIfChanged(apiCheckStatusEl, `api-check-status ${tone}`);
   setTextIfChanged(apiCheckStatusEl, String(message || '-'));
+};
+
+const normalizeApiConfigState = (payload) => {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  return {
+    apiBaseUrl: String(source.apiBaseUrl || '').trim(),
+    isPersisted: Boolean(source.isPersisted),
+    isUsingDefault: source.isUsingDefault === undefined ? !source.isPersisted : Boolean(source.isUsingDefault),
+  };
+};
+
+const applyApiConfigState = (payload) => {
+  apiConfigBootstrapState = normalizeApiConfigState(payload);
+  setApiBaseUrlText(apiConfigBootstrapState.apiBaseUrl || '-');
+  return apiConfigBootstrapState;
 };
 
 const formatBytes = (bytes) => {
@@ -572,6 +594,35 @@ const setAuthModalVisible = (visible) => {
   }
 };
 
+const setApiConfigRequirementState = (required) => {
+  isApiConfigRequired = Boolean(required);
+  if (!closeApiConfigBtn) {
+    return;
+  }
+  closeApiConfigBtn.disabled = isApiConfigRequired;
+  closeApiConfigBtn.classList.toggle('hidden', isApiConfigRequired);
+};
+
+const focusPreferredAuthField = () => {
+  if (authUsernameInputEl && !String(authUsernameInputEl.value || '').trim()) {
+    focusAndSelectInput(authUsernameInputEl);
+    return;
+  }
+  if (authPasswordInputEl) {
+    focusAndSelectInput(authPasswordInputEl);
+  }
+};
+
+const reopenAuthModalAfterApiConfig = () => {
+  if (!shouldReturnToAuthAfterApiConfig) {
+    return;
+  }
+  shouldReturnToAuthAfterApiConfig = false;
+  setAuthStatus('Masukkan username dan password backend untuk memulai session.', 'neutral');
+  setAuthModalVisible(true);
+  focusPreferredAuthField();
+};
+
 const setLoginButtonState = (submitting) => {
   isSubmittingLogin = submitting;
   if (!authLoginBtn) {
@@ -587,7 +638,9 @@ const ensureAuthenticated = (message = 'Silakan login terlebih dahulu.') => {
     return session;
   }
   setAuthStatus(message, 'warning');
-  setAuthModalVisible(true);
+  if (!isApiConfigRequired) {
+    setAuthModalVisible(true);
+  }
   throw new Error(message);
 };
 
@@ -1928,7 +1981,8 @@ const validateActiveBranchAccess = async () => {
   );
 };
 
-const handleSessionStateChange = async (session) => {
+const handleSessionStateChange = async (session, options = {}) => {
+  const suppressAuthModal = Boolean(options && options.suppressAuthModal);
   const normalizedSession =
     session && typeof session === 'object' ? session : { ...ANONYMOUS_SESSION };
   applySessionToUi(normalizedSession);
@@ -1936,7 +1990,11 @@ const handleSessionStateChange = async (session) => {
   if (!normalizedSession.isAuthenticated) {
     clearWorkspaceVisualState();
     setAuthStatus('Masukkan username dan password backend untuk memulai session.', 'neutral');
-    setAuthModalVisible(true);
+    if (suppressAuthModal || isApiConfigRequired) {
+      setAuthModalVisible(false);
+    } else {
+      setAuthModalVisible(true);
+    }
     return;
   }
 
@@ -3396,21 +3454,59 @@ const openQuickSearch = async (options = {}) => {
   }
 };
 
-const openApiBaseUrlConfig = async () => {
+const openApiBaseUrlConfig = async (options = {}) => {
   const now = Date.now();
   if (now - lastApiConfigOpenAt < 300) {
     return;
   }
   lastApiConfigOpenAt = now;
 
-  const currentApiBaseUrl = await window.cameraService.getApiBaseUrl();
+  const normalizedOptions = options && typeof options === 'object' ? options : {};
+  const requireConfiguration = Boolean(normalizedOptions.requireConfiguration);
+  const returnToAuth =
+    normalizedOptions.returnToAuth === undefined
+      ? authModalEl.classList.contains('visible')
+      : Boolean(normalizedOptions.returnToAuth);
+  const currentApiBaseUrl =
+    apiConfigBootstrapState.apiBaseUrl || (await window.cameraService.getApiBaseUrl());
+
+  shouldReturnToAuthAfterApiConfig = returnToAuth;
+  setApiConfigRequirementState(requireConfiguration);
   apiBaseUrlInputEl.value = currentApiBaseUrl || '';
-  setApiCheckStatus('Enter an API URL, then use Check URL to verify connectivity.', 'neutral');
+  setApiCheckStatus(
+    normalizedOptions.statusMessage || 'Enter an API URL, then use Check URL to verify connectivity.',
+    normalizedOptions.statusTone || 'neutral'
+  );
   setApiCheckButtonState(false);
+  if (returnToAuth || requireConfiguration) {
+    setAuthModalVisible(false);
+  }
   showModal(apiConfigModalEl);
   focusAndSelectInput(apiBaseUrlInputEl);
 };
 window.openApiBaseUrlConfig = openApiBaseUrlConfig;
+
+const closeApiConfigFlow = ({ force = false } = {}) => {
+  if (isApiConfigRequired && !force) {
+    return;
+  }
+  hideModal(apiConfigModalEl);
+  setApiConfigRequirementState(false);
+  reopenAuthModalAfterApiConfig();
+};
+
+const redirectToApiConfigFlow = async (message, tone = 'warning') => {
+  authPasswordInputEl.value = '';
+  setAuthStatus('Perbarui koneksi backend sebelum mencoba login lagi.', 'warning');
+  await handleSessionStateChange(ANONYMOUS_SESSION, { suppressAuthModal: true });
+  await openApiBaseUrlConfig({
+    requireConfiguration: true,
+    returnToAuth: true,
+    statusMessage:
+      message || 'Unable to reach API server. Check API_BASE_URL and network connection.',
+    statusTone: tone,
+  });
+};
 
 const openAppearanceConfig = async () => {
   const now = Date.now();
@@ -3492,7 +3588,13 @@ const closeAllTransientUi = () => {
   hideModal(searchModalEl);
   hideModal(appearanceConfigModalEl);
   hideModal(layoutConfigModalEl);
-  hideModal(apiConfigModalEl);
+  if (apiConfigModalEl.classList.contains('visible')) {
+    if (isApiConfigRequired) {
+      // Keep the required onboarding step visible until API config is saved.
+    } else {
+      closeApiConfigFlow();
+    }
+  }
   hideModal(updateConfigModalEl);
   hideHelp();
 };
@@ -3762,7 +3864,7 @@ resetWorkspaceBtn.addEventListener('click', () => {
     addActivity('Workspace reset failed', error.message || 'Failed to reset workspace.', 'danger');
   });
 });
-closeApiConfigBtn.addEventListener('click', () => hideModal(apiConfigModalEl));
+closeApiConfigBtn.addEventListener('click', () => closeApiConfigFlow());
 closeUpdateConfigBtn.addEventListener('click', () => hideModal(updateConfigModalEl));
 closeHelpBtn.addEventListener('click', hideHelp);
 closeHealthMonitorBtn.addEventListener('click', () => setHealthMonitorVisible(false));
@@ -3788,6 +3890,13 @@ document.addEventListener('click', (event) => {
 
   [pickerEl, searchModalEl, appearanceConfigModalEl, layoutConfigModalEl, apiConfigModalEl, updateConfigModalEl, helpModalEl].forEach((modalEl) => {
     if (event.target === modalEl) {
+      if (modalEl === apiConfigModalEl && isApiConfigRequired) {
+        return;
+      }
+      if (modalEl === apiConfigModalEl) {
+        closeApiConfigFlow();
+        return;
+      }
       hideModal(modalEl);
     }
   });
@@ -3836,6 +3945,13 @@ authFormEl.addEventListener('submit', async (event) => {
   try {
     const response = await window.auth.login(username, password);
     if (response.status >= 400) {
+      if (response.errorCode === 'api_unreachable') {
+        await redirectToApiConfigFlow(
+          response.message || 'Unable to reach API server. Check API_BASE_URL and network connection.',
+          'danger'
+        );
+        return;
+      }
       throw new Error(response.message || 'Login gagal.');
     }
     syncSessionState(response.data || ANONYMOUS_SESSION);
@@ -3961,9 +4077,14 @@ apiConfigFormEl.addEventListener('submit', async (event) => {
 
   const updatedApiBaseUrl =
     response && response.data && response.data.apiBaseUrl ? response.data.apiBaseUrl : '';
-  setApiBaseUrlText(updatedApiBaseUrl);
+  applyApiConfigState({
+    apiBaseUrl: updatedApiBaseUrl,
+    isPersisted: true,
+    isUsingDefault: false,
+  });
   pickerStatusEl.textContent = `API_BASE_URL updated to ${updatedApiBaseUrl}`;
-  hideModal(apiConfigModalEl);
+  setApiCheckStatus('API_BASE_URL saved. Continue to login.', 'success');
+  closeApiConfigFlow({ force: true });
   addActivity('API updated', `API base URL updated to ${updatedApiBaseUrl}.`, 'success');
 });
 
@@ -4131,7 +4252,8 @@ setUpdateStatusText('Updater idle', 'ready');
 addActivity('Dashboard ready', 'Waiting for branch selection or quick search.', 'neutral');
 startPerfObserver();
 applySessionToUi(ANONYMOUS_SESSION);
-setAuthModalVisible(true);
+setAuthModalVisible(false);
+setApiConfigRequirementState(false);
 setAuthStatus('Memuat session yang tersimpan...', 'neutral');
 window.addEventListener('beforeunload', () => {
   stopPerfObserver();
@@ -4150,11 +4272,6 @@ loadAppearanceConfig().catch((error) => {
 window.setTimeout(ensureGridHasVisibleContent, 250);
 window.setTimeout(ensureGridHasVisibleContent, 1000);
 
-window.cameraService
-  .getApiBaseUrl()
-  .then((apiBaseUrl) => setApiBaseUrlText(apiBaseUrl))
-  .catch(() => setApiBaseUrlText('-'));
-
 window.auth.onSessionChanged((session) => {
   syncSessionState(session || ANONYMOUS_SESSION);
   void handleSessionStateChange(session || ANONYMOUS_SESSION);
@@ -4162,8 +4279,33 @@ window.auth.onSessionChanged((session) => {
 
 const bootstrapAuthSession = async () => {
   try {
+    const configResponse = await window.cameraService.getApiConfigState();
+    if (configResponse.status >= 400) {
+      throw new Error(configResponse.message || 'Failed to load API configuration state.');
+    }
+    const configState = applyApiConfigState(configResponse.data);
+    if (!configState.isPersisted) {
+      syncSessionState(ANONYMOUS_SESSION);
+      await handleSessionStateChange(ANONYMOUS_SESSION, { suppressAuthModal: true });
+      await openApiBaseUrlConfig({
+        requireConfiguration: true,
+        returnToAuth: true,
+        statusMessage:
+          'Konfigurasikan alamat backend terlebih dahulu, lalu simpan untuk melanjutkan ke login.',
+        statusTone: 'neutral',
+      });
+      return;
+    }
+
     const response = await window.auth.restoreSession();
     if (response.status >= 400) {
+      if (response.errorCode === 'api_unreachable') {
+        await redirectToApiConfigFlow(
+          response.message || 'Unable to reach API server. Check API_BASE_URL and network connection.',
+          'danger'
+        );
+        return;
+      }
       throw new Error(response.message || 'Failed to restore session.');
     }
     const session = response.data || ANONYMOUS_SESSION;
@@ -4177,7 +4319,7 @@ const bootstrapAuthSession = async () => {
   } catch (error) {
     addActivity('Session restore failed', error.message || 'Failed to restore session.', 'warning');
     syncSessionState(ANONYMOUS_SESSION);
-    await handleSessionStateChange(ANONYMOUS_SESSION);
+    await handleSessionStateChange(ANONYMOUS_SESSION, { suppressAuthModal: isApiConfigRequired });
     renderWelcomeState();
   } finally {
     authBootstrapCompleted = true;

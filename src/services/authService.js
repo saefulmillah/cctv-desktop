@@ -38,12 +38,31 @@ const parseJsonResponse = async (response) => {
   }
 };
 
+const toNetworkError = (fallbackMessage, cause) => {
+  const error = new Error(
+    fallbackMessage || 'Unable to reach API server. Check API_BASE_URL and network connection.'
+  );
+  error.status = 503;
+  error.errorCode = 'api_unreachable';
+  error.cause = cause;
+  return error;
+};
+
+const request = async (url, options, fallbackMessage) => {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    throw toNetworkError(fallbackMessage, error);
+  }
+};
+
 const toError = (response, payload, fallbackMessage) => {
   const error = new Error(
     (payload && payload.message) || fallbackMessage || `Request failed with status ${response.status}`
   );
   error.status = response.status;
   error.payload = payload;
+  error.errorCode = response.status === 401 ? 'auth_failed' : 'auth_error';
   return error;
 };
 
@@ -75,10 +94,14 @@ const fetchCapability = async ({ apiBaseUrl, token }) => {
     throw new Error('Access token is required.');
   }
 
-  const response = await fetch(`${normalizedApiBaseUrl}/api/auth/me`, {
-    method: 'GET',
-    headers: buildHeaders(normalizedToken),
-  });
+  const response = await request(
+    `${normalizedApiBaseUrl}/api/auth/me`,
+    {
+      method: 'GET',
+      headers: buildHeaders(normalizedToken),
+    },
+    'Unable to reach API server while verifying your session. Check API_BASE_URL and network connection.'
+  );
   const payload = await parseJsonResponse(response);
   if (!response.ok) {
     throw toError(response, payload, 'Failed to load current capability.');
@@ -89,14 +112,18 @@ const fetchCapability = async ({ apiBaseUrl, token }) => {
 
 const login = async ({ apiBaseUrl, username, password }) => {
   const normalizedApiBaseUrl = normalizeApiBaseUrl(apiBaseUrl);
-  const response = await fetch(`${normalizedApiBaseUrl}/api/auth/login`, {
-    method: 'POST',
-    headers: buildHeaders(),
-    body: JSON.stringify({
-      username: String(username || '').trim(),
-      password: String(password || ''),
-    }),
-  });
+  const response = await request(
+    `${normalizedApiBaseUrl}/api/auth/login`,
+    {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify({
+        username: String(username || '').trim(),
+        password: String(password || ''),
+      }),
+    },
+    'Unable to reach API server while logging in. Check API_BASE_URL and network connection.'
+  );
   const payload = await parseJsonResponse(response);
   if (!response.ok) {
     throw toError(response, payload, 'Login failed.');

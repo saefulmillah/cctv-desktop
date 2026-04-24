@@ -67,6 +67,9 @@ const writeConfig = async (config) => {
   await fsPromises.writeFile(configPath, content, 'utf8');
 };
 
+const hasPersistedApiBaseUrl = (config) =>
+  Boolean(config && typeof config.API_BASE_URL === 'string' && config.API_BASE_URL.trim());
+
 const loadPersistedApiBaseUrl = async () => {
   const config = await readConfig();
   const persistedApiBaseUrl = config.API_BASE_URL;
@@ -111,6 +114,16 @@ const clearPersistedApiAuthToken = async () => {
   const nextConfig = { ...config };
   delete nextConfig[API_AUTH_TOKEN_KEY];
   await writeConfig(nextConfig);
+};
+
+const getApiConfigState = async () => {
+  const config = await readConfig();
+  const isPersisted = hasPersistedApiBaseUrl(config);
+  return {
+    apiBaseUrl: cameraService.getApiBaseUrl(),
+    isPersisted,
+    isUsingDefault: !isPersisted,
+  };
 };
 
 const getPersistedWorkspaceState = async () => {
@@ -685,6 +698,7 @@ const toIpcError = (error) => {
   return {
     status,
     message: error.message || 'Internal server error',
+    errorCode: error.errorCode || null,
     data: (error.payload && error.payload.data) || [],
   };
 };
@@ -871,6 +885,16 @@ const registerServiceHandlers = () => {
 
   ipcMain.handle('camera-service:get-api-docs-url', () => cameraService.getApiDocsUrl());
   ipcMain.handle('camera-service:get-api-base-url', () => cameraService.getApiBaseUrl());
+  ipcMain.handle('camera-service:get-api-config-state', async () => {
+    try {
+      return {
+        status: 200,
+        data: await getApiConfigState(),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
   ipcMain.handle('camera-service:get-api-auth-token', () => cameraService.getApiAuthToken());
   ipcMain.handle(
     'camera-service:check-api-base-url',
