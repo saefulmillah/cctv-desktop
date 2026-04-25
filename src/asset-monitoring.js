@@ -328,7 +328,17 @@
     activeWorkspaceBranch: null,
   };
 
-  const debugLog = () => {};
+  const debugLog = (eventName, detail = null) => {
+    try {
+      if (detail && typeof detail === 'object') {
+        console.info('[asset-monitoring]', eventName, detail);
+        return;
+      }
+      console.info('[asset-monitoring]', eventName, detail == null ? '' : detail);
+    } catch (_) {
+      // Ignore logging failures.
+    }
+  };
 
   const setText = (element, value) => {
     if (element) {
@@ -7193,7 +7203,10 @@
     if (!canUseAssetMonitoring()) {
       throw new Error('Akun ini tidak memiliki akses Asset Monitoring.');
     }
-    debugLog('enterAssetMonitoringMode');
+    debugLog('enterAssetMonitoringMode', {
+      selectedBranchId: state.mapContext.selectedBranch && state.mapContext.selectedBranch.id,
+      workspaceBranchId: state.activeWorkspaceBranch && state.activeWorkspaceBranch.id,
+    });
     state.isActive = true;
     state.ui.initialTiltSyncPending = true;
     document.body.classList.add('sos-mode');
@@ -7202,54 +7215,69 @@
     if (typeof window.__HKTV_PAUSE_GRID_STREAMS__ === 'function') {
       window.__HKTV_PAUSE_GRID_STREAMS__();
     }
-    state.notificationTimers.forEach((timer) => window.clearTimeout(timer));
-    state.notificationTimers.clear();
-    state.notificationLeavingIds.clear();
-    state.notifications = [];
-    state.incidents.notifications = state.notifications;
-    state.selectedSosId = null;
-    state.incidents.selectedSosId = null;
-    state.isInitialSnapshotLoaded = false;
-    state.cctvVisible = sosCctvToggleEl ? Boolean(sosCctvToggleEl.checked) : true;
-    state.vmsVisible = sosVmsToggleEl ? Boolean(sosVmsToggleEl.checked) : true;
-    state.gateAlerts.visible = sosGateToggleEl ? Boolean(sosGateToggleEl.checked) : true;
-    resetStandaloneLayerState();
-    resetNetworkLayerState();
-    resetWeatherLayerState();
-    renderNotifications();
-    setToolbarState();
-    state.ui.mapEmptyMessage = getDefaultMapEmptyMessage();
-    setMapLoadingVisible(true);
-    await loadWorkspaceBranchContext();
-    syncMapThemeControlState();
-    renderMapCameraModeControls();
-    if (sosNetworkToggleEl) {
-      sosNetworkToggleEl.checked = state.networkArcs.visible;
+    try {
+      state.notificationTimers.forEach((timer) => window.clearTimeout(timer));
+      state.notificationTimers.clear();
+      state.notificationLeavingIds.clear();
+      state.notifications = [];
+      state.incidents.notifications = state.notifications;
+      state.selectedSosId = null;
+      state.incidents.selectedSosId = null;
+      state.isInitialSnapshotLoaded = false;
+      state.cctvVisible = sosCctvToggleEl ? Boolean(sosCctvToggleEl.checked) : true;
+      state.vmsVisible = sosVmsToggleEl ? Boolean(sosVmsToggleEl.checked) : true;
+      state.gateAlerts.visible = sosGateToggleEl ? Boolean(sosGateToggleEl.checked) : true;
+      resetStandaloneLayerState();
+      resetNetworkLayerState();
+      resetWeatherLayerState();
+      renderNotifications();
+      setToolbarState();
+      state.ui.mapEmptyMessage = getDefaultMapEmptyMessage();
+      setMapLoadingVisible(true);
+      await loadWorkspaceBranchContext();
+      syncMapThemeControlState();
+      renderMapCameraModeControls();
+      if (sosNetworkToggleEl) {
+        sosNetworkToggleEl.checked = state.networkArcs.visible;
+      }
+      if (sosAnimatedNetworkToggleEl) {
+        sosAnimatedNetworkToggleEl.checked = state.networkArcs.experimentalEnabled;
+      }
+      if (sosWeatherToggleEl) {
+        syncWeatherToggleState();
+      }
+      if (sosMarkerNormalToggleEl) {
+        sosMarkerNormalToggleEl.checked = state.markerStatusFilters.normal;
+      }
+      if (sosMarkerWarningToggleEl) {
+        sosMarkerWarningToggleEl.checked = state.markerStatusFilters.warning;
+      }
+      if (sosMarkerErrorToggleEl) {
+        sosMarkerErrorToggleEl.checked = state.markerStatusFilters.error;
+      }
+      await ensureMap();
+      await refreshDashboard();
+      void persistAssetMonitoringPrefs();
+      startTicketRefreshLoop();
+      void connectStream();
+      debugLog('enterAssetMonitoringMode:ready', {
+        selectedBranchId: state.mapContext.selectedBranch && state.mapContext.selectedBranch.id,
+        incidents: state.incidents.alerts.size,
+      });
+    } catch (error) {
+      // Roll back the UI immediately so a failed asset bootstrap does not leave the app on a blank background.
+      debugLog('enterAssetMonitoringMode:failed', {
+        message: error && error.message ? error.message : 'Unknown error',
+      });
+      leaveAssetMonitoringMode();
+      throw error;
     }
-    if (sosAnimatedNetworkToggleEl) {
-      sosAnimatedNetworkToggleEl.checked = state.networkArcs.experimentalEnabled;
-    }
-    if (sosWeatherToggleEl) {
-      syncWeatherToggleState();
-    }
-    if (sosMarkerNormalToggleEl) {
-      sosMarkerNormalToggleEl.checked = state.markerStatusFilters.normal;
-    }
-    if (sosMarkerWarningToggleEl) {
-      sosMarkerWarningToggleEl.checked = state.markerStatusFilters.warning;
-    }
-    if (sosMarkerErrorToggleEl) {
-      sosMarkerErrorToggleEl.checked = state.markerStatusFilters.error;
-    }
-    await ensureMap();
-    await refreshDashboard();
-    void persistAssetMonitoringPrefs();
-    startTicketRefreshLoop();
-    void connectStream();
   };
 
   const leaveAssetMonitoringMode = () => {
-    debugLog('leaveAssetMonitoringMode');
+    debugLog('leaveAssetMonitoringMode', {
+      selectedBranchId: state.mapContext.selectedBranch && state.mapContext.selectedBranch.id,
+    });
     state.isActive = false;
     setAssetFilterPopupVisible(false);
     setFoControlPopupVisible(false);

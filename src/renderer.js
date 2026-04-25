@@ -99,6 +99,22 @@ const profileRoleTextEl = document.getElementById('profileRoleText');
 const profileEmailTextEl = document.getElementById('profileEmailText');
 const capabilityApi = window.appCapability;
 const sessionStore = window.appSessionStore;
+const rendererModules = window.HKTVRendererModules || {};
+const services = rendererModules.createServiceAdapters
+  ? rendererModules.createServiceAdapters(window)
+  : {
+      auth: window.auth,
+      camera: window.cameraService,
+      config: window.appConfig,
+      info: window.appInfo,
+      state: window.appState,
+      updater: window.appUpdater,
+    };
+const authService = services.auth;
+const appConfigService = services.config;
+const appInfoService = services.info;
+const appStateService = services.state;
+const appUpdaterService = services.updater;
 
 const hlsPlayers = [];
 const selectedCameraIds = new Set();
@@ -128,7 +144,6 @@ let latestUpdatePayload = null;
 let currentCameras = [];
 let branchWideCameras = [];
 let currentMode = 'normal';
-let activityItems = [];
 let quickSearchContext = {
   mode: 'select',
   slotIndex: null,
@@ -136,7 +151,6 @@ let quickSearchContext = {
 const slotOverrides = new Map();
 let quickSearchRequestId = 0;
 let quickSearchDebounceTimer = null;
-let workspacePersistTimer = null;
 let workspaceRestoreInProgress = false;
 let globalWatchdogTimer = null;
 let perfObserverTimer = null;
@@ -266,18 +280,12 @@ const getDefaultGridLayout = () => ({
   sideCount: 6,
 });
 
-const getReconnectRegistrySize = () => reconnectTimers.size;
-
-const logPerfSnapshot = () => {
-  if (!PERF_FLAGS.ENABLE_PERF_OBSERVER) {
-    return;
+const logRendererEvent = (eventName, detail = {}) => {
+  try {
+    console.info('[renderer]', eventName, detail);
+  } catch (_) {
+    // Ignore logging failures.
   }
-  console.info('[perf]', {
-    activePlayers: playerControllers.size,
-    reconnectTimers: getReconnectRegistrySize(),
-    watchdogActive: Boolean(globalWatchdogTimer),
-    searchRequests: perfStats.searchRequests,
-  });
 };
 
 const setApiBaseUrlText = (value) => {
@@ -426,6 +434,7 @@ const renderHealthMonitor = () => {
   }
   const heapStats = getRendererHeapStats();
   const branchMapCameraCount = branchWideCameras.length || currentCameras.length;
+  const activityItems = activityFeed.getItems();
   const cards = [
     ['Mode', currentMode === 'focus' ? 'Focus' : 'Normal'],
     ['Branch', activeBranch ? activeBranch.branch_code || activeBranch.branch_name || '-' : '-'],
@@ -482,6 +491,23 @@ const toggleHealthMonitor = () => {
   }
   setHealthMonitorVisible(healthMonitorPanelEl.classList.contains('hidden'));
 };
+
+const activityFeed = rendererModules.createActivityFeed
+  ? rendererModules.createActivityFeed({
+      container: activityFeedEl,
+      limit: ACTIVITY_LIMIT,
+      onRender: () => {
+        if (healthMonitorPanelEl && !healthMonitorPanelEl.classList.contains('hidden')) {
+          renderHealthMonitor();
+        }
+      },
+    })
+  : {
+      add() {},
+      getItems() {
+        return [];
+      },
+    };
 
 const setApiCheckButtonState = (checking) => {
   isCheckingApiConfig = checking;
@@ -815,974 +841,58 @@ const shouldShowToolbarByPointer = (clientX, clientY) => {
 };
 
 const addActivity = (title, detail, tone = 'neutral') => {
-  const normalizedTone = ['success', 'warning', 'danger'].includes(tone) ? tone : 'neutral';
-  activityItems = [
-    {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      title: String(title || 'Activity'),
-      detail: String(detail || ''),
-      tone: normalizedTone,
-    },
-    ...activityItems,
-  ].slice(0, ACTIVITY_LIMIT);
-
-  activityFeedEl.innerHTML = '';
-  activityItems.forEach((item) => {
-    const row = document.createElement('div');
-    row.className = 'activity-item';
-    row.innerHTML = `
-      <span class="activity-dot ${item.tone}"></span>
-      <div>
-        <strong>${item.title}</strong>
-        <p>${item.detail}</p>
-      </div>
-    `;
-    activityFeedEl.appendChild(row);
-  });
-  if (healthMonitorPanelEl && !healthMonitorPanelEl.classList.contains('hidden')) {
-    renderHealthMonitor();
-  }
-};
-
-const getCameraCoordinates = (camera) => {
-  if (!camera || typeof camera !== 'object') {
-    return null;
-  }
-
-  const lat = Number(camera.cctv_lat);
-  const lng = Number(camera.cctv_lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return null;
-  }
-
-  return { lat, lng };
-};
-
-const getMapCameraCollection = () => {
-  return branchWideCameras.length ? branchWideCameras : currentCameras;
+  activityFeed.add(title, detail, tone);
 };
 
 const getCameraOperationalState = (camera) => {
   return Number(camera && camera.is_active) === 1 ? 'online' : 'offline';
 };
+const isSosModeActive = () =>
+  Boolean(document && document.body && document.body.classList.contains('sos-mode'));
+let sidebarMapModule = null;
 
-const getMapMarkerIconUrl = (camera) =>
-  getCameraOperationalState(camera) === 'online' ? ONLINE_MARKER_URL : OFFLINE_MARKER_URL;
+const loadGoogleMapsApi = () =>
+  sidebarMapModule
+    ? sidebarMapModule.loadGoogleMapsApi()
+    : Promise.reject(new Error('Sidebar map module unavailable.'));
 
-const getMapMarkerScaledSize = (camera) =>
-  String(camera && camera.id) === String(selectedMapCameraId) ? 40 : 32;
+const loadMarkerClustererLibrary = () =>
+  sidebarMapModule
+    ? sidebarMapModule.loadMarkerClustererLibrary()
+    : Promise.reject(new Error('Sidebar map module unavailable.'));
 
-const shortenMarkerLabel = (text, maxLength) => {
-  const normalized = String(text || '').trim();
-  if (!normalized) {
-    return '';
-  }
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
-};
-
-const normalizeMarkerLabelSource = (camera) => {
-  const rawName = String((camera && camera.cctv_name) || '').trim();
-  if (!rawName) {
-    return 'CCTV';
-  }
-  const parts = rawName.split(/\s+/).filter(Boolean);
-  if (parts.length <= 1) {
-    return rawName;
-  }
-  const trimmed = parts.slice(1).join(' ').trim();
-  return trimmed || rawName;
-};
-
-const buildSpiderfyLabelConfig = (camera) => {
-  if (!camera || !spiderfiedMarkerIds.has(String(camera.id))) {
-    return null;
-  }
-  const selected = String(camera.id) === String(selectedMapCameraId);
-  return {
-    text: shortenMarkerLabel(normalizeMarkerLabelSource(camera), selected ? 18 : 12),
-    className: selected ? 'map-marker-label map-marker-label--selected' : 'map-marker-label',
-  };
-};
-
-const getSpiderfyLabelOrigin = (xOffset, yOffset) => {
-  if (yOffset <= 0) {
-    return new window.google.maps.Point(16, -14);
-  }
-  return new window.google.maps.Point(16, 42);
-};
-
-const applySpiderfyMarkerLabels = () => {
-  sidebarMapMarkers.forEach((entry) => {
-    if (!entry || !entry.marker || !entry.camera) {
-      return;
-    }
-    entry.marker.setLabel(buildSpiderfyLabelConfig(entry.camera));
-    entry.marker.setZIndex(
-      String(entry.camera && entry.camera.id) === String(selectedMapCameraId) ? 1000 : undefined
-    );
-  });
-};
+window.__HKTV_LOAD_GOOGLE_MAPS__ = loadGoogleMapsApi;
+window.__HKTV_LOAD_MARKER_CLUSTERER__ = loadMarkerClustererLibrary;
 
 const scheduleSidebarMapRefresh = () => {
-  if (sidebarMapRefreshTimer) {
-    clearTimeout(sidebarMapRefreshTimer);
+  if (sidebarMapModule) {
+    sidebarMapModule.scheduleSidebarMapRefresh();
   }
-  sidebarMapRefreshTimer = window.setTimeout(() => {
-    sidebarMapRefreshTimer = null;
-    void updateSidebarMap();
-  }, 180);
-};
-
-const getBranchPageCameraMap = () => {
-  const pageMap = new Map();
-  getMapCameraCollection().forEach((camera) => {
-    const pageNumber = Number(camera.__sourcePage || camera.page || activePage || 1);
-    pageMap.set(
-      String(camera.id),
-      Number.isFinite(pageNumber) && pageNumber > 0 ? pageNumber : Math.max(1, Number(activePage || 1))
-    );
-  });
-  return pageMap;
 };
 
 const clearSidebarMapMarkers = () => {
-  if (sidebarClusterHoverOpenTimer) {
-    clearTimeout(sidebarClusterHoverOpenTimer);
-    sidebarClusterHoverOpenTimer = null;
+  if (sidebarMapModule) {
+    sidebarMapModule.clearSidebarMapMarkers();
   }
-  if (sidebarClusterHoverCloseTimer) {
-    clearTimeout(sidebarClusterHoverCloseTimer);
-    sidebarClusterHoverCloseTimer = null;
-  }
-  if (sidebarClusterTooltipEl) {
-    sidebarClusterTooltipEl.classList.remove('is-visible');
-  }
-  activeClusterTooltipKey = null;
-  if (sidebarMarkerCluster) {
-    if (typeof sidebarMarkerCluster.clearMarkers === 'function') {
-      sidebarMarkerCluster.clearMarkers();
-    }
-    if (typeof sidebarMarkerCluster.setMap === 'function') {
-      sidebarMarkerCluster.setMap(null);
-    }
-    sidebarMarkerCluster = null;
-  }
-
-  spiderfyLegs.forEach((leg) => {
-    if (leg && typeof leg.setMap === 'function') {
-      leg.setMap(null);
-    }
-  });
-  spiderfyLegs = [];
-  spiderfyTempMarkers.forEach((marker) => {
-    if (marker && typeof marker.setMap === 'function') {
-      marker.setMap(null);
-    }
-  });
-  spiderfyTempMarkers = [];
-  spiderfiedMarkerIds = new Set();
-  spiderfySourceCameraId = null;
-  if (spiderfyClusterMarker && typeof spiderfyClusterMarker.setOpacity === 'function') {
-    spiderfyClusterMarker.setOpacity(1);
-  }
-  spiderfyClusterMarker = null;
-  sidebarMapMarkers.forEach((entry) => {
-    if (entry && entry.marker && typeof entry.marker.setMap === 'function') {
-      entry.marker.setMap(null);
-    }
-  });
-  sidebarMapMarkers = [];
 };
 
-const collapseSpiderfy = () => {
-  if (!spiderfiedMarkerIds.size) {
-    return;
-  }
-
-  spiderfyLegs.forEach((leg) => {
-    if (leg && typeof leg.setMap === 'function') {
-      leg.setMap(null);
-    }
-  });
-  spiderfyLegs = [];
-  spiderfyTempMarkers.forEach((marker) => {
-    if (marker && typeof marker.setMap === 'function') {
-      marker.setMap(null);
-    }
-  });
-  spiderfyTempMarkers = [];
-  if (spiderfyClusterMarker && typeof spiderfyClusterMarker.setOpacity === 'function') {
-    spiderfyClusterMarker.setOpacity(1);
-  }
-  spiderfyClusterMarker = null;
-
-  sidebarMapMarkers.forEach((entry) => {
-    if (!entry || !entry.marker || !entry.originalPosition) {
-      return;
-    }
-    entry.marker.setPosition(entry.originalPosition);
-  });
-
-  spiderfiedMarkerIds = new Set();
-  spiderfySourceCameraId = null;
-  applySpiderfyMarkerLabels();
-};
-
-const interpolateLatLng = (fromLatLng, toLatLng, progress) => {
-  if (!fromLatLng || !toLatLng) {
-    return toLatLng || fromLatLng || null;
-  }
-  const startLat = typeof fromLatLng.lat === 'function' ? fromLatLng.lat() : fromLatLng.lat;
-  const startLng = typeof fromLatLng.lng === 'function' ? fromLatLng.lng() : fromLatLng.lng;
-  const endLat = typeof toLatLng.lat === 'function' ? toLatLng.lat() : toLatLng.lat;
-  const endLng = typeof toLatLng.lng === 'function' ? toLatLng.lng() : toLatLng.lng;
-  return new window.google.maps.LatLng(
-    startLat + (endLat - startLat) * progress,
-    startLng + (endLng - startLng) * progress
-  );
-};
-
-const animateSpiderfyMarker = (marker, fromLatLng, toLatLng, leg, legAnchorLatLng, duration = 180) => {
-  if (!marker || !fromLatLng || !toLatLng) {
-    return;
-  }
-
-  const startAt = performance.now();
-  const step = (now) => {
-    const progress = Math.min(1, (now - startAt) / duration);
-    const eased = 1 - Math.pow(1 - progress, 3);
-    const nextLatLng = interpolateLatLng(fromLatLng, toLatLng, eased);
-    if (nextLatLng) {
-      marker.setPosition(nextLatLng);
-      if (leg && typeof leg.setPath === 'function') {
-        leg.setPath([legAnchorLatLng, nextLatLng]);
-      }
-    }
-    if (progress < 1) {
-      window.requestAnimationFrame(step);
-    }
-  };
-
-  window.requestAnimationFrame(step);
-};
-
-const getNearbyMarkerEntries = (sourceEntry, projection) => {
-  if (!sourceEntry || !projection) {
-    return [];
-  }
-
-  const sourcePixel = projection.fromLatLngToDivPixel(sourceEntry.originalPosition || sourceEntry.marker.getPosition());
-  if (!sourcePixel) {
-    return [];
-  }
-
-  return sidebarMapMarkers.filter((entry) => {
-    if (!entry || !entry.marker) {
-      return false;
-    }
-    const pixel = projection.fromLatLngToDivPixel(entry.originalPosition || entry.marker.getPosition());
-    if (!pixel) {
-      return false;
-    }
-    return Math.abs(pixel.x - sourcePixel.x) <= 18 && Math.abs(pixel.y - sourcePixel.y) <= 18;
-  });
-};
-
-const spiderfyMarkerGroup = (sourceEntry, customEntries = null, customCenter = null) => {
-  if (!sidebarMapInstance || !sidebarMapProjectionOverlay || !sourceEntry) {
-    return false;
-  }
-
-  const projection = sidebarMapProjectionOverlay.getProjection();
-  if (!projection) {
-    return false;
-  }
-
-  const nearbyEntries = Array.isArray(customEntries) && customEntries.length
-    ? customEntries
-    : getNearbyMarkerEntries(sourceEntry, projection);
-  if (nearbyEntries.length <= 1) {
-    collapseSpiderfy();
-    return false;
-  }
-
-  collapseSpiderfy();
-  const centerLatLng = customCenter || sourceEntry.originalPosition || sourceEntry.marker.getPosition();
-  const centerPixel = projection.fromLatLngToDivPixel(centerLatLng);
-  if (!centerPixel) {
-    return false;
-  }
-
-  const spacing = Math.max(68, Math.min(90, 56 + nearbyEntries.length * 4));
-  const baseYOffsets = [0, -16, 16, -28, 28, -38, 38, -48, 48];
-  const middleIndex = (nearbyEntries.length - 1) / 2;
-
-  nearbyEntries.forEach((entry, index) => {
-    const xOffset = (index - middleIndex) * spacing;
-    const yOffset = baseYOffsets[index] ?? ((index % 2 === 0 ? 1 : -1) * (18 + Math.floor(index / 2) * 12));
-    const targetPixel = new window.google.maps.Point(
-      centerPixel.x + xOffset,
-      centerPixel.y + yOffset
-    );
-    const targetLatLng = projection.fromDivPixelToLatLng(targetPixel);
-    if (!targetLatLng) {
-      return;
-    }
-
-    spiderfiedMarkerIds.add(String(entry.camera.id));
-
-    if (customEntries) {
-      const scaledSize = getMapMarkerScaledSize(entry.camera);
-      const spiderfyMarker = new window.google.maps.Marker({
-        map: sidebarMapInstance,
-        position: centerLatLng,
-        title: entry.camera.cctv_name || 'CCTV',
-        icon: {
-          url: getMapMarkerIconUrl(entry.camera),
-          scaledSize: new window.google.maps.Size(scaledSize, scaledSize),
-          labelOrigin: getSpiderfyLabelOrigin(xOffset, yOffset),
-        },
-        label: buildSpiderfyLabelConfig(entry.camera),
-        zIndex: String(entry.camera && entry.camera.id) === String(selectedMapCameraId) ? 1000 : 950,
-      });
-
-      spiderfyMarker.addListener('click', () => {
-        suppressSidebarMapClickUntil = Date.now() + 250;
-        void focusCameraFromMap(entry.camera);
-      });
-
-      spiderfyTempMarkers.push(spiderfyMarker);
-      const leg = new window.google.maps.Polyline({
-        map: sidebarMapInstance,
-        path: [centerLatLng, centerLatLng],
-        strokeColor: '#ffffff',
-        strokeOpacity: 0.85,
-        strokeWeight: 1.5,
-        clickable: false,
-        zIndex: 1,
-      });
-      spiderfyLegs.push(leg);
-      animateSpiderfyMarker(spiderfyMarker, centerLatLng, targetLatLng, leg, centerLatLng);
-      return;
-    }
-
-    entry.marker.setPosition(entry.originalPosition);
-    const leg = new window.google.maps.Polyline({
-      map: sidebarMapInstance,
-      path: [entry.originalPosition, entry.originalPosition],
-      strokeColor: '#ffffff',
-      strokeOpacity: 0.85,
-      strokeWeight: 1.5,
-      clickable: false,
-      zIndex: 1,
-    });
-    spiderfyLegs.push(leg);
-    animateSpiderfyMarker(entry.marker, entry.originalPosition, targetLatLng, leg, entry.originalPosition);
-  });
-
-  spiderfySourceCameraId = String(sourceEntry.camera.id);
-  applySpiderfyMarkerLabels();
-  return true;
-};
-
-const loadGoogleMapsApi = () => {
-  if (window.google && window.google.maps) {
-    return Promise.resolve(window.google.maps);
-  }
-
-  if (googleMapsLoaderPromise) {
-    return googleMapsLoaderPromise;
-  }
-
-  googleMapsLoaderPromise = new Promise((resolve, reject) => {
-    const callbackName = `initGoogleMaps${Date.now()}`;
-    window[callbackName] = () => {
-      delete window[callbackName];
-      resolve(window.google.maps);
-    };
-
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&loading=async&callback=${callbackName}`;
-    script.async = true;
-    script.defer = true;
-    script.onerror = () => {
-      delete window[callbackName];
-      reject(new Error('Failed to load Google Maps.'));
-    };
-    document.head.appendChild(script);
-  });
-
-  return googleMapsLoaderPromise;
-};
-
-const isSosModeActive = () =>
-  Boolean(document && document.body && document.body.classList.contains('sos-mode'));
-
-window.__HKTV_LOAD_GOOGLE_MAPS__ = loadGoogleMapsApi;
-
-const loadMarkerClustererLibrary = () => {
-  if (window.markerClusterer && window.markerClusterer.MarkerClusterer) {
-    return Promise.resolve(window.markerClusterer);
-  }
-
-  if (markerClustererLoaderPromise) {
-    return markerClustererLoaderPromise;
-  }
-
-  markerClustererLoaderPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src =
-      'https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => {
-      if (window.markerClusterer && window.markerClusterer.MarkerClusterer) {
-        resolve(window.markerClusterer);
-        return;
-      }
-      reject(new Error('Failed to initialize MarkerClusterer.'));
-    };
-    script.onerror = () => reject(new Error('Failed to load MarkerClusterer.'));
-    document.head.appendChild(script);
-  });
-
-  return markerClustererLoaderPromise;
-};
-
-window.__HKTV_LOAD_MARKER_CLUSTERER__ = loadMarkerClustererLibrary;
-
-const getClusterTone = (onlineCount, offlineCount) => {
-  const total = Math.max(1, Number(onlineCount || 0) + Number(offlineCount || 0));
-  const onlineRatio = Number(onlineCount || 0) / total;
-  const offlineRatio = Number(offlineCount || 0) / total;
-  if (onlineRatio >= 0.7) {
-    return {
-      fill: 'rgba(65, 231, 93, 0.82)',
-      border: 'rgba(65, 231, 93, 0.22)',
-    };
-  }
-  if (offlineRatio >= 0.7) {
-    return {
-      fill: 'rgba(255, 63, 77, 0.82)',
-      border: 'rgba(255, 63, 77, 0.22)',
-    };
-  }
-  return {
-    fill: 'rgba(255, 156, 28, 0.82)',
-    border: 'rgba(255, 156, 28, 0.22)',
-  };
-};
-
-const describeClusterStatus = (markers) => {
-  const summary = {
-    onlineCount: 0,
-    offlineCount: 0,
-  };
-  markers.forEach((marker) => {
-    const entry = sidebarMapMarkers.find((item) => item && item.marker === marker);
-    if (!entry || !entry.camera) {
-      return;
-    }
-    if (getCameraOperationalState(entry.camera) === 'online') {
-      summary.onlineCount += 1;
-      return;
-    }
-    summary.offlineCount += 1;
-  });
-  return summary;
-};
-
-const buildClusterSvgDataUrl = (count, onlineCount, offlineCount) => {
-  const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
-  const tone = getClusterTone(onlineCount, offlineCount);
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${tone.fill}" stroke="${tone.border}" stroke-width="4" />
-      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 10}" fill="rgba(255,255,255,0.08)" />
-    </svg>
-  `.trim();
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-};
-
-const animateMapZoom = (map, targetZoom, center, stepDelay = 90) => {
-  if (!map || !Number.isFinite(targetZoom)) {
-    return;
-  }
-
-  const startZoom = Number(map.getZoom() || 0);
-  if (center) {
-    map.panTo(center);
-  }
-  if (startZoom >= targetZoom) {
-    return;
-  }
-
-  let nextZoom = startZoom + 1;
-  const tick = () => {
-    if (nextZoom > targetZoom) {
-      return;
-    }
-    map.setZoom(nextZoom);
-    nextZoom += 1;
-    if (nextZoom <= targetZoom) {
-      window.setTimeout(tick, stepDelay);
-    }
-  };
-  window.setTimeout(tick, stepDelay);
-};
-
-const ensureSidebarClusterTooltip = () => {
-  if (sidebarClusterTooltipEl && sidebarClusterTooltipEl.isConnected) {
-    return sidebarClusterTooltipEl;
-  }
-  if (sidebarClusterTooltipEl && !sidebarClusterTooltipEl.isConnected) {
-    sidebarMapEl.appendChild(sidebarClusterTooltipEl);
-    return sidebarClusterTooltipEl;
-  }
-  const tooltipEl = document.createElement('div');
-  tooltipEl.className = 'sidebar-cluster-tooltip';
-  sidebarMapEl.appendChild(tooltipEl);
-  sidebarClusterTooltipEl = tooltipEl;
-  return sidebarClusterTooltipEl;
-};
-
-const hideSidebarClusterTooltip = () => {
-  if (sidebarClusterHoverOpenTimer) {
-    clearTimeout(sidebarClusterHoverOpenTimer);
-    sidebarClusterHoverOpenTimer = null;
-  }
-  if (sidebarClusterHoverCloseTimer) {
-    clearTimeout(sidebarClusterHoverCloseTimer);
-    sidebarClusterHoverCloseTimer = null;
-  }
-  if (sidebarClusterTooltipEl) {
-    sidebarClusterTooltipEl.classList.remove('is-visible');
-  }
-  activeClusterTooltipKey = null;
-};
-
-const waitForSidebarMapProjectionReady = async () => {
-  if (!sidebarMapProjectionOverlay) {
-    return null;
-  }
-
-  const existingProjection = sidebarMapProjectionOverlay.getProjection();
-  if (existingProjection) {
-    return existingProjection;
-  }
-
-  if (!sidebarMapProjectionReadyPromise) {
-    sidebarMapProjectionReadyPromise = new Promise((resolve) => {
-      let attempts = 0;
-      const poll = () => {
-        const projection = sidebarMapProjectionOverlay && sidebarMapProjectionOverlay.getProjection
-          ? sidebarMapProjectionOverlay.getProjection()
-          : null;
-        if (projection || attempts >= 30) {
-          resolve(projection || null);
-          return;
-        }
-        attempts += 1;
-        window.setTimeout(poll, 50);
-      };
-      poll();
-    }).finally(() => {
-      sidebarMapProjectionReadyPromise = null;
-    });
-  }
-
-  return sidebarMapProjectionReadyPromise;
-};
-
-const showSidebarClusterTooltip = async (marker, summary, tooltipKey) => {
-  if (!sidebarMapProjectionOverlay || !sidebarMapInstance || !marker || !summary) {
-    return;
-  }
-  const projection = await waitForSidebarMapProjectionReady();
-  const position = marker.getPosition();
-  if (!projection || !position) {
-    return;
-  }
-  const pixel = projection.fromLatLngToContainerPixel(position);
-  if (!pixel) {
-    return;
-  }
-  if (tooltipKey && activeClusterTooltipKey === tooltipKey && sidebarClusterTooltipEl?.classList.contains('is-visible')) {
-    return;
-  }
-  const tooltipEl = ensureSidebarClusterTooltip();
-  tooltipEl.innerHTML = `
-    <div class="sidebar-cluster-tooltip__title">${summary.count} camera</div>
-    <div>${summary.onlineCount} online</div>
-    <div>${summary.offlineCount} offline</div>
-  `;
-  const mapWidth = sidebarMapEl.clientWidth || 0;
-  const mapHeight = sidebarMapEl.clientHeight || 0;
-  const tooltipWidth = tooltipEl.offsetWidth || 120;
-  const tooltipHeight = tooltipEl.offsetHeight || 72;
-  const desiredLeft = pixel.x - 10;
-  const desiredTop = pixel.y;
-  const minLeft = tooltipWidth + 12;
-  const maxLeft = Math.max(minLeft, mapWidth - 12);
-  const minTop = tooltipHeight / 2 + 12;
-  const maxTop = Math.max(minTop, mapHeight - tooltipHeight / 2 - 12);
-  const clampedLeft = Math.min(Math.max(desiredLeft, minLeft), maxLeft);
-  const clampedTop = Math.min(Math.max(desiredTop, minTop), maxTop);
-  tooltipEl.style.left = `${clampedLeft}px`;
-  tooltipEl.style.top = `${clampedTop}px`;
-  tooltipEl.classList.add('is-visible');
-  activeClusterTooltipKey = tooltipKey || null;
-};
-
-const createSidebarMarkerCluster = async (map, markers) => {
-  if (!map || !markers.length) {
-    return null;
-  }
-
-  const markerClustererLib = await loadMarkerClustererLibrary();
-  const MarkerClustererCtor = markerClustererLib.MarkerClusterer;
-  const SuperClusterAlgorithmCtor = markerClustererLib.SuperClusterAlgorithm;
-  if (!MarkerClustererCtor) {
-    throw new Error('MarkerClusterer constructor unavailable.');
-  }
-
-  const renderer = {
-    render({ count, position, markers: clusterMarkers }) {
-      const { onlineCount, offlineCount } = describeClusterStatus(
-        Array.isArray(clusterMarkers) ? clusterMarkers : []
-      );
-      const iconUrl = buildClusterSvgDataUrl(count, onlineCount, offlineCount);
-      const size = count >= 100 ? 62 : count >= 10 ? 56 : 52;
-      const marker = new window.google.maps.Marker({
-        position,
-        icon: {
-          url: iconUrl,
-          scaledSize: new window.google.maps.Size(size, size),
-        },
-        label: {
-          text: String(count),
-          color: '#ffffff',
-          fontSize: count >= 100 ? '13px' : '12px',
-          fontWeight: '600',
-        },
-        zIndex: 900,
-      });
-      marker.__clusterSummary = { count, onlineCount, offlineCount };
-      marker.__clusterTooltipKey = `${count}:${onlineCount}:${offlineCount}:${position && position.lat ? position.lat() : ''}:${position && position.lng ? position.lng() : ''}`;
-      marker.addListener('mouseover', () => {
-        if (sidebarClusterHoverCloseTimer) {
-          clearTimeout(sidebarClusterHoverCloseTimer);
-          sidebarClusterHoverCloseTimer = null;
-        }
-        const summary = marker.__clusterSummary || { count, onlineCount, offlineCount };
-        if (sidebarClusterHoverOpenTimer) {
-          clearTimeout(sidebarClusterHoverOpenTimer);
-        }
-        showSidebarClusterTooltip(marker, summary, marker.__clusterTooltipKey);
-      });
-      marker.addListener('mouseout', () => {
-        if (sidebarClusterHoverOpenTimer) {
-          clearTimeout(sidebarClusterHoverOpenTimer);
-          sidebarClusterHoverOpenTimer = null;
-        }
-        if (sidebarClusterHoverCloseTimer) {
-          clearTimeout(sidebarClusterHoverCloseTimer);
-        }
-        sidebarClusterHoverCloseTimer = window.setTimeout(() => {
-          sidebarClusterHoverCloseTimer = null;
-          hideSidebarClusterTooltip();
-        }, 180);
-      });
-      return marker;
-    },
-  };
-
-  return new MarkerClustererCtor({
-    map,
-    markers,
-    algorithm: SuperClusterAlgorithmCtor
-      ? new SuperClusterAlgorithmCtor({
-          radius: 170,
-          maxZoom: 22,
-        })
-      : undefined,
-    renderer,
-    onClusterClick: (_, cluster) => {
-      collapseSpiderfy();
-      hideSidebarClusterTooltip();
-      sidebarMapShouldAutoFit = false;
-      sidebarMapViewportLocked = true;
-      suppressSidebarMapClickUntil = Date.now() + 250;
-      const clusterMarkers = Array.isArray(cluster && cluster.markers) ? cluster.markers : [];
-      const entries = clusterMarkers
-        .map((marker) => sidebarMapMarkers.find((entry) => entry && entry.marker === marker))
-        .filter(Boolean);
-
-      if (entries.length <= 1) {
-        const singleCamera = entries[0] && entries[0].camera;
-        if (singleCamera) {
-          void focusCameraFromMap(singleCamera);
-        }
-        return;
-      }
-
-      const clusterCenter =
-        (cluster && cluster.position) ||
-        entries[0].originalPosition ||
-        (entries[0].marker && entries[0].marker.getPosition && entries[0].marker.getPosition());
-      const currentZoom = Number(map.getZoom() || 4);
-      if (entries.length > 4) {
-        const zoomStep = entries.length >= 10 ? 1 : 2;
-        const nextZoom = Math.min(currentZoom + zoomStep, 20);
-        const shouldSpiderfyInstead = currentZoom >= 19 || nextZoom === currentZoom;
-        if (!shouldSpiderfyInstead) {
-          collapseSpiderfy();
-          animateMapZoom(map, nextZoom, clusterCenter);
-          return;
-        }
-      }
-
-      const clusterMarker = cluster && (cluster.marker || cluster._marker || null);
-      if (clusterMarker && typeof clusterMarker.setOpacity === 'function') {
-        clusterMarker.setOpacity(entries.length === 2 ? 0.22 : 0.32);
-        spiderfyClusterMarker = clusterMarker;
-      }
-      spiderfyMarkerGroup(entries[0], entries, clusterCenter);
-    },
-  });
-};
-
-const ensureSidebarMap = async () => {
-  if (sidebarMapInstance) {
-    return sidebarMapInstance;
-  }
-
-  const maps = await loadGoogleMapsApi();
-  sidebarMapInstance = new maps.Map(sidebarMapEl, {
-    center: { lat: -2.5489, lng: 118.0149 },
-    zoom: 4,
-    disableDefaultUI: true,
-    zoomControl: true,
-    mapTypeControl: false,
-    streetViewControl: false,
-    fullscreenControl: false,
-    styles: [
-      { elementType: 'geometry', stylers: [{ color: '#1f4c85' }] },
-      { elementType: 'labels.text.fill', stylers: [{ color: '#e7f6ff' }] },
-      { elementType: 'labels.text.stroke', stylers: [{ color: '#1c3f6e' }] },
-      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#10396a' }] },
-      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#27558c' }] },
-      { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-      { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-    ],
-  });
-  sidebarTrafficLayer = new maps.TrafficLayer();
-  sidebarTrafficLayer.setMap(sidebarMapInstance);
-  ensureSidebarClusterTooltip();
-  sidebarMapProjectionOverlay = new maps.OverlayView();
-  sidebarMapProjectionOverlay.onAdd = () => {};
-  sidebarMapProjectionOverlay.draw = () => {};
-  sidebarMapProjectionOverlay.onRemove = () => {};
-  sidebarMapProjectionOverlay.setMap(sidebarMapInstance);
-  void waitForSidebarMapProjectionReady();
-  sidebarMapInstance.addListener('dragstart', () => {
-    sidebarMapShouldAutoFit = false;
-    sidebarMapViewportLocked = true;
-    collapseSpiderfy();
-    hideSidebarClusterTooltip();
-  });
-  sidebarMapInstance.addListener('zoom_changed', () => {
-    sidebarMapShouldAutoFit = false;
-    sidebarMapViewportLocked = true;
-    collapseSpiderfy();
-    hideSidebarClusterTooltip();
-  });
-  sidebarMapInstance.addListener('click', () => {
-    if (Date.now() < suppressSidebarMapClickUntil) {
-      return;
-    }
-    collapseSpiderfy();
-    hideSidebarClusterTooltip();
-  });
-  sidebarMapInstance.addListener('idle', () => {
-    if (!sidebarMapViewportLocked) {
-      return;
-    }
-    scheduleWorkspacePersist();
-  });
-  return sidebarMapInstance;
-};
+const ensureSidebarMap = async () => (sidebarMapModule ? sidebarMapModule.ensureSidebarMap() : null);
 
 const focusCameraFromMap = async (camera) => {
-  if (!camera || !activeBranch || !activeBranch.id) {
-    return;
+  if (sidebarMapModule) {
+    await sidebarMapModule.focusCameraFromMap(camera);
   }
-
-  const pageMap = getBranchPageCameraMap();
-  const targetPage = pageMap.get(String(camera.id)) || 1;
-  selectedMapCameraId = String(camera.id);
-  sidebarMapShouldAutoFit = false;
-  sidebarMapViewportLocked = true;
-  selectedCameraIds.add(String(camera.id));
-  selectedCameraMap.set(String(camera.id), camera);
-
-  if (activePage !== targetPage) {
-    await loadBranchCameras(activeBranch, targetPage);
-  } else {
-    updateCardSelectionUi(camera.id);
-    updateMiniPanel();
-  }
-
-  addActivity(
-    'Camera focused from map',
-    `${camera.cctv_name || 'Camera'} ditambahkan dari marker peta.`,
-    'success'
-  );
-  enterFocusMode();
-  scheduleSidebarMapRefresh();
 };
 
 const updateSidebarMap = async () => {
-  if (currentMode !== 'focus') {
-    clearSidebarMapMarkers();
-    setSidebarMapLoadingVisible(false);
-    sidebarMapEl.classList.add('sidebar-section-hidden');
-    sidebarMapEmptyEl.classList.remove('sidebar-section-hidden');
-    setTextIfChanged(
-      sidebarMapTitleEl,
-      activeBranch ? `Peta ${activeBranch.branch_name || activeBranch.branch_code || 'CCTV'}` : 'Peta CCTV'
-    );
-    setTextIfChanged(sidebarMapEmptyEl, 'Masuk ke Focus Mode untuk melihat peta CCTV.');
-    return;
+  if (sidebarMapModule) {
+    await sidebarMapModule.updateSidebarMap();
   }
-
-  const camerasWithCoordinates = getMapCameraCollection().filter((camera) => getCameraCoordinates(camera));
-  const mapSource = getMapCameraCollection();
-  setTextIfChanged(
-    sidebarMapTitleEl,
-    activeBranch ? `Peta ${activeBranch.branch_name || activeBranch.branch_code || 'CCTV'}` : 'Peta CCTV'
-  );
-
-  if (!camerasWithCoordinates.length) {
-    clearSidebarMapMarkers();
-    setSidebarMapLoadingVisible(false);
-    sidebarMapEl.classList.add('sidebar-section-hidden');
-    sidebarMapEmptyEl.classList.remove('sidebar-section-hidden');
-    setTextIfChanged(
-      sidebarMapEmptyEl,
-      activeBranch
-        ? 'Ruas ini belum memiliki koordinat CCTV yang valid.'
-        : 'Pilih ruas untuk memuat marker CCTV berdasarkan koordinat kamera.'
-    );
-    return;
-  }
-
-  sidebarMapEmptyEl.classList.add('sidebar-section-hidden');
-  sidebarMapEl.classList.remove('sidebar-section-hidden');
-  setSidebarMapLoadingVisible(true);
-
-  try {
-    const map = await ensureSidebarMap();
-    clearSidebarMapMarkers();
-    const bounds = new window.google.maps.LatLngBounds();
-
-    camerasWithCoordinates.forEach((camera) => {
-      const position = getCameraCoordinates(camera);
-      if (!position) {
-        return;
-      }
-
-      const marker = new window.google.maps.Marker({
-        map,
-        position,
-        title: camera.cctv_name || 'CCTV',
-        icon: {
-          url: getMapMarkerIconUrl(camera),
-          scaledSize: new window.google.maps.Size(
-            getMapMarkerScaledSize(camera),
-            getMapMarkerScaledSize(camera)
-          ),
-        },
-        zIndex: String(camera && camera.id) === String(selectedMapCameraId) ? 1000 : undefined,
-      });
-
-      marker.addListener('click', () => {
-        suppressSidebarMapClickUntil = Date.now() + 250;
-        hideSidebarClusterTooltip();
-        void focusCameraFromMap(camera);
-      });
-
-      sidebarMapMarkers.push({
-        marker,
-        camera,
-        originalPosition: position,
-      });
-      bounds.extend(position);
-    });
-
-    try {
-      sidebarMarkerCluster = await createSidebarMarkerCluster(
-        map,
-        sidebarMapMarkers.map((entry) => entry.marker)
-      );
-    } catch (clusterError) {
-      console.warn('[sidebarMap] cluster fallback:', clusterError);
-      sidebarMarkerCluster = null;
-    }
-
-    if (sidebarMapShouldAutoFit && camerasWithCoordinates.length === 1) {
-      map.setCenter(getCameraCoordinates(camerasWithCoordinates[0]));
-      map.setZoom(15);
-    } else if (sidebarMapShouldAutoFit) {
-      map.fitBounds(bounds, 48);
-    }
-    setSidebarMapLoadingVisible(false);
-  } catch (error) {
-    clearSidebarMapMarkers();
-    setSidebarMapLoadingVisible(false);
-    sidebarMapEl.classList.add('sidebar-section-hidden');
-    sidebarMapEmptyEl.classList.remove('sidebar-section-hidden');
-    setTextIfChanged(sidebarMapEmptyEl, error.message || 'Failed to load Google Maps.');
-  }
-};
-
-const getRenderableCameras = () => {
-  if (currentMode !== 'focus') {
-    return currentCameras;
-  }
-
-  const focused = Array.from(selectedCameraIds)
-    .map((cameraId) => selectedCameraMap.get(String(cameraId)))
-    .filter(Boolean);
-  return focused.length ? focused : currentCameras;
 };
 
 const getSlotOverrideKey = (slotIndex) => {
   const branchId = activeBranch && activeBranch.id ? activeBranch.id : 'no-branch';
   return `${branchId}:${activePage}:${slotIndex}`;
-};
-
-const getCameraBySlotIndex = (slotIndex) => {
-  const overrideCamera = slotOverrides.get(getSlotOverrideKey(slotIndex));
-  if (overrideCamera) {
-    return overrideCamera;
-  }
-  return currentCameras[slotIndex] || null;
-};
-
-const getDisplayCamerasForGrid = () => {
-  const limit = getLayoutCount();
-  return Array.from({ length: limit }, (_unused, index) => getCameraBySlotIndex(index));
-};
-
-const getLayoutCount = () => {
-  if (gridLayout.type === 'spotlight') {
-    return Math.max(1, Number(gridLayout.mainCount || 1) + Number(gridLayout.sideCount || 0));
-  }
-  return Math.max(1, Number(gridLayout.limit || DEFAULT_GRID_COUNT));
 };
 
 const updateLayoutInputAvailability = () => {
@@ -1899,36 +1009,35 @@ const serializeWorkspaceState = () => ({
     .filter((item) => item.key && item.camera),
 });
 
+const workspacePersistence = rendererModules.createWorkspacePersistence
+  ? rendererModules.createWorkspacePersistence({
+      delayMs: WORKSPACE_PERSIST_DELAY_MS,
+      serializeWorkspaceState,
+      saveWorkspaceState: (payload) => appStateService.saveWorkspaceState(payload),
+      onPersistError: (error) => {
+        addActivity('Workspace state failed', error.message || 'Failed to save workspace state.', 'warning');
+      },
+      shouldSkipPersist: () => workspaceRestoreInProgress,
+    })
+  : null;
+
 const persistWorkspaceState = async () => {
-  if (workspaceRestoreInProgress) {
+  if (!workspacePersistence) {
     return;
   }
-
-  const response = await window.appState.saveWorkspaceState(serializeWorkspaceState());
-  if (response.status >= 400) {
-    throw new Error(response.message || 'Failed to save workspace state.');
-  }
+  await workspacePersistence.persist();
 };
 
 const scheduleWorkspacePersist = () => {
-  if (workspaceRestoreInProgress) {
+  if (!workspacePersistence) {
     return;
   }
-  if (workspacePersistTimer) {
-    clearTimeout(workspacePersistTimer);
-  }
-  workspacePersistTimer = window.setTimeout(() => {
-    workspacePersistTimer = null;
-    persistWorkspaceState().catch((error) => {
-      addActivity('Workspace state failed', error.message || 'Failed to save workspace state.', 'warning');
-    });
-  }, WORKSPACE_PERSIST_DELAY_MS);
+  workspacePersistence.schedule();
 };
 
 const clearWorkspaceVisualState = () => {
-  if (workspacePersistTimer) {
-    clearTimeout(workspacePersistTimer);
-    workspacePersistTimer = null;
+  if (workspacePersistence) {
+    workspacePersistence.cancel();
   }
   activeBranch = null;
   activePage = 1;
@@ -1952,7 +1061,7 @@ const clearWorkspaceVisualState = () => {
 };
 
 const resetWorkspaceState = async () => {
-  const response = await window.appState.clearWorkspaceState();
+  const response = await appStateService.clearWorkspaceState();
   if (response.status >= 400) {
     throw new Error(response.message || 'Failed to clear workspace state.');
   }
@@ -1973,7 +1082,7 @@ const validateActiveBranchAccess = async () => {
     return;
   }
   clearWorkspaceVisualState();
-  await window.appState.clearWorkspaceState().catch(() => {});
+  await appStateService.clearWorkspaceState().catch(() => {});
   addActivity(
     'Branch access updated',
     'Branch aktif sebelumnya tidak lagi tersedia untuk akun ini.',
@@ -2021,12 +1130,14 @@ const handleSessionStateChange = async (session, options = {}) => {
 const restoreWorkspaceState = async () => {
   workspaceRestoreInProgress = true;
   try {
+    logRendererEvent('workspace-restore-started');
     if (!canUseCctv()) {
       clearWorkspaceVisualState();
       renderWelcomeState();
+      logRendererEvent('workspace-restore-skipped', { reason: 'cctv-access-disabled' });
       return;
     }
-    const response = await window.appState.getWorkspaceState();
+    const response = await appStateService.getWorkspaceState();
     if (response.status >= 400) {
       throw new Error(response.message || 'Failed to load workspace state.');
     }
@@ -2034,12 +1145,14 @@ const restoreWorkspaceState = async () => {
     const state = response.data;
     if (!state || typeof state !== 'object') {
       renderWelcomeState();
+      logRendererEvent('workspace-restore-skipped', { reason: 'empty-workspace-state' });
       return;
     }
 
     const persistedViewMode = String(state.viewMode || '').toLowerCase();
     if (persistedViewMode === 'asset-monitoring') {
       renderWelcomeState();
+      logRendererEvent('workspace-restore-skipped', { reason: 'asset-monitoring-workspace' });
       return;
     }
 
@@ -2087,6 +1200,7 @@ const restoreWorkspaceState = async () => {
       !isBranchAllowed(persistedBranch.id)
     ) {
       renderWelcomeState();
+      logRendererEvent('workspace-restore-skipped', { reason: 'branch-unavailable' });
       return;
     }
 
@@ -2167,132 +1281,46 @@ const restoreWorkspaceState = async () => {
         scheduleSidebarMapRefresh();
       }
     }
+    logRendererEvent('workspace-restore-completed', {
+      branchId: persistedBranch.id,
+      page: restoredPage,
+      selectedCount: selectedCameraIds.size,
+      mode: currentMode,
+    });
   } finally {
     workspaceRestoreInProgress = false;
   }
   scheduleWorkspacePersist();
 };
 
-const searchCameraCatalog = async (query) => {
-  const response = await window.cameraService.searchCameras({
-    q: String(query || '').trim(),
-    page: 1,
-    limit: 24,
-    sort_by: 'relevance',
-    sort_order: 'desc',
-  });
+let cameraGrid = null;
 
-  if (response.status >= 400) {
-    throw new Error(response.message || 'Failed to search camera catalog.');
-  }
-
-  const payload = response.data && typeof response.data === 'object' ? response.data : {};
-  return Array.isArray(payload.items) ? payload.items : [];
-};
-
+const getRenderableCameras = () => (cameraGrid ? cameraGrid.getRenderableCameras() : currentCameras);
+const getCameraBySlotIndex = (slotIndex) => (cameraGrid ? cameraGrid.getCameraBySlotIndex(slotIndex) : null);
+const getDisplayCamerasForGrid = () => (cameraGrid ? cameraGrid.getDisplayCamerasForGrid() : []);
+const getLayoutCount = () =>
+  cameraGrid ? cameraGrid.getLayoutCount() : Math.max(1, Number(gridLayout.limit || DEFAULT_GRID_COUNT));
 const updateMiniPanel = () => {
-  const visibleCameras = getRenderableCameras();
-  const branchSummarySource = branchWideCameras.length ? branchWideCameras : currentCameras;
-  const branchSummaryMap = new Map();
-  visibleCameras
-    .filter(Boolean)
-    .forEach((camera) => {
-      const branchId = String(camera.branch_id || camera.branch_code || camera.branch_name || '');
-      if (!branchId) {
-        return;
-      }
-      const existing = branchSummaryMap.get(branchId);
-      if (existing) {
-        existing.count += 1;
-        return;
-      }
-      branchSummaryMap.set(branchId, {
-        branchCode: camera.branch_code || '-',
-        branchName: camera.branch_name || camera.branch_code || 'Ruas',
-        count: 1,
-      });
-  });
-  const uniqueBranches = Array.from(branchSummaryMap.values());
-  const onlineCount = branchSummarySource.filter((camera) => getCameraOperationalState(camera) === 'online').length;
-  const offlineCount = branchSummarySource.filter((camera) => getCameraOperationalState(camera) !== 'online').length;
-  setTextIfChanged(onlineCountEl, String(onlineCount));
-  setTextIfChanged(offlineCountEl, String(offlineCount));
-  setTextIfChanged(selectedCountEl, String(selectedCameraIds.size));
-  const branchPills =
-    currentMode === 'focus'
-      ? uniqueBranches.length
-        ? uniqueBranches
-            .slice(0, 4)
-            .map(
-              (item) =>
-                `<span class="meta-pill route-chip">${item.branchCode || item.branchName}<strong class="route-chip__count">${item.count}</strong></span>`
-            )
-            .join('') +
-          (uniqueBranches.length > 4
-            ? `<span class="meta-pill route-chip">+${uniqueBranches.length - 4}</span>`
-            : '')
-        : '<span class="meta-pill route-chip">Ruas: -</span>'
-      : activeBranch
-        ? `<span class="meta-pill route-chip">${activeBranch.branch_name || activeBranch.branch_code || '-'}</span>`
-        : '<span class="meta-pill route-chip">Branch: -</span>';
-  setInnerHtmlIfChanged(currentBranchMiniEl, branchPills);
-  setTextIfChanged(
-    activeRouteTitleEl,
-    currentMode === 'focus'
-      ? 'FOCUS MODE'
-      : activeBranch
-        ? activeBranch.branch_name || activeBranch.branch_code || 'Ruas Aktif'
-        : 'Ruas Belum Dipilih'
-  );
-  setTextIfChanged(
-    modeBadgeEl,
-    currentMode === 'focus' ? `Focus Mode (${visibleCameras.length} cams)` : 'Normal Mode'
-  );
-  focusModeBtn.disabled = selectedCameraIds.size === 0 || !canUseCctv();
+  if (cameraGrid) {
+    cameraGrid.updateMiniPanel();
+  }
 };
 
-const updatePagingUi = () => {
-  setTextIfChanged(pageInfoEl, `Page ${activePage} / ${totalPages}`);
-  prevPageBtn.disabled = activePage <= 1;
-  nextPageBtn.disabled = activePage >= totalPages;
-};
+let branchFlow = null;
+let playerRuntime = null;
 
-const setPagingVisible = (visible) => {
-  pagingControlEl.classList.toggle('hidden', !visible);
-};
+const getReconnectRegistrySize = () => (playerRuntime ? playerRuntime.getReconnectRegistrySize() : reconnectTimers.size);
 
-const updateCurrentBranchLabels = () => {
-  setTextIfChanged(
-    currentBranchEl,
-    activeBranch
-      ? `Active branch: ${activeBranch.branch_code} - ${activeBranch.branch_name} (Page ${activePage})`
-      : 'Active branch: -'
-  );
-  updateMiniPanel();
-  void updateSidebarMap();
+const logPerfSnapshot = () => {
+  if (playerRuntime) {
+    playerRuntime.logPerfSnapshot();
+  }
 };
 
 const clearPlayers = () => {
-  reconnectTimers.forEach((timerId) => clearTimeout(timerId));
-  reconnectTimers.clear();
-  playerControllers.forEach((controller) => {
-    if (controller && typeof controller.destroy === 'function') {
-      controller.destroy();
-    }
-  });
-  playerControllers.clear();
-  if (globalWatchdogTimer) {
-    clearInterval(globalWatchdogTimer);
-    globalWatchdogTimer = null;
+  if (playerRuntime) {
+    playerRuntime.clearPlayers();
   }
-
-  while (hlsPlayers.length > 0) {
-    const player = hlsPlayers.pop();
-    if (player && typeof player.destroy === 'function') {
-      player.destroy();
-    }
-  }
-  logPerfSnapshot();
 };
 
 const createSkeletonCard = () => {
@@ -2355,39 +1383,15 @@ const renderEmptyStateCard = (text) => {
 };
 
 const renderWelcomeState = () => {
-  clearPlayers();
-  gridEl.classList.remove('loading', 'grid--spotlight');
-  gridEl.innerHTML = '';
-  applyGridMetrics(1, 1);
-
-  const panel = document.createElement('section');
-  panel.className = 'welcome-state';
-  panel.innerHTML = `
-    <div class="welcome-state__inner">
-      <p class="welcome-state__eyebrow">MOVISION</p>
-      <h2 class="welcome-state__title">Pilih Ruas Untuk Memulai</h2>
-      <p class="welcome-state__message">
-        Pilih ruas terlebih dahulu untuk memuat grid CCTV. Setelah itu kamu bisa masuk ke focus mode,
-        mencari kamera tertentu, dan menyesuaikan layout sesuai kebutuhan command center.
-      </p>
-      <div class="welcome-state__actions">
-        <span class="welcome-state__chip">Shift+Alt+L Pilih Ruas</span>
-        <span class="welcome-state__chip">Ctrl+K Cari Kamera</span>
-        <span class="welcome-state__chip">Shift+Alt+H Buka Help</span>
-      </div>
-      <p class="welcome-state__hint">
-        Gunakan menu Help untuk melihat shortcut lengkap dan panduan penggunaan.
-      </p>
-    </div>
-  `;
-  gridEl.appendChild(panel);
+  if (cameraGrid) {
+    cameraGrid.renderWelcomeState();
+  }
 };
 
 const ensureGridHasVisibleContent = () => {
-  if (!gridEl || gridEl.children.length > 0) {
-    return;
+  if (cameraGrid) {
+    cameraGrid.ensureGridHasVisibleContent();
   }
-  renderWelcomeState();
 };
 
 const requestFullscreen = async (targetEl) => {
@@ -2433,390 +1437,44 @@ const setStreamStatus = (statusEl, cameraId, state) => {
           : 'Offline'
   );
 };
-
 const startPerfObserver = () => {
-  if (!PERF_FLAGS.ENABLE_PERF_OBSERVER || perfObserverTimer) {
-    return;
+  if (playerRuntime) {
+    playerRuntime.startPerfObserver();
   }
-  perfObserverTimer = window.setInterval(logPerfSnapshot, 60000);
 };
 
 const stopPerfObserver = () => {
-  if (!perfObserverTimer) {
-    return;
+  if (playerRuntime) {
+    playerRuntime.stopPerfObserver();
   }
-  clearInterval(perfObserverTimer);
-  perfObserverTimer = null;
 };
 
 const ensureGlobalWatchdog = () => {
-  if (!PERF_FLAGS.USE_CENTRAL_WATCHDOG || globalWatchdogTimer || playerControllers.size === 0) {
-    return;
+  if (playerRuntime) {
+    playerRuntime.ensureGlobalWatchdog();
   }
-
-  globalWatchdogTimer = window.setInterval(() => {
-    playerControllers.forEach((controller) => {
-      if (!controller || controller.destroyed || !controller.watchdogEligible) {
-        return;
-      }
-      controller.checkPlaybackHealth();
-    });
-  }, WATCHDOG_INTERVAL_MS);
 };
 
 const syncGlobalWatchdogState = () => {
-  if (!PERF_FLAGS.USE_CENTRAL_WATCHDOG) {
-    return;
+  if (playerRuntime) {
+    playerRuntime.syncGlobalWatchdogState();
   }
-
-  if (playerControllers.size === 0) {
-    if (globalWatchdogTimer) {
-      clearInterval(globalWatchdogTimer);
-      globalWatchdogTimer = null;
-    }
-    return;
-  }
-
-  ensureGlobalWatchdog();
 };
 
 const clearReconnectTimer = (key) => {
-  if (!reconnectTimers.has(key)) {
-    return;
+  if (playerRuntime) {
+    playerRuntime.clearReconnectTimer(key);
   }
-  clearTimeout(reconnectTimers.get(key));
-  reconnectTimers.delete(key);
 };
 
 const scheduleReconnectTimer = (key, callback, delayMs) => {
-  if (!PERF_FLAGS.USE_RECONNECT_GUARDS) {
-    window.setTimeout(callback, delayMs);
-    return;
+  if (playerRuntime) {
+    playerRuntime.scheduleReconnectTimer(key, callback, delayMs);
   }
-  clearReconnectTimer(key);
-  perfStats.reconnectSchedules += 1;
-  const timerId = window.setTimeout(() => {
-    reconnectTimers.delete(key);
-    callback();
-  }, delayMs);
-  reconnectTimers.set(key, timerId);
 };
 
-const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) => {
-  const maxRetryDelayMs = 30000;
-  let retryCount = 0;
-  let lastPlaybackAt = Date.now();
-  let lastCurrentTime = 0;
-  let activeHls = null;
-  let mediaRecoveryAttempts = 0;
-  let reconnectInProgress = false;
-  let destroyed = false;
-  let localWatchdogTimer = null;
-  let consecutiveStuckSamples = 0;
-  let recoveryAttemptCount = 0;
-  let lastRecoveryReason = '';
-  let sourceUnavailableAttemptCount = 0;
-  const controllerKey = `${cameraId}:${(playerAttachSequence += 1)}`;
-
-  const normalizeRecoveryReason = (reason) => {
-    if (!reason) {
-      return 'retry';
-    }
-    if (typeof reason === 'string') {
-      return reason;
-    }
-    if (reason instanceof Error) {
-      return `${reason.name || 'Error'}: ${reason.message || 'Unknown error'}`;
-    }
-    if (typeof reason === 'object' && reason.message) {
-      return String(reason.message);
-    }
-    return String(reason);
-  };
-
-  const isTransientSourceUnavailable = (reasonText) => {
-    const normalized = String(reasonText || '').toLowerCase();
-    return (
-      normalized.includes('notsupportederror') ||
-      normalized.includes('no supported source was found') ||
-      normalized.includes('manifest load error') ||
-      normalized.includes('level load error')
-    );
-  };
-
-  const logStreamRecovery = (_eventName, _extra = {}) => {};
-
-  const clearLocalWatchdog = () => {
-    if (!localWatchdogTimer) {
-      return;
-    }
-    clearInterval(localWatchdogTimer);
-    localWatchdogTimer = null;
-  };
-
-  const checkPlaybackHealth = () => {
-    if (
-      destroyed ||
-      videoEl.paused ||
-      videoEl.ended ||
-      videoEl.readyState < 2 ||
-      reconnectInProgress ||
-      Date.now() - controller.attachedAt < WATCHDOG_WARMUP_MS
-    ) {
-      return;
-    }
-
-    const currentTime = videoEl.currentTime || 0;
-    if (currentTime > lastCurrentTime + 0.01) {
-      lastCurrentTime = currentTime;
-      lastPlaybackAt = Date.now();
-      consecutiveStuckSamples = 0;
-      return;
-    }
-
-    if (Date.now() - lastPlaybackAt >= WATCHDOG_FREEZE_THRESHOLD_MS) {
-      consecutiveStuckSamples += 1;
-      if (consecutiveStuckSamples >= WATCHDOG_CONSECUTIVE_STUCK_SAMPLES) {
-        logStreamRecovery('stuck-detected', {
-          consecutiveStuckSamples,
-          stalledForMs: Date.now() - lastPlaybackAt,
-        });
-        scheduleRetry('watchdog');
-      }
-    }
-  };
-
-  const scheduleRetry = (reason = 'retry') => {
-    if (destroyed || reconnectInProgress) {
-      return;
-    }
-
-    const normalizedReason = normalizeRecoveryReason(reason);
-    const transientSourceUnavailable = isTransientSourceUnavailable(normalizedReason);
-    reconnectInProgress = true;
-    controller.recovering = true;
-    lastRecoveryReason = normalizedReason;
-    consecutiveStuckSamples = 0;
-    setStreamStatus(statusEl, cameraId, 'reconnecting');
-    clearReconnectTimer(controllerKey);
-
-    if (activeHls) {
-      activeHls.destroy();
-      activeHls = null;
-    }
-
-    recoveryAttemptCount += 1;
-    if (!transientSourceUnavailable && recoveryAttemptCount > STREAM_RECOVERY_MAX_RETRIES) {
-      reconnectInProgress = false;
-      controller.recovering = false;
-      controller.watchdogEligible = false;
-      setStreamStatus(statusEl, cameraId, 'offline');
-      addActivity(
-        'Stream recovery stopped',
-        `Camera ${cameraId} exceeded recovery limit after ${normalizedReason}.`,
-        'warning'
-      );
-      return;
-    }
-
-    let delayMs;
-    if (transientSourceUnavailable) {
-      sourceUnavailableAttemptCount += 1;
-      if (sourceUnavailableAttemptCount <= STREAM_SOURCE_FAST_RETRIES) {
-        delayMs = [2000, 5000, 10000][sourceUnavailableAttemptCount - 1] || 10000;
-      } else {
-        const cooldownIndex = Math.min(
-          sourceUnavailableAttemptCount - STREAM_SOURCE_FAST_RETRIES - 1,
-          STREAM_SOURCE_COOLDOWN_DELAYS_MS.length - 1
-        );
-        delayMs = STREAM_SOURCE_COOLDOWN_DELAYS_MS[cooldownIndex];
-      }
-    } else {
-      sourceUnavailableAttemptCount = 0;
-      const baseDelayMs = Math.min(maxRetryDelayMs, 2000 * 2 ** Math.min(retryCount, 4));
-      delayMs = baseDelayMs + Math.floor(Math.random() * 1000);
-    }
-    logStreamRecovery('recovery-scheduled', {
-      delayMs,
-      reason: normalizedReason,
-      transientSourceUnavailable,
-      sourceUnavailableAttemptCount,
-    });
-    retryCount += 1;
-    scheduleReconnectTimer(controllerKey, connect, delayMs);
-  };
-
-  const connect = () => {
-    if (destroyed) {
-      return;
-    }
-    reconnectInProgress = false;
-    controller.recovering = false;
-    mediaRecoveryAttempts = 0;
-    controller.attachedAt = Date.now();
-    logStreamRecovery('rebind-started');
-    setStreamStatus(statusEl, cameraId, retryCount > 0 ? 'reconnecting' : 'connecting');
-    videoEl.pause();
-    videoEl.removeAttribute('src');
-    videoEl.load();
-
-    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = withCacheBuster(streamUrl);
-      videoEl.load();
-      videoEl.play().catch(scheduleRetry);
-      return;
-    }
-
-    if (window.Hls && window.Hls.isSupported()) {
-      const hls = new window.Hls({
-        lowLatencyMode: false,
-        backBufferLength: 10,
-        maxBufferLength: 10,
-        maxMaxBufferLength: 20,
-        liveSyncDurationCount: 3,
-        enableWorker: true,
-      });
-
-      activeHls = hls;
-      hls.on(window.Hls.Events.MEDIA_ATTACHED, () => {
-        if (destroyed || playerControllers.get(controllerKey) !== controller) {
-          return;
-        }
-        hls.loadSource(withCacheBuster(streamUrl));
-      });
-      hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-        if (destroyed || playerControllers.get(controllerKey) !== controller) {
-          return;
-        }
-        mediaRecoveryAttempts = 0;
-        videoEl.play().catch(scheduleRetry);
-      });
-      hls.on(window.Hls.Events.ERROR, (_event, data) => {
-        if (destroyed || playerControllers.get(controllerKey) !== controller) {
-          return;
-        }
-        if (!data || !data.fatal) {
-          return;
-        }
-
-        if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveryAttempts < 1) {
-          mediaRecoveryAttempts += 1;
-          hls.recoverMediaError();
-          return;
-        }
-
-        hls.destroy();
-        activeHls = null;
-        scheduleRetry();
-      });
-      hls.attachMedia(videoEl);
-      hlsPlayers.push(hls);
-      return;
-    }
-
-    throw new Error('HLS is not supported in this runtime.');
-  };
-
-  const handlePlaying = () => {
-    if (destroyed) {
-      return;
-    }
-    retryCount = 0;
-    const recoverySucceeded = recoveryAttemptCount > 0 || Boolean(lastRecoveryReason);
-    recoveryAttemptCount = 0;
-    sourceUnavailableAttemptCount = 0;
-    lastRecoveryReason = '';
-    consecutiveStuckSamples = 0;
-    clearReconnectTimer(controllerKey);
-    clearLocalWatchdog();
-    reconnectInProgress = false;
-    controller.recovering = false;
-    mediaRecoveryAttempts = 0;
-    lastPlaybackAt = Date.now();
-    lastCurrentTime = videoEl.currentTime || 0;
-    controller.watchdogEligible = true;
-    if (!PERF_FLAGS.USE_CENTRAL_WATCHDOG) {
-      localWatchdogTimer = window.setInterval(checkPlaybackHealth, WATCHDOG_INTERVAL_MS);
-    }
-    setStreamStatus(statusEl, cameraId, 'online');
-    if (recoverySucceeded) {
-      logStreamRecovery('recovery-succeeded');
-    }
-  };
-
-  const handleTimeUpdate = () => {
-    if (destroyed) {
-      return;
-    }
-    const currentTime = videoEl.currentTime || 0;
-    if (currentTime > lastCurrentTime + 0.01) {
-      lastCurrentTime = currentTime;
-      lastPlaybackAt = Date.now();
-      consecutiveStuckSamples = 0;
-    }
-  };
-
-  const handleError = () => {
-    if (destroyed) {
-      return;
-    }
-    controller.watchdogEligible = false;
-    clearLocalWatchdog();
-    setStreamStatus(statusEl, cameraId, 'offline');
-    logStreamRecovery('media-error');
-    scheduleRetry('media-error');
-  };
-
-  const controller = {
-    key: controllerKey,
-    cameraId,
-    videoEl,
-    statusEl,
-    watchdogEligible: false,
-    destroyed: false,
-    recovering: false,
-    attachedAt: Date.now(),
-    checkPlaybackHealth,
-    destroy() {
-      if (destroyed) {
-        return;
-      }
-      destroyed = true;
-      this.destroyed = true;
-      this.watchdogEligible = false;
-      this.recovering = false;
-      clearReconnectTimer(controllerKey);
-      clearLocalWatchdog();
-      videoEl.removeEventListener('playing', handlePlaying);
-      videoEl.removeEventListener('timeupdate', handleTimeUpdate);
-      videoEl.removeEventListener('error', handleError);
-      videoEl.removeEventListener('stalled', scheduleRetry);
-      videoEl.removeEventListener('emptied', scheduleRetry);
-      videoEl.pause();
-      videoEl.removeAttribute('src');
-      videoEl.load();
-      if (activeHls) {
-        activeHls.destroy();
-        activeHls = null;
-      }
-      playerControllers.delete(controllerKey);
-      syncGlobalWatchdogState();
-    },
-  };
-
-  playerControllers.set(controllerKey, controller);
-
-  videoEl.addEventListener('playing', handlePlaying);
-  videoEl.addEventListener('timeupdate', handleTimeUpdate);
-  videoEl.addEventListener('error', handleError);
-  videoEl.addEventListener('stalled', scheduleRetry);
-  videoEl.addEventListener('emptied', scheduleRetry);
-
-  connect();
-  syncGlobalWatchdogState();
-  logPerfSnapshot();
-  return controller;
-};
+const attachStreamWithRetry = (videoEl, streamUrl, statusEl, cameraId) =>
+  playerRuntime ? playerRuntime.attachStreamWithRetry(videoEl, streamUrl, statusEl, cameraId) : null;
 
 const setMode = (mode) => {
   currentMode = mode === 'focus' ? 'focus' : 'normal';
@@ -2828,473 +1486,239 @@ const setMode = (mode) => {
   scheduleWorkspacePersist();
 };
 
-const updateCardSelectionUi = (cameraId) => {
-  const normalizedId = String(cameraId);
-  const cardEl = gridEl.querySelector(`.camera-card[data-camera-id="${normalizedId}"]`);
-  if (!cardEl) {
-    return;
-  }
+cameraGrid = rendererModules.createCameraGrid
+  ? rendererModules.createCameraGrid({
+      elements: {
+        gridEl,
+        currentBranchMiniEl,
+        activeRouteTitleEl,
+        modeBadgeEl,
+        onlineCountEl,
+        offlineCountEl,
+        selectedCountEl,
+        focusModeBtn,
+      },
+      constants: {
+        DEFAULT_GRID_COUNT,
+      },
+      getState: () => ({
+        activeBranch,
+        activePage,
+        branchWideCameras,
+        currentCameras,
+        currentMode,
+        gridLayout,
+        selectedCameraIds,
+        selectedCameraMap,
+        slotOverrides,
+        selectedMapCameraId: () => selectedMapCameraId,
+      }),
+      callbacks: {
+        addActivity,
+        applyGridMetrics,
+        attachStreamWithRetry,
+        canUseCctv,
+        clearPlayers,
+        getCameraOperationalState,
+        getSlotOverrideKey,
+        hideModal,
+        openBranchPicker: () => openBranchPicker(),
+        openQuickSearch: (options) => openQuickSearch(options),
+        renderEmptyStateCard,
+        renderWelcomeStateFallback: () => renderWelcomeState(),
+        requestFullscreen,
+        resolveCameraById: (cameraId) => resolveCameraById(cameraId),
+        scheduleSidebarMapRefresh,
+        scheduleWorkspacePersist,
+        setMode,
+        setSelectedMapCameraId: (cameraId) => {
+          selectedMapCameraId = cameraId;
+        },
+        setStreamStatus,
+        setTextIfChanged,
+        setInnerHtmlIfChanged,
+        updateCardSelectionUiFallback: null,
+      },
+    })
+  : null;
 
-  const selected = selectedCameraIds.has(normalizedId);
-  cardEl.classList.toggle('is-selected', selected);
-  const selectBtn = cardEl.querySelector('.camera-card__select');
-  if (selectBtn) {
-    selectBtn.textContent = selected ? 'Selected' : 'Select';
-    selectBtn.classList.toggle('active', selected);
+const updateCardSelectionUi = (cameraId) => {
+  if (cameraGrid) {
+    cameraGrid.updateCardSelectionUi(cameraId);
   }
 };
 
 const toggleSelectedCamera = (cameraId, cameraData) => {
-  const normalizedId = String(cameraId);
-  let removedLastSelectionFromFocus = false;
-  if (selectedCameraIds.has(normalizedId)) {
-    selectedCameraIds.delete(normalizedId);
-    selectedCameraMap.delete(normalizedId);
-    if (selectedMapCameraId === normalizedId) {
-      selectedMapCameraId = selectedCameraIds.size ? Array.from(selectedCameraIds)[0] : null;
-    }
-    removedLastSelectionFromFocus = currentMode === 'focus' && selectedCameraIds.size === 0;
-  } else {
-    selectedCameraIds.add(normalizedId);
-    selectedMapCameraId = normalizedId;
-    if (cameraData) {
-      selectedCameraMap.set(normalizedId, cameraData);
-    }
-  }
-
-  if (removedLastSelectionFromFocus) {
-    addActivity('Normal mode restored', 'Semua kamera focus sudah di-unselect.', 'neutral');
-    setMode('normal');
-    return;
-  }
-
-  updateCardSelectionUi(normalizedId);
-  updateMiniPanel();
-  scheduleSidebarMapRefresh();
-  scheduleWorkspacePersist();
-  if (currentMode === 'focus') {
-    renderCameras(currentCameras);
+  if (cameraGrid) {
+    cameraGrid.toggleSelectedCamera(cameraId, cameraData);
   }
 };
 
 const enterFocusMode = () => {
-  if (!canUseCctv()) {
-    addActivity('Focus mode blocked', 'Akun ini tidak memiliki akses CCTV.', 'warning');
-    return;
+  if (cameraGrid) {
+    cameraGrid.enterFocusMode();
   }
-  if (selectedCameraIds.size === 0) {
-    addActivity('Focus mode skipped', 'Select one or more cameras first.', 'warning');
-    return;
-  }
-
-  addActivity(
-    'Focus mode enabled',
-    `${selectedCameraIds.size} camera card(s) moved into multi-focus layout.`,
-    'success'
-  );
-  setMode('focus');
 };
 
 const leaveFocusMode = () => {
-  if (currentMode !== 'focus') {
-    return;
+  if (cameraGrid) {
+    cameraGrid.leaveFocusMode();
   }
-
-  addActivity('Normal mode restored', 'Toolbar stays hidden until you hover near the bottom.', 'neutral');
-  setMode('normal');
 };
 
-const createCameraCard = (camera, index, options = {}) => {
-  const slotIndex = Number.isInteger(options.slotIndex) ? options.slotIndex : index;
-  const replaceable = Boolean(options.replaceable);
-  const article = document.createElement('article');
-  const selected = selectedCameraIds.has(String(camera.id));
-  article.className = 'camera-card';
-  article.style.animationDelay = `${Math.min(index * 45, 320)}ms`;
-  article.classList.toggle('is-selected', selected);
-  article.dataset.cameraId = String(camera.id);
-  article.dataset.slotIndex = String(slotIndex);
-
-  const videoWrap = document.createElement('div');
-  videoWrap.className = 'camera-card__video-wrap';
-
-  const videoEl = document.createElement('video');
-  videoEl.className = 'stream-video';
-  videoEl.autoplay = true;
-  videoEl.muted = true;
-  videoEl.controls = false;
-  videoEl.playsInline = true;
-  videoWrap.appendChild(videoEl);
-
-  const headerEl = document.createElement('div');
-  headerEl.className = 'camera-card__header';
-
-  const badgesEl = document.createElement('div');
-  badgesEl.className = 'camera-card__badges';
-  const statusEl = document.createElement('span');
-  statusEl.className = 'stream-status connecting';
-  statusEl.textContent = 'Connecting';
-  badgesEl.appendChild(statusEl);
-  if (camera.gate_name) {
-    const gateEl = document.createElement('span');
-    gateEl.className = 'camera-card__tag';
-    gateEl.textContent = camera.gate_name;
-    badgesEl.appendChild(gateEl);
+function renderCameras(_cameras = []) {
+  if (cameraGrid) {
+    cameraGrid.renderCameras();
   }
-
-  const actionsEl = document.createElement('div');
-  actionsEl.className = 'camera-card__actions';
-  const selectBtn = document.createElement('button');
-  selectBtn.type = 'button';
-  selectBtn.className = 'camera-card__select';
-  selectBtn.classList.toggle('active', selected);
-  selectBtn.textContent = selected ? 'Selected' : 'Select';
-  selectBtn.dataset.action = 'toggle-select';
-  selectBtn.dataset.cameraId = String(camera.id);
-  const fullscreenBtn = document.createElement('button');
-  fullscreenBtn.type = 'button';
-  fullscreenBtn.className = 'camera-card__action';
-  fullscreenBtn.textContent = '\u26F6';
-  fullscreenBtn.setAttribute('aria-label', 'Fullscreen');
-  fullscreenBtn.title = 'Fullscreen';
-  fullscreenBtn.dataset.action = 'fullscreen';
-  fullscreenBtn.dataset.cameraId = String(camera.id);
-  if (replaceable) {
-    const replaceBtn = document.createElement('button');
-    replaceBtn.type = 'button';
-    replaceBtn.className = 'camera-card__action';
-    replaceBtn.textContent = '\u21c4';
-    replaceBtn.setAttribute('aria-label', 'Replace slot');
-    replaceBtn.title = 'Replace slot';
-    replaceBtn.dataset.action = 'replace-slot';
-    replaceBtn.dataset.slotIndex = String(slotIndex);
-    actionsEl.appendChild(replaceBtn);
-  }
-  actionsEl.appendChild(selectBtn);
-  actionsEl.appendChild(fullscreenBtn);
-  headerEl.appendChild(badgesEl);
-  headerEl.appendChild(actionsEl);
-
-  const footerEl = document.createElement('div');
-  footerEl.className = 'camera-card__footer';
-  const metaEl = document.createElement('div');
-  metaEl.className = 'camera-card__meta';
-  const titleEl = document.createElement('h3');
-  titleEl.className = 'camera-card__title';
-  titleEl.textContent = camera.cctv_name || `Camera ${index + 1}`;
-  const subtitleEl = document.createElement('p');
-  subtitleEl.className = 'camera-card__subtitle';
-  const cameraBranchName = String(camera.branch_name || '').trim();
-  const activeBranchName = String((activeBranch && activeBranch.branch_name) || '').trim();
-
-  if (cameraBranchName) {
-    subtitleEl.textContent = cameraBranchName || 'Ruas kamera';
-  } else if (activeBranchName) {
-    subtitleEl.textContent = activeBranchName || 'Ruas aktif';
-  } else {
-    subtitleEl.textContent = 'Ruas belum dipilih';
-  }
-  metaEl.appendChild(titleEl);
-  metaEl.appendChild(subtitleEl);
-  footerEl.appendChild(metaEl);
-  article.appendChild(videoWrap);
-  article.appendChild(headerEl);
-  article.appendChild(footerEl);
-
-  const focusBarEl = document.createElement('div');
-  focusBarEl.className = 'camera-card__focus-bar';
-  article.appendChild(focusBarEl);
-
-  if (!camera.stream_play_url) {
-    article.appendChild(renderEmptyStateCard(`${camera.cctv_name || 'Camera'}: no stream URL`));
-    setStreamStatus(statusEl, camera.id, 'offline');
-    return article;
-  }
-
-  try {
-    attachStreamWithRetry(videoEl, camera.stream_play_url, statusEl, camera.id);
-  } catch (error) {
-    article.appendChild(renderEmptyStateCard(error.message));
-    setStreamStatus(statusEl, camera.id, 'offline');
-  }
-
-  return article;
-};
-
-function renderCameras(cameras = []) {
-  void cameras;
-  clearPlayers();
-  gridEl.classList.remove('loading');
-  gridEl.innerHTML = '';
-  gridEl.classList.toggle('grid--spotlight', currentMode !== 'focus' && gridLayout.type === 'spotlight');
-
-  const visibleCameras = getRenderableCameras();
-  if (!visibleCameras.length) {
-    applyGridMetrics(1, 1);
-    gridEl.appendChild(
-      renderEmptyStateCard(
-        currentMode === 'focus'
-          ? 'No selected cameras available in this page.'
-          : 'No camera data available for this page.'
-      )
-    );
-    updateMiniPanel();
-    return;
-  }
-
-  if (currentMode === 'focus') {
-    const count = visibleCameras.length;
-    const columns = count <= 2 ? count : count <= 4 ? 2 : count <= 6 ? 3 : count <= 9 ? 3 : 4;
-    const rows = Math.max(1, Math.ceil(count / Math.max(columns, 1)));
-    applyGridMetrics(columns || 1, rows);
-    visibleCameras.forEach((camera, index) => {
-      gridEl.appendChild(createCameraCard(camera, index, { replaceable: false }));
-    });
-    updateMiniPanel();
-    return;
-  }
-
-  const limit = getLayoutCount();
-  const normalVisible = getDisplayCamerasForGrid();
-
-  if (gridLayout.type === 'spotlight') {
-    applyGridMetrics(4, Math.max(2, Math.ceil(limit / 4)));
-    for (let index = 0; index < limit; index += 1) {
-      const camera = normalVisible[index];
-      const node = camera
-        ? createCameraCard(camera, index, { slotIndex: index, replaceable: true })
-        : renderEmptyStateCard(`Slot ${index + 1} is empty`);
-      if (camera && index < Number(gridLayout.mainCount || 1)) {
-        node.classList.add('camera-card--main');
-      }
-      gridEl.appendChild(node);
-    }
-    updateMiniPanel();
-    return;
-  }
-
-  applyGridMetrics(gridLayout.columns, gridLayout.rows);
-  for (let index = 0; index < limit; index += 1) {
-    const camera = normalVisible[index];
-    gridEl.appendChild(
-      camera
-        ? createCameraCard(camera, index, { slotIndex: index, replaceable: true })
-        : renderEmptyStateCard(`Slot ${index + 1} is empty`)
-    );
-  }
-  updateMiniPanel();
 }
 
-const loadBranchPages = async (branchId) => {
-  ensureCctvAccess();
-  if (!isBranchAllowed(branchId)) {
-    throw new Error('Branch ini tidak termasuk scope akses Anda.');
-  }
-  const pageResponse = await window.cameraService.getBranchPages(branchId);
-  if (pageResponse.status >= 400) {
-    throw new Error(pageResponse.message || 'Failed to load total pages.');
-  }
+branchFlow = rendererModules.createBranchFlow
+  ? rendererModules.createBranchFlow({
+      elements: {
+        pagingControlEl,
+        pageInfoEl,
+        prevPageBtn,
+        nextPageBtn,
+        pickerEl,
+        searchModalEl,
+        layoutConfigModalEl,
+        pickerStatusEl,
+        currentBranchEl,
+      },
+      services,
+      getState: () => ({
+        activeBranch,
+        activePage,
+        branchWideCameraCache,
+        currentCameras,
+        currentMode,
+        gridLayout,
+        isRefreshingStreams,
+        selectedCameraIds,
+        selectedCameraMap,
+        sidebarMapShouldAutoFit,
+        sidebarMapViewportLocked,
+        totalPages,
+      }),
+      callbacks: {
+        addActivity,
+        ensureCctvAccess,
+        getCameraOperationalState,
+        getLayoutCount,
+        hideModal,
+        isBranchAllowed,
+        renderCameras,
+        renderSkeletonCards,
+        scheduleSidebarMapRefresh,
+        scheduleWorkspacePersist,
+        setActiveBranch: (branch) => {
+          activeBranch = branch;
+        },
+        setActivePage: (page) => {
+          activePage = page;
+        },
+        setBranchWideCameras: (cameras) => {
+          branchWideCameras = cameras;
+        },
+        setCurrentCameras: (cameras) => {
+          currentCameras = cameras;
+        },
+        setReloadButtonState,
+        setSidebarMapShouldAutoFit: (value) => {
+          sidebarMapShouldAutoFit = value;
+        },
+        setSidebarMapViewportLocked: (value) => {
+          sidebarMapViewportLocked = value;
+        },
+        setTextIfChanged,
+        setTotalPages: (value) => {
+          totalPages = value;
+        },
+        updateMiniPanel,
+        updateSidebarMap,
+      },
+    })
+  : null;
 
-  const payload = Array.isArray(pageResponse.data) ? pageResponse.data[0] : null;
-  const parsedTotalPages = Number(payload && payload.total_pages ? payload.total_pages : 1);
-  totalPages = Number.isFinite(parsedTotalPages) && parsedTotalPages > 0 ? parsedTotalPages : 1;
-  updatePagingUi();
+const updatePagingUi = () => {
+  if (branchFlow) {
+    branchFlow.updatePagingUi();
+  }
+};
+
+const setPagingVisible = (visible) => {
+  if (branchFlow) {
+    branchFlow.setPagingVisible(visible);
+  }
+};
+
+const updateCurrentBranchLabels = () => {
+  if (branchFlow) {
+    branchFlow.updateCurrentBranchLabels();
+  }
+};
+
+const loadBranchPages = async (branchId) => {
+  if (branchFlow) {
+    await branchFlow.loadBranchPages(branchId);
+  }
 };
 
 const loadAllBranchCamerasForMap = async (branch) => {
-  if (!branch || !branch.id) {
-    branchWideCameras = [];
-    sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
-    scheduleSidebarMapRefresh();
-    return;
+  if (branchFlow) {
+    await branchFlow.loadAllBranchCamerasForMap(branch);
   }
-
-  ensureCctvAccess();
-  if (!isBranchAllowed(branch.id)) {
-    throw new Error('Branch map ini tidak termasuk scope akses Anda.');
-  }
-
-  const cacheKey = String(branch.id);
-  if (branchWideCameraCache.has(cacheKey)) {
-    branchWideCameras = branchWideCameraCache.get(cacheKey) || [];
-    sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
-    updateMiniPanel();
-    scheduleSidebarMapRefresh();
-    return;
-  }
-
-  try {
-    const response = await window.cameraService.getCameras({ branch_id: branch.id, limit: 500 });
-    if (response.status >= 400) {
-      throw new Error(response.message || 'Failed to load branch map cameras.');
-    }
-    branchWideCameras = (Array.isArray(response.data) ? response.data : []).map((camera) => ({
-      ...camera,
-      __sourcePage: camera.__sourcePage || camera.page || null,
-    }));
-    branchWideCameraCache.set(cacheKey, branchWideCameras);
-    sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
-  } catch (error) {
-    branchWideCameras = currentCameras.map((camera) => ({
-      ...camera,
-      __sourcePage: activePage,
-    }));
-    sidebarMapShouldAutoFit = !sidebarMapViewportLocked;
-    addActivity('Map camera sync failed', error.message || 'Unable to load all map markers.', 'warning');
-  }
-
-  updateMiniPanel();
-  scheduleSidebarMapRefresh();
 };
 
 const loadBranchCameras = async (branch, page = 1) => {
-  ensureCctvAccess();
-  if (!(branch && branch.id) || !isBranchAllowed(branch.id)) {
-    throw new Error('Branch ini tidak termasuk scope akses Anda.');
+  if (branchFlow) {
+    await branchFlow.loadBranchCameras(branch, page);
   }
-  pickerStatusEl.textContent = `Loading cameras for ${branch.branch_name}...`;
-  branchWideCameras = [];
-  renderSkeletonCards(currentMode === 'focus' ? Math.max(selectedCameraIds.size, 1) : getLayoutCount());
-  addActivity(
-    'Loading branch cameras',
-    `${branch.branch_code} - ${branch.branch_name} page ${page} is being prepared.`,
-    'warning'
-  );
-
-  const response = await window.cameraService.getCamerasByBranch(branch.id, page);
-  if (response.status >= 400) {
-    throw new Error(response.message || 'Failed to load cameras.');
-  }
-
-  activeBranch = branch;
-  activePage = page;
-  currentCameras = (Array.isArray(response.data) ? response.data : []).map((camera) => ({
-    ...camera,
-    __sourcePage: page,
-  }));
-  currentCameras.forEach((camera) => {
-    if (selectedCameraIds.has(String(camera.id))) {
-      selectedCameraMap.set(String(camera.id), camera);
-    }
-  });
-  renderCameras(currentCameras);
-  updateCurrentBranchLabels();
-  updatePagingUi();
-  setReloadButtonState(false);
-  hideModal(pickerEl);
-  hideModal(searchModalEl);
-  hideModal(layoutConfigModalEl);
-  addActivity(
-    'Camera grid ready',
-    `${currentCameras.length} camera stream(s) loaded for ${branch.branch_name} page ${page}.`,
-    'success'
-  );
-  void loadAllBranchCamerasForMap(branch);
-  scheduleWorkspacePersist();
 };
 
 const refreshCurrentStreams = async () => {
-  if (isRefreshingStreams) {
-    return;
-  }
-
-  ensureCctvAccess();
-
-  if (!activeBranch || !activeBranch.id) {
-    pickerStatusEl.textContent = 'Select branch first before reloading streams.';
-    addActivity('Reload skipped', 'Choose a branch first.', 'warning');
-    return;
-  }
-
-  branchWideCameraCache.delete(String(activeBranch.id));
-
-  setReloadButtonState(true);
-  renderSkeletonCards(currentMode === 'focus' ? Math.max(selectedCameraIds.size, 1) : getLayoutCount());
-  try {
-    sidebarMapViewportLocked = false;
-    sidebarMapShouldAutoFit = true;
-    await loadBranchCameras(activeBranch, activePage);
-    pickerStatusEl.textContent = `Streams reloaded for ${activeBranch.branch_name} (Page ${activePage}).`;
-  } catch (error) {
-    pickerStatusEl.textContent = error.message || 'Failed to reload streams.';
-    addActivity('Reload failed', error.message || 'Failed to reload streams.', 'danger');
-  } finally {
-    setReloadButtonState(false);
+  if (branchFlow) {
+    await branchFlow.refreshCurrentStreams();
   }
 };
 
-const createBranchButton = (branch, onSelect) => {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'branch-search-item';
-  button.innerHTML = `<strong>${branch.branch_code || '-'}</strong><span>${branch.branch_name || '-'}</span>`;
-  button.addEventListener('click', async () => {
-    try {
-      sidebarMapViewportLocked = false;
-      sidebarMapShouldAutoFit = true;
-      await loadBranchPages(branch.id);
-      await loadBranchCameras(branch, 1);
-      setPagingVisible(totalPages > 1);
-      if (typeof onSelect === 'function') {
-        onSelect();
-      }
-    } catch (error) {
-      pickerStatusEl.textContent = error.message || 'Failed to load cameras.';
-      addActivity('Branch load failed', error.message || 'Failed to load cameras.', 'danger');
-      setPagingVisible(false);
-    }
-  });
-  return button;
-};
+const branchPicker = rendererModules.createBranchPicker
+  ? rendererModules.createBranchPicker({
+      elements: {
+        branchListEl,
+        branchSearchInputEl,
+        pickerEl,
+        pickerStatusEl,
+      },
+      services,
+      getAvailableBranches: () => availableBranches,
+      setAvailableBranches: (branches) => {
+        availableBranches = Array.isArray(branches) ? branches : [];
+      },
+      getAllowedBranches,
+      renderEmptyStateCard,
+      loadBranchPages,
+      loadBranchCameras,
+      setPagingVisible,
+      getTotalPages: () => totalPages,
+      addActivity,
+      focusAndSelectInput,
+      ensureCctvAccess,
+      showModal,
+      prepareForBranchSelection: () => {
+        sidebarMapViewportLocked = false;
+        sidebarMapShouldAutoFit = true;
+      },
+    })
+  : null;
 
-const filterBranches = (query) => {
-  const normalized = String(query || '').trim().toLowerCase();
-  if (!normalized) {
-    return availableBranches;
-  }
-
-  return availableBranches.filter((branch) => {
-    const code = String(branch.branch_code || '').toLowerCase();
-    const name = String(branch.branch_name || '').toLowerCase();
-    return code.includes(normalized) || name.includes(normalized);
-  });
-};
-
-const renderBranchCollection = (containerEl, branches, emptyMessage, onSelect) => {
-  containerEl.innerHTML = '';
-  if (!branches.length) {
-    containerEl.appendChild(renderEmptyStateCard(emptyMessage));
-    return;
-  }
-
-  branches.forEach((branch) => containerEl.appendChild(createBranchButton(branch, onSelect)));
-};
-
-const ensureBranchList = async () => {
-  if (availableBranches.length) {
-    return availableBranches;
-  }
-
-  const response = await window.cameraService.getBranches();
-  if (response.status >= 400) {
-    throw new Error(response.message || 'Failed to load branches.');
-  }
-
-  availableBranches = getAllowedBranches(Array.isArray(response.data) ? response.data : []);
-  return availableBranches;
-};
+const ensureBranchList = async () =>
+  branchPicker ? branchPicker.ensureBranchList() : availableBranches;
 
 const renderBranchPickerResults = () => {
-  const filteredBranches = filterBranches(branchSearchInputEl.value);
-  pickerStatusEl.textContent = filteredBranches.length
-    ? `Showing ${filteredBranches.length} branch result(s).`
-    : 'No branch matched your search.';
-  renderBranchCollection(
-    branchListEl,
-    filteredBranches,
-    'No branch matched your search.',
-    () => branchSearchInputEl.blur()
-  );
+  if (branchPicker) {
+    branchPicker.renderResults();
+  }
 };
 
 const resolveCameraById = (cameraId) => {
@@ -3308,295 +1732,335 @@ const resolveCameraById = (cameraId) => {
   );
 };
 
+const quickSearch = rendererModules.createQuickSearch
+  ? rendererModules.createQuickSearch({
+      elements: {
+        quickSearchInputEl,
+        quickSearchResultsEl,
+        searchModalEl,
+        searchModalTitleEl,
+      },
+      services,
+      getState: () => ({
+        currentMode,
+        quickSearchContext,
+        quickSearchDebounceTimer,
+        quickSearchRequestId,
+        selectedCameraIds,
+        selectedCameraMap,
+        slotOverrides,
+      }),
+      callbacks: {
+        addActivity,
+        bumpSearchRequests: () => {
+          perfStats.searchRequests += 1;
+        },
+        ensureCctvAccess,
+        focusAndSelectInput,
+        getSlotOverrideKey,
+        hideModal,
+        renderCameras: () => renderCameras(currentCameras),
+        renderEmptyStateCard,
+        scheduleWorkspacePersist,
+        setQuickSearchContext: (nextValue) => {
+          quickSearchContext = nextValue;
+        },
+        setQuickSearchDebounceTimer: (nextValue) => {
+          quickSearchDebounceTimer = nextValue;
+        },
+        setQuickSearchRequestId: (nextValue) => {
+          quickSearchRequestId = nextValue;
+        },
+        showModal,
+        updateMiniPanel,
+      },
+    })
+  : null;
+
 const renderQuickSearchResults = async () => {
-  const requestId = quickSearchRequestId + 1;
-  quickSearchRequestId = requestId;
-  quickSearchResultsEl.innerHTML = '';
-  quickSearchResultsEl.appendChild(renderEmptyStateCard('Searching cameras...'));
-  perfStats.searchRequests += 1;
-
-  let filteredCameras = [];
-  try {
-    filteredCameras = await searchCameraCatalog(quickSearchInputEl.value);
-  } catch (error) {
-    if (quickSearchRequestId !== requestId) {
-      return;
-    }
-    quickSearchResultsEl.innerHTML = '';
-    quickSearchResultsEl.appendChild(
-      renderEmptyStateCard(error.message || 'Failed to search camera catalog.')
-    );
-    return;
+  if (quickSearch) {
+    await quickSearch.renderQuickSearchResults();
   }
-
-  if (quickSearchRequestId !== requestId) {
-    return;
-  }
-
-  quickSearchResultsEl.innerHTML = '';
-
-  if (!filteredCameras.length) {
-    quickSearchResultsEl.appendChild(renderEmptyStateCard('No camera matched your search.'));
-    return;
-  }
-
-  filteredCameras.forEach((camera) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'branch-search-item';
-    const detailParts = [camera.gate_name, camera.branch_name]
-      .map((value) => String(value || '').trim())
-      .filter(Boolean);
-    button.innerHTML = `
-      <strong>${camera.cctv_name || `Camera ${camera.id || '-'}`}</strong>
-      <span>${detailParts.join(' | ')}</span>
-    `;
-    button.addEventListener('click', () => {
-      if (quickSearchContext.mode === 'replace-slot' && Number.isInteger(quickSearchContext.slotIndex)) {
-        const slotIndex = quickSearchContext.slotIndex;
-        slotOverrides.set(getSlotOverrideKey(slotIndex), camera);
-        hideModal(searchModalEl);
-        addActivity(
-          'Camera slot updated',
-          `${camera.cctv_name || 'Camera'} assigned to slot ${slotIndex + 1}.`,
-          'success'
-        );
-        scheduleWorkspacePersist();
-        renderCameras(currentCameras);
-        return;
-      }
-
-      selectedCameraIds.add(String(camera.id));
-      selectedCameraMap.set(String(camera.id), camera);
-      hideModal(searchModalEl);
-      addActivity(
-        'Camera selected',
-        `${camera.cctv_name || 'Camera'} added to selection list.`,
-        'success'
-      );
-      updateMiniPanel();
-      scheduleWorkspacePersist();
-      if (currentMode === 'focus') {
-        renderCameras(currentCameras);
-      }
-    });
-    quickSearchResultsEl.appendChild(button);
-  });
 };
 
 const scheduleQuickSearch = () => {
-  if (quickSearchDebounceTimer) {
-    clearTimeout(quickSearchDebounceTimer);
+  if (quickSearch) {
+    quickSearch.scheduleQuickSearch();
   }
-
-  quickSearchDebounceTimer = window.setTimeout(() => {
-    renderQuickSearchResults().catch((error) => {
-      quickSearchResultsEl.innerHTML = '';
-      quickSearchResultsEl.appendChild(
-        renderEmptyStateCard(error.message || 'Failed to search camera catalog.')
-      );
-    });
-  }, 280);
 };
 
 const openBranchPicker = async () => {
-  ensureCctvAccess();
-  showModal(pickerEl);
-  pickerStatusEl.textContent = 'Loading branch list...';
-  branchListEl.innerHTML = '';
-  branchSearchInputEl.value = '';
-
-  try {
-    await ensureBranchList();
-    renderBranchPickerResults();
-    focusAndSelectInput(branchSearchInputEl);
-    addActivity('Branch browser opened', 'Search or browse a branch to load camera cards.', 'neutral');
-  } catch (error) {
-    pickerStatusEl.textContent = error.message || 'Failed to load branches.';
-    addActivity('Branch list unavailable', error.message || 'Failed to load branches.', 'danger');
+  if (!branchPicker) {
+    return;
   }
+  await branchPicker.open();
 };
 
 const openQuickSearch = async (options = {}) => {
-  ensureCctvAccess();
-  quickSearchContext = {
-    mode: options.mode === 'replace-slot' ? 'replace-slot' : 'select',
-    slotIndex: Number.isInteger(options.slotIndex) ? options.slotIndex : null,
-  };
-
-  showModal(searchModalEl);
-  quickSearchInputEl.value = '';
-  quickSearchResultsEl.innerHTML = '';
-  searchModalTitleEl.textContent =
-    quickSearchContext.mode === 'replace-slot' && Number.isInteger(quickSearchContext.slotIndex)
-      ? `Replace Slot ${quickSearchContext.slotIndex + 1}`
-      : 'Find Camera Item';
-  quickSearchInputEl.placeholder =
-    quickSearchContext.mode === 'replace-slot'
-      ? 'Search camera to place into selected slot'
-      : 'Search camera name, gate, branch, or code';
-
-  try {
-    await renderQuickSearchResults();
-    focusAndSelectInput(quickSearchInputEl);
-    addActivity(
-      'Camera search opened',
-      quickSearchContext.mode === 'replace-slot'
-        ? `Choose a camera item for slot ${quickSearchContext.slotIndex + 1}.`
-        : 'Search camera items and add them to selection.',
-      'neutral'
-    );
-  } catch (error) {
-    quickSearchResultsEl.appendChild(
-      renderEmptyStateCard(error.message || 'Failed to load camera search catalog.')
-    );
-    addActivity('Camera search failed', error.message || 'Unable to load camera search.', 'danger');
+  if (quickSearch) {
+    await quickSearch.openQuickSearch(options);
   }
 };
 
-const openApiBaseUrlConfig = async (options = {}) => {
-  const now = Date.now();
-  if (now - lastApiConfigOpenAt < 300) {
-    return;
-  }
-  lastApiConfigOpenAt = now;
+sidebarMapModule = rendererModules.createSidebarMap
+  ? rendererModules.createSidebarMap({
+      elements: {
+        sidebarMapEl,
+        sidebarMapEmptyEl,
+        sidebarMapLoadingEl,
+        sidebarMapTitleEl,
+      },
+      constants: {
+        GOOGLE_MAPS_API_KEY,
+        OFFLINE_MARKER_URL,
+        ONLINE_MARKER_URL,
+      },
+      getState: () => ({
+        activeBranch,
+        activeClusterTooltipKey,
+        activePage,
+        branchWideCameras,
+        currentCameras,
+        currentMode,
+        googleMapsLoaderPromise,
+        markerClustererLoaderPromise,
+        selectedCameraIds,
+        selectedCameraMap,
+        selectedMapCameraId,
+        sidebarClusterHoverCloseTimer,
+        sidebarClusterHoverOpenTimer,
+        sidebarClusterTooltipEl,
+        sidebarMapInstance,
+        sidebarMapMarkers,
+        sidebarMapProjectionOverlay,
+        sidebarMapProjectionReadyPromise,
+        sidebarMapRefreshTimer,
+        sidebarMapShouldAutoFit,
+        sidebarMapViewportLocked,
+        sidebarMarkerCluster,
+        spiderfiedMarkerIds,
+        spiderfyClusterMarker,
+        spiderfyLegs,
+        spiderfySourceCameraId,
+        spiderfyTempMarkers,
+        suppressSidebarMapClickUntil,
+      }),
+      updateState: (patch) => {
+        if (!patch || typeof patch !== 'object') {
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'activeClusterTooltipKey')) activeClusterTooltipKey = patch.activeClusterTooltipKey;
+        if (Object.prototype.hasOwnProperty.call(patch, 'branchWideCameras')) branchWideCameras = patch.branchWideCameras;
+        if (Object.prototype.hasOwnProperty.call(patch, 'googleMapsLoaderPromise')) googleMapsLoaderPromise = patch.googleMapsLoaderPromise;
+        if (Object.prototype.hasOwnProperty.call(patch, 'markerClustererLoaderPromise')) markerClustererLoaderPromise = patch.markerClustererLoaderPromise;
+        if (Object.prototype.hasOwnProperty.call(patch, 'selectedMapCameraId')) selectedMapCameraId = patch.selectedMapCameraId;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarClusterHoverCloseTimer')) sidebarClusterHoverCloseTimer = patch.sidebarClusterHoverCloseTimer;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarClusterHoverOpenTimer')) sidebarClusterHoverOpenTimer = patch.sidebarClusterHoverOpenTimer;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarClusterTooltipEl')) sidebarClusterTooltipEl = patch.sidebarClusterTooltipEl;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarMapInstance')) sidebarMapInstance = patch.sidebarMapInstance;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarMapMarkers')) sidebarMapMarkers = patch.sidebarMapMarkers;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarMapProjectionOverlay')) sidebarMapProjectionOverlay = patch.sidebarMapProjectionOverlay;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarMapProjectionReadyPromise')) sidebarMapProjectionReadyPromise = patch.sidebarMapProjectionReadyPromise;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarMapRefreshTimer')) sidebarMapRefreshTimer = patch.sidebarMapRefreshTimer;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarMapShouldAutoFit')) sidebarMapShouldAutoFit = patch.sidebarMapShouldAutoFit;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarMapViewportLocked')) sidebarMapViewportLocked = patch.sidebarMapViewportLocked;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarMarkerCluster')) sidebarMarkerCluster = patch.sidebarMarkerCluster;
+        if (Object.prototype.hasOwnProperty.call(patch, 'spiderfiedMarkerIds')) spiderfiedMarkerIds = patch.spiderfiedMarkerIds;
+        if (Object.prototype.hasOwnProperty.call(patch, 'spiderfyClusterMarker')) spiderfyClusterMarker = patch.spiderfyClusterMarker;
+        if (Object.prototype.hasOwnProperty.call(patch, 'spiderfyLegs')) spiderfyLegs = patch.spiderfyLegs;
+        if (Object.prototype.hasOwnProperty.call(patch, 'spiderfySourceCameraId')) spiderfySourceCameraId = patch.spiderfySourceCameraId;
+        if (Object.prototype.hasOwnProperty.call(patch, 'spiderfyTempMarkers')) spiderfyTempMarkers = patch.spiderfyTempMarkers;
+        if (Object.prototype.hasOwnProperty.call(patch, 'suppressSidebarMapClickUntil')) suppressSidebarMapClickUntil = patch.suppressSidebarMapClickUntil;
+        if (Object.prototype.hasOwnProperty.call(patch, 'sidebarTrafficLayer')) sidebarTrafficLayer = patch.sidebarTrafficLayer;
+      },
+      callbacks: {
+        addActivity,
+        enterFocusMode,
+        getCameraOperationalState,
+        loadBranchCameras,
+        scheduleWorkspacePersist,
+        setSidebarMapLoadingVisible,
+        setTextIfChanged,
+        updateCardSelectionUi,
+        updateMiniPanel,
+      },
+    })
+  : null;
 
-  const normalizedOptions = options && typeof options === 'object' ? options : {};
-  const requireConfiguration = Boolean(normalizedOptions.requireConfiguration);
-  const returnToAuth =
-    normalizedOptions.returnToAuth === undefined
-      ? authModalEl.classList.contains('visible')
-      : Boolean(normalizedOptions.returnToAuth);
-  const currentApiBaseUrl =
-    apiConfigBootstrapState.apiBaseUrl || (await window.cameraService.getApiBaseUrl());
+playerRuntime = rendererModules.createPlayerRuntime
+  ? rendererModules.createPlayerRuntime({
+      constants: {
+        PERF_FLAGS,
+        STREAM_RECOVERY_MAX_RETRIES,
+        STREAM_SOURCE_COOLDOWN_DELAYS_MS,
+        STREAM_SOURCE_FAST_RETRIES,
+        WATCHDOG_CONSECUTIVE_STUCK_SAMPLES,
+        WATCHDOG_FREEZE_THRESHOLD_MS,
+        WATCHDOG_INTERVAL_MS,
+        WATCHDOG_WARMUP_MS,
+      },
+      getState: () => ({
+        globalWatchdogTimer,
+        hlsPlayers,
+        perfObserverTimer,
+        perfStats,
+        playerAttachSequence,
+        playerControllers,
+        reconnectTimers,
+      }),
+      updateState: (patch) => {
+        if (!patch || typeof patch !== 'object') {
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'globalWatchdogTimer')) {
+          globalWatchdogTimer = patch.globalWatchdogTimer;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'perfObserverTimer')) {
+          perfObserverTimer = patch.perfObserverTimer;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'playerAttachSequence')) {
+          playerAttachSequence = patch.playerAttachSequence;
+        }
+      },
+      callbacks: {
+        addActivity,
+        setStreamStatus,
+        withCacheBuster,
+      },
+    })
+  : null;
 
-  shouldReturnToAuthAfterApiConfig = returnToAuth;
-  setApiConfigRequirementState(requireConfiguration);
-  apiBaseUrlInputEl.value = currentApiBaseUrl || '';
-  setApiCheckStatus(
-    normalizedOptions.statusMessage || 'Enter an API URL, then use Check URL to verify connectivity.',
-    normalizedOptions.statusTone || 'neutral'
-  );
-  setApiCheckButtonState(false);
-  if (returnToAuth || requireConfiguration) {
-    setAuthModalVisible(false);
-  }
-  showModal(apiConfigModalEl);
-  focusAndSelectInput(apiBaseUrlInputEl);
-};
+const modalActions = rendererModules.createModalActions
+  ? rendererModules.createModalActions({
+      elements: {
+        apiConfigModalEl,
+        apiBaseUrlInputEl,
+        authModalEl,
+        authPasswordInputEl,
+        appearanceConfigModalEl,
+        appearanceFontFamilySelectEl,
+        appearanceWeatherIconStyleSelectEl,
+        appearanceWeatherIconColorInputEl,
+        appearanceWeatherIconAnimatedEl,
+        layoutConfigModalEl,
+        updateConfigModalEl,
+        updateFeedUrlInputEl,
+        updateGithubOwnerInputEl,
+        updateGithubRepoInputEl,
+        useGithubReleaseCheckboxEl,
+        saveUpdateConfigBtn,
+        pickerEl,
+        searchModalEl,
+        helpModalEl,
+        pickerStatusEl,
+        authFormEl,
+        authUsernameInputEl,
+        appearanceConfigFormEl,
+        apiConfigFormEl,
+        checkApiConfigBtn,
+        updateConfigFormEl,
+        layoutConfigFormEl,
+        layoutPresetSelectEl,
+        layoutMainCountInputEl,
+        layoutSideCountInputEl,
+      },
+      services,
+      defaults: {
+        anonymousSession: ANONYMOUS_SESSION,
+        defaultAppearanceConfig: DEFAULT_APPEARANCE_CONFIG,
+      },
+      getState: () => ({
+        apiConfigBootstrapState,
+        currentAppearanceConfig,
+        isApiConfigRequired,
+        isCheckingApiConfig,
+        isSubmittingLogin,
+        lastApiConfigOpenAt,
+        lastAppearanceConfigOpenAt,
+        lastUpdateConfigOpenAt,
+        latestUpdatePayload,
+        shouldReturnToAuthAfterApiConfig,
+      }),
+      updateState: (patch) => {
+        if (!patch || typeof patch !== 'object') {
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'lastApiConfigOpenAt')) {
+          lastApiConfigOpenAt = patch.lastApiConfigOpenAt;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'lastAppearanceConfigOpenAt')) {
+          lastAppearanceConfigOpenAt = patch.lastAppearanceConfigOpenAt;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'lastUpdateConfigOpenAt')) {
+          lastUpdateConfigOpenAt = patch.lastUpdateConfigOpenAt;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'shouldReturnToAuthAfterApiConfig')) {
+          shouldReturnToAuthAfterApiConfig = patch.shouldReturnToAuthAfterApiConfig;
+        }
+      },
+      callbacks: {
+        addActivity,
+        applyApiConfigState,
+        applyAppearanceConfig,
+        canUseCctv,
+        focusAndSelectInput,
+        handleSessionStateChange,
+        hideHelp,
+        hideModal,
+        normalizeAppearanceConfig,
+        reopenAuthModalAfterApiConfig,
+        renderCameras,
+        restoreWorkspaceState,
+        setApiCheckButtonState,
+        setApiCheckStatus,
+        setApiConfigRequirementState,
+        setAuthModalVisible,
+        setAuthStatus,
+        setGridLayoutState,
+        setLoginButtonState,
+        setProfileMenuVisible,
+        setToolbarMenuVisible,
+        setUpdateStatusText,
+        showModal,
+        syncLayoutControls,
+        syncSessionState,
+        syncUpdateInfoCard,
+        getCurrentCameras: () => currentCameras,
+      },
+    })
+  : null;
+
+const openApiBaseUrlConfig = async (options = {}) =>
+  modalActions ? modalActions.openApiBaseUrlConfig(options) : undefined;
 window.openApiBaseUrlConfig = openApiBaseUrlConfig;
 
-const closeApiConfigFlow = ({ force = false } = {}) => {
-  if (isApiConfigRequired && !force) {
-    return;
-  }
-  hideModal(apiConfigModalEl);
-  setApiConfigRequirementState(false);
-  reopenAuthModalAfterApiConfig();
-};
+const closeApiConfigFlow = ({ force = false } = {}) =>
+  modalActions ? modalActions.closeApiConfigFlow({ force }) : undefined;
 
-const redirectToApiConfigFlow = async (message, tone = 'warning') => {
-  authPasswordInputEl.value = '';
-  setAuthStatus('Perbarui koneksi backend sebelum mencoba login lagi.', 'warning');
-  await handleSessionStateChange(ANONYMOUS_SESSION, { suppressAuthModal: true });
-  await openApiBaseUrlConfig({
-    requireConfiguration: true,
-    returnToAuth: true,
-    statusMessage:
-      message || 'Unable to reach API server. Check API_BASE_URL and network connection.',
-    statusTone: tone,
-  });
-};
+const redirectToApiConfigFlow = async (message, tone = 'warning') =>
+  modalActions ? modalActions.redirectToApiConfigFlow(message, tone) : undefined;
 
-const openAppearanceConfig = async () => {
-  const now = Date.now();
-  if (now - lastAppearanceConfigOpenAt < 300) {
-    return;
-  }
-  lastAppearanceConfigOpenAt = now;
+const openAppearanceConfig = async () =>
+  modalActions ? modalActions.openAppearanceConfig() : undefined;
 
-  if (window.appConfig && typeof window.appConfig.getAppearance === 'function') {
-    const response = await window.appConfig.getAppearance();
-    if (response.status >= 400) {
-      throw new Error(response.message || 'Failed to load appearance configuration.');
-    }
-    applyAppearanceConfig(response.data || DEFAULT_APPEARANCE_CONFIG);
-  } else {
-    applyAppearanceConfig(currentAppearanceConfig);
-  }
-
-  showModal(appearanceConfigModalEl);
-  if (appearanceFontFamilySelectEl) {
-    appearanceFontFamilySelectEl.focus();
-  }
-};
-
-const loadAppearanceConfig = async () => {
-  if (!window.appConfig || typeof window.appConfig.getAppearance !== 'function') {
-    applyAppearanceConfig(DEFAULT_APPEARANCE_CONFIG);
-    return;
-  }
-  const response = await window.appConfig.getAppearance();
-  if (response.status >= 400) {
-    throw new Error(response.message || 'Failed to load appearance configuration.');
-  }
-  applyAppearanceConfig(response.data || DEFAULT_APPEARANCE_CONFIG);
-};
+const loadAppearanceConfig = async () =>
+  modalActions ? modalActions.loadAppearanceConfig() : undefined;
 window.openAppearanceConfig = openAppearanceConfig;
 
 const openLayoutConfig = () => {
-  syncLayoutControls();
-  showModal(layoutConfigModalEl);
+  if (modalActions) {
+    modalActions.openLayoutConfig();
+  }
 };
 
-const openUpdateFeedConfig = async () => {
-  const now = Date.now();
-  if (now - lastUpdateConfigOpenAt < 300) {
-    return;
-  }
-  lastUpdateConfigOpenAt = now;
-
-  const response = await window.appUpdater.getConfig();
-  if (response.status >= 400) {
-    throw new Error(response.message || 'Failed to load update configuration.');
-  }
-
-  const data = response.data || {};
-  const readOnlyMode = data.mode === 'electron-updater';
-  updateFeedUrlInputEl.value = data.feedUrl || data.suggestedFeedUrl || '';
-  updateGithubOwnerInputEl.value = data.githubOwner || data.suggestedGitHubOwner || '';
-  updateGithubRepoInputEl.value = data.githubRepo || data.suggestedGitHubRepo || '';
-  useGithubReleaseCheckboxEl.checked = Boolean(data.githubOwner && data.githubRepo);
-  updateFeedUrlInputEl.disabled = readOnlyMode;
-  updateGithubOwnerInputEl.disabled = readOnlyMode;
-  updateGithubRepoInputEl.disabled = readOnlyMode;
-  useGithubReleaseCheckboxEl.disabled = readOnlyMode;
-  saveUpdateConfigBtn.disabled = readOnlyMode;
-  if (readOnlyMode) {
-    pickerStatusEl.textContent = data.message || 'Auto update feed is managed by build configuration.';
-  }
-  syncUpdateInfoCard(latestUpdatePayload, data);
-  showModal(updateConfigModalEl);
-  focusAndSelectInput(updateFeedUrlInputEl);
-};
+const openUpdateFeedConfig = async () =>
+  modalActions ? modalActions.openUpdateFeedConfig() : undefined;
 window.openUpdateFeedConfig = openUpdateFeedConfig;
 
 const closeAllTransientUi = () => {
-  setToolbarMenuVisible(false);
-  setProfileMenuVisible(false);
-  hideModal(pickerEl);
-  hideModal(searchModalEl);
-  hideModal(appearanceConfigModalEl);
-  hideModal(layoutConfigModalEl);
-  if (apiConfigModalEl.classList.contains('visible')) {
-    if (isApiConfigRequired) {
-      // Keep the required onboarding step visible until API config is saved.
-    } else {
-      closeApiConfigFlow();
-    }
+  if (modalActions) {
+    modalActions.closeAllTransientUi();
   }
-  hideModal(updateConfigModalEl);
-  hideHelp();
 };
 
 const isTypingField = (target) =>
@@ -3607,65 +2071,15 @@ const isTypingField = (target) =>
     target.isContentEditable);
 
 const handleGridClick = async (event) => {
-  const actionButton = event.target instanceof HTMLElement ? event.target.closest('[data-action]') : null;
-  if (!actionButton) {
-    return;
-  }
-
-  event.stopPropagation();
-  const action = actionButton.dataset.action;
-  if (action === 'toggle-select') {
-    const camera = resolveCameraById(actionButton.dataset.cameraId);
-    if (camera) {
-      toggleSelectedCamera(camera.id, camera);
-    }
-    return;
-  }
-
-  if (action === 'fullscreen') {
-    const cardEl = actionButton.closest('.camera-card');
-    if (!cardEl) {
-      return;
-    }
-    try {
-      await requestFullscreen(cardEl);
-    } catch (_) {
-      addActivity('Fullscreen blocked', 'Runtime denied the fullscreen request.', 'warning');
-    }
-    return;
-  }
-
-  if (action === 'replace-slot') {
-    const slotIndex = Number.parseInt(actionButton.dataset.slotIndex || '-1', 10);
-    if (!Number.isInteger(slotIndex) || slotIndex < 0) {
-      return;
-    }
-    openQuickSearch({
-      mode: 'replace-slot',
-      slotIndex,
-    }).catch((error) => {
-      addActivity('Camera search failed', error.message || 'Unable to open camera search.', 'danger');
-    });
+  if (cameraGrid) {
+    await cameraGrid.handleGridClick(event);
   }
 };
 
 const handleGridDoubleClick = (event) => {
-  if (currentMode === 'focus') {
-    return;
+  if (cameraGrid) {
+    cameraGrid.handleGridDoubleClick(event);
   }
-  const cardEl = event.target instanceof HTMLElement ? event.target.closest('.camera-card') : null;
-  if (!cardEl || !cardEl.dataset.cameraId) {
-    return;
-  }
-  const camera = resolveCameraById(cardEl.dataset.cameraId);
-  if (!camera) {
-    return;
-  }
-  if (!selectedCameraIds.has(String(camera.id))) {
-    selectedCameraIds.add(String(camera.id));
-    selectedCameraMap.set(String(camera.id), camera);
-  }
-  enterFocusMode();
 };
 
 
@@ -3837,7 +2251,7 @@ logoutBtn.addEventListener('click', async () => {
   setToolbarMenuVisible(false);
   setProfileMenuVisible(false);
   try {
-    const response = await window.auth.logout();
+    const response = await authService.logout();
     if (response.status >= 400) {
       throw new Error(response.message || 'Logout gagal.');
     }
@@ -3923,268 +2337,9 @@ quickSearchInputEl.addEventListener('input', () => {
   scheduleQuickSearch();
 });
 layoutPresetSelectEl.addEventListener('change', updateLayoutInputAvailability);
-apiBaseUrlInputEl.addEventListener('input', () => {
-  setApiCheckStatus('Click Check URL to validate the current API address.', 'neutral');
-});
-
-authFormEl.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (isSubmittingLogin) {
-    return;
-  }
-
-  const username = String(authUsernameInputEl.value || '').trim();
-  const password = String(authPasswordInputEl.value || '');
-  if (!username || !password) {
-    setAuthStatus('Username dan password wajib diisi.', 'warning');
-    return;
-  }
-
-  setLoginButtonState(true);
-  setAuthStatus('Memverifikasi login dan capability...', 'warning');
-  try {
-    const response = await window.auth.login(username, password);
-    if (response.status >= 400) {
-      if (response.errorCode === 'api_unreachable') {
-        await redirectToApiConfigFlow(
-          response.message || 'Unable to reach API server. Check API_BASE_URL and network connection.',
-          'danger'
-        );
-        return;
-      }
-      throw new Error(response.message || 'Login gagal.');
-    }
-    syncSessionState(response.data || ANONYMOUS_SESSION);
-    authPasswordInputEl.value = '';
-    await handleSessionStateChange(response.data || ANONYMOUS_SESSION);
-    if (canUseCctv()) {
-      await restoreWorkspaceState();
-    }
-  } catch (error) {
-    setAuthStatus(error.message || 'Login gagal.', 'danger');
-  } finally {
-    setLoginButtonState(false);
-  }
-});
-
-appearanceConfigFormEl.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const nextAppearance = normalizeAppearanceConfig({
-    fontFamily: appearanceFontFamilySelectEl.value,
-    weatherIconStyle: appearanceWeatherIconStyleSelectEl ? appearanceWeatherIconStyleSelectEl.value : DEFAULT_APPEARANCE_CONFIG.weatherIconStyle,
-    weatherIconMonochromeColor: appearanceWeatherIconColorInputEl ? appearanceWeatherIconColorInputEl.value : DEFAULT_APPEARANCE_CONFIG.weatherIconMonochromeColor,
-    weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : DEFAULT_APPEARANCE_CONFIG.weatherIconAnimated,
-  });
-
-  if (!window.appConfig || typeof window.appConfig.setAppearance !== 'function') {
-    applyAppearanceConfig(nextAppearance);
-    hideModal(appearanceConfigModalEl);
-    addActivity('Appearance updated', `Font set to ${nextAppearance.fontFamily}.`, 'success');
-    return;
-  }
-
-  const response = await window.appConfig.setAppearance(nextAppearance);
-  if (response.status >= 400) {
-    pickerStatusEl.textContent = response.message || 'Failed to save appearance configuration.';
-    addActivity('Appearance update failed', response.message || 'Failed to save font setting.', 'danger');
-    return;
-  }
-
-  applyAppearanceConfig(response.data || nextAppearance);
-  hideModal(appearanceConfigModalEl);
-  addActivity('Appearance updated', `Font set to ${String(nextAppearance.fontFamily || '').toUpperCase()}.`, 'success');
-});
-
-if (appearanceWeatherIconStyleSelectEl && appearanceWeatherIconColorInputEl) {
-  appearanceWeatherIconStyleSelectEl.addEventListener('change', () => {
-    const nextAppearance = normalizeAppearanceConfig({
-      ...currentAppearanceConfig,
-      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
-      weatherIconMonochromeColor: appearanceWeatherIconColorInputEl.value,
-      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
-    });
-    applyAppearanceConfig(nextAppearance);
-  });
+if (modalActions) {
+  modalActions.bindConfigForms();
 }
-
-if (appearanceWeatherIconColorInputEl) {
-  const isValidAppearanceHexColor = (value) => {
-    const raw = String(value || '').trim();
-    const normalized = raw.startsWith('#') ? raw.slice(1) : raw;
-    return /^[0-9a-fA-F]{6}$/.test(normalized);
-  };
-
-  appearanceWeatherIconColorInputEl.addEventListener('input', () => {
-    if (!appearanceWeatherIconStyleSelectEl || appearanceWeatherIconStyleSelectEl.value !== 'monochrome-color') {
-      return;
-    }
-    const typedValue = String(appearanceWeatherIconColorInputEl.value || '').trim();
-    if (!isValidAppearanceHexColor(typedValue)) {
-      return;
-    }
-    const nextAppearance = normalizeAppearanceConfig({
-      ...currentAppearanceConfig,
-      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
-      weatherIconMonochromeColor: typedValue,
-      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
-    });
-    applyAppearanceConfig(nextAppearance);
-  });
-
-  appearanceWeatherIconColorInputEl.addEventListener('blur', () => {
-    if (!appearanceWeatherIconStyleSelectEl || appearanceWeatherIconStyleSelectEl.value !== 'monochrome-color') {
-      return;
-    }
-    const typedValue = String(appearanceWeatherIconColorInputEl.value || '').trim();
-    const nextAppearance = normalizeAppearanceConfig({
-      ...currentAppearanceConfig,
-      weatherIconStyle: appearanceWeatherIconStyleSelectEl.value,
-      weatherIconMonochromeColor: isValidAppearanceHexColor(typedValue)
-        ? typedValue
-        : currentAppearanceConfig.weatherIconMonochromeColor,
-      weatherIconAnimated: appearanceWeatherIconAnimatedEl ? appearanceWeatherIconAnimatedEl.checked : currentAppearanceConfig.weatherIconAnimated,
-    });
-    applyAppearanceConfig(nextAppearance);
-  });
-}
-
-if (appearanceWeatherIconAnimatedEl) {
-  appearanceWeatherIconAnimatedEl.addEventListener('change', () => {
-    const nextAppearance = normalizeAppearanceConfig({
-      ...currentAppearanceConfig,
-      weatherIconStyle: appearanceWeatherIconStyleSelectEl ? appearanceWeatherIconStyleSelectEl.value : currentAppearanceConfig.weatherIconStyle,
-      weatherIconMonochromeColor: appearanceWeatherIconColorInputEl ? appearanceWeatherIconColorInputEl.value : currentAppearanceConfig.weatherIconMonochromeColor,
-      weatherIconAnimated: appearanceWeatherIconAnimatedEl.checked,
-    });
-    applyAppearanceConfig(nextAppearance);
-  });
-}
-
-apiConfigFormEl.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const nextApiBaseUrl = apiBaseUrlInputEl.value.trim();
-  if (!nextApiBaseUrl) {
-    pickerStatusEl.textContent = 'API_BASE_URL cannot be empty.';
-    return;
-  }
-
-  const response = await window.cameraService.setApiConfig(nextApiBaseUrl);
-  if (response.status >= 400) {
-    pickerStatusEl.textContent = response.message || 'Failed to update API_BASE_URL.';
-    addActivity('API update failed', response.message || 'Failed to update API base URL.', 'danger');
-    return;
-  }
-
-  const updatedApiBaseUrl =
-    response && response.data && response.data.apiBaseUrl ? response.data.apiBaseUrl : '';
-  applyApiConfigState({
-    apiBaseUrl: updatedApiBaseUrl,
-    isPersisted: true,
-    isUsingDefault: false,
-  });
-  pickerStatusEl.textContent = `API_BASE_URL updated to ${updatedApiBaseUrl}`;
-  setApiCheckStatus('API_BASE_URL saved. Continue to login.', 'success');
-  closeApiConfigFlow({ force: true });
-  addActivity('API updated', `API base URL updated to ${updatedApiBaseUrl}.`, 'success');
-});
-
-checkApiConfigBtn.addEventListener('click', async () => {
-  if (isCheckingApiConfig) {
-    return;
-  }
-
-  const candidateApiBaseUrl = apiBaseUrlInputEl.value.trim();
-  if (!candidateApiBaseUrl) {
-    setApiCheckStatus('API_BASE_URL cannot be empty.', 'warning');
-    return;
-  }
-
-  setApiCheckButtonState(true);
-  setApiCheckStatus('Checking API health endpoint...', 'neutral');
-
-  try {
-    const response = await window.cameraService.checkApiBaseUrl(candidateApiBaseUrl);
-    if (response.status >= 400) {
-      throw new Error(response.message || 'Failed to verify API URL.');
-    }
-
-    const data = response.data || {};
-    setApiCheckStatus(
-      `${data.message || 'API health check succeeded.'} (${data.apiBaseUrl || candidateApiBaseUrl})`,
-      'success'
-    );
-  } catch (error) {
-    setApiCheckStatus(error.message || 'API URL check failed.', 'danger');
-  } finally {
-    setApiCheckButtonState(false);
-  }
-});
-
-updateConfigFormEl.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (saveUpdateConfigBtn.disabled) {
-    pickerStatusEl.textContent = 'Auto update feed is read-only in electron-updater mode.';
-    hideModal(updateConfigModalEl);
-    return;
-  }
-
-  const feedUrl = updateFeedUrlInputEl.value.trim();
-  const githubOwner = updateGithubOwnerInputEl.value.trim();
-  const githubRepo = updateGithubRepoInputEl.value.trim();
-  const useGitHubRelease = useGithubReleaseCheckboxEl.checked;
-  const response = await window.appUpdater.setConfig({
-    feedUrl,
-    githubOwner,
-    githubRepo,
-    useGitHubRelease,
-  });
-
-  if (response.status >= 400) {
-    pickerStatusEl.textContent = response.message || 'Failed to update auto update feed.';
-    addActivity('Update config failed', response.message || 'Failed to update feed.', 'danger');
-    return;
-  }
-
-  const data = response.data || {};
-  setUpdateStatusText(`Feed configured (${data.source || 'config'}).`, 'ready');
-  pickerStatusEl.textContent = `Update source configured to ${data.feedUrl || '-'}`;
-  hideModal(updateConfigModalEl);
-  addActivity('Updater configured', `Update source set to ${data.feedUrl || '-'}.`, 'success');
-});
-
-layoutConfigFormEl.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const preset = String(layoutPresetSelectEl.value || '5x4');
-  const mainCount = Math.max(1, Number.parseInt(layoutMainCountInputEl.value, 10) || 1);
-  const sideCount = Math.max(1, Number.parseInt(layoutSideCountInputEl.value, 10) || 6);
-
-  if (preset === '4x4') {
-    setGridLayoutState({ type: '4x4', columns: 4, rows: 4, limit: 16, mainCount, sideCount });
-  } else if (preset === '3x3') {
-    setGridLayoutState({ type: '3x3', columns: 3, rows: 3, limit: 9, mainCount, sideCount });
-  } else if (preset === 'spotlight') {
-    setGridLayoutState({
-      type: 'spotlight',
-      columns: 4,
-      rows: 4,
-      limit: mainCount + sideCount,
-      mainCount,
-      sideCount,
-    });
-  } else {
-    setGridLayoutState({ type: '5x4', columns: 5, rows: 4, limit: 20, mainCount, sideCount });
-  }
-
-  hideModal(layoutConfigModalEl);
-  addActivity(
-    'Grid layout updated',
-    preset === 'spotlight'
-      ? `Layout main ${mainCount} + side ${sideCount} applied.`
-      : `Layout ${preset} applied.`,
-    'success'
-  );
-  renderCameras(currentCameras);
-});
 
 prevPageBtn.addEventListener('click', async () => {
   if (!activeBranch || activePage <= 1) {
@@ -4226,7 +2381,7 @@ checkUpdateBtn.addEventListener('click', async () => {
   addActivity('Updater running', 'Checking for a new desktop build.', 'warning');
 
   try {
-    const response = await window.appUpdater.checkForUpdates();
+    const response = await appUpdaterService.checkForUpdates();
     if (response.status >= 400) {
       throw new Error(response.message || 'Failed to check update.');
     }
@@ -4237,203 +2392,126 @@ checkUpdateBtn.addEventListener('click', async () => {
   }
 });
 
-updatePagingUi();
-setPagingVisible(false);
-setReloadButtonState(false);
-setToolbarMenuVisible(false);
-setToolbarVisible(false);
-applyAppearanceConfig(DEFAULT_APPEARANCE_CONFIG);
-if (ACTIVE_UI_THEME) {
-  document.body.classList.add(ACTIVE_UI_THEME);
+const appBootstrap = rendererModules.createAppBootstrap
+  ? rendererModules.createAppBootstrap({
+      services,
+      addActivity,
+      setInstalledVersionText,
+      loadAppearanceConfig,
+      setUpdateStatusText,
+      syncUpdateInfoCard,
+      normalizeUpdateMessage,
+      getUpdateTone,
+      setUpdateButtonState,
+      syncSessionState,
+      handleSessionStateChange,
+      applyApiConfigState,
+      openApiBaseUrlConfig,
+      redirectToApiConfigFlow,
+      restoreWorkspaceState,
+      renderWelcomeState,
+      canUseCctv,
+      getIsApiConfigRequired: () => isApiConfigRequired,
+      getLatestUpdatePayload: () => latestUpdatePayload,
+      setLatestUpdatePayload: (payload) => {
+        latestUpdatePayload = payload;
+      },
+      getActiveBranch: () => activeBranch,
+      ensureGridHasVisibleContent,
+      stopPerfObserver,
+      clearPlayers,
+      setAuthStatus,
+      updatePagingUi,
+      setPagingVisible,
+      setReloadButtonState,
+      setToolbarMenuVisible,
+      setToolbarVisible,
+      applyAppearanceConfig,
+      defaultAppearanceConfig: DEFAULT_APPEARANCE_CONFIG,
+      activeUiTheme: ACTIVE_UI_THEME,
+      syncLayoutControls,
+      applySessionToUi,
+      anonymousSession: ANONYMOUS_SESSION,
+      setAuthModalVisible,
+      setApiConfigRequirementState,
+      startPerfObserver,
+      onOpenBranchPicker: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        openBranchPicker().catch((error) => {
+          addActivity('Branch picker failed', error.message || 'Unable to open branch picker.', 'danger');
+        });
+      },
+      onOpenApiBaseUrlConfig: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        openApiBaseUrlConfig();
+      },
+      onOpenUpdateFeedConfig: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        openUpdateFeedConfig();
+      },
+      onOpenHelp: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        showHelp();
+      },
+      onOpenCameraSearch: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        openQuickSearch().catch((error) => {
+          addActivity('Quick search failed', error.message || 'Unable to open quick search.', 'danger');
+        });
+      },
+      onOpenLayoutConfig: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        openLayoutConfig();
+      },
+      onEnterFocusMode: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        enterFocusMode();
+      },
+      onLeaveFocusMode: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        leaveFocusMode();
+      },
+      onReloadStreams: () => {
+        if (isSosModeActive()) {
+          return;
+        }
+        refreshCurrentStreams().catch((error) => {
+          addActivity('Reload failed', error.message || 'Failed to reload streams.', 'danger');
+        });
+      },
+      showHelp,
+      openQuickSearch,
+      openLayoutConfig,
+      openUpdateFeedConfig,
+      enterFocusMode,
+      leaveFocusMode,
+      refreshCurrentStreams,
+      isSosModeActive,
+      onBootstrapComplete: () => {
+        authBootstrapCompleted = true;
+      },
+    })
+  : null;
+
+if (appBootstrap) {
+  appBootstrap.initialize();
 }
-syncLayoutControls();
-renderWelcomeState();
-setUpdateStatusText('Updater idle', 'ready');
-addActivity('Dashboard ready', 'Waiting for branch selection or quick search.', 'neutral');
-startPerfObserver();
-applySessionToUi(ANONYMOUS_SESSION);
-setAuthModalVisible(false);
-setApiConfigRequirementState(false);
-setAuthStatus('Memuat session yang tersimpan...', 'neutral');
-window.addEventListener('beforeunload', () => {
-  stopPerfObserver();
-  clearPlayers();
-});
-
-window.appInfo
-  .getVersion()
-  .then((version) => setInstalledVersionText(version))
-  .catch(() => setInstalledVersionText('-'));
-
-loadAppearanceConfig().catch((error) => {
-  addActivity('Appearance restore failed', error.message || 'Failed to restore appearance setting.', 'warning');
-});
-
-window.setTimeout(ensureGridHasVisibleContent, 250);
-window.setTimeout(ensureGridHasVisibleContent, 1000);
-
-window.auth.onSessionChanged((session) => {
-  syncSessionState(session || ANONYMOUS_SESSION);
-  void handleSessionStateChange(session || ANONYMOUS_SESSION);
-});
-
-const bootstrapAuthSession = async () => {
-  try {
-    const configResponse = await window.cameraService.getApiConfigState();
-    if (configResponse.status >= 400) {
-      throw new Error(configResponse.message || 'Failed to load API configuration state.');
-    }
-    const configState = applyApiConfigState(configResponse.data);
-    if (!configState.isPersisted) {
-      syncSessionState(ANONYMOUS_SESSION);
-      await handleSessionStateChange(ANONYMOUS_SESSION, { suppressAuthModal: true });
-      await openApiBaseUrlConfig({
-        requireConfiguration: true,
-        returnToAuth: true,
-        statusMessage:
-          'Konfigurasikan alamat backend terlebih dahulu, lalu simpan untuk melanjutkan ke login.',
-        statusTone: 'neutral',
-      });
-      return;
-    }
-
-    const response = await window.auth.restoreSession();
-    if (response.status >= 400) {
-      if (response.errorCode === 'api_unreachable') {
-        await redirectToApiConfigFlow(
-          response.message || 'Unable to reach API server. Check API_BASE_URL and network connection.',
-          'danger'
-        );
-        return;
-      }
-      throw new Error(response.message || 'Failed to restore session.');
-    }
-    const session = response.data || ANONYMOUS_SESSION;
-    syncSessionState(session);
-    await handleSessionStateChange(session);
-    if (session.isAuthenticated && canUseCctv()) {
-      await restoreWorkspaceState();
-    } else {
-      renderWelcomeState();
-    }
-  } catch (error) {
-    addActivity('Session restore failed', error.message || 'Failed to restore session.', 'warning');
-    syncSessionState(ANONYMOUS_SESSION);
-    await handleSessionStateChange(ANONYMOUS_SESSION, { suppressAuthModal: isApiConfigRequired });
-    renderWelcomeState();
-  } finally {
-    authBootstrapCompleted = true;
-  }
-};
-
-window.__HKTV_AUTH_BOOTSTRAP_PROMISE__ = bootstrapAuthSession();
-
-window.appUpdater
-  .getStatus()
-  .then((response) => {
-    if (response.status >= 400) {
-      throw new Error(response.message || 'Failed to load updater status.');
-    }
-    latestUpdatePayload = response.data || null;
-    syncUpdateInfoCard(latestUpdatePayload);
-    setUpdateStatusText(normalizeUpdateMessage(response.data), response.data && response.data.state);
-  })
-  .catch((error) => {
-    setUpdateStatusText(error.message || 'Updater status unavailable.', 'error');
-  });
-
-window.appUpdater.onStatus((payload) => {
-  const state = payload && payload.state ? String(payload.state) : '';
-  latestUpdatePayload = payload || latestUpdatePayload;
-  syncUpdateInfoCard(latestUpdatePayload);
-  setUpdateStatusText(normalizeUpdateMessage(payload), state);
-
-  if (state === 'checking' || state === 'downloading') {
-    setUpdateButtonState(true);
-    return;
-  }
-
-  if (state) {
-    addActivity('Updater status changed', normalizeUpdateMessage(payload), getUpdateTone(state));
-  }
-  setUpdateButtonState(false);
-});
-
-window.cameraService.onOpenBranchPicker(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  openBranchPicker().catch((error) => {
-    addActivity('Branch picker failed', error.message || 'Unable to open branch picker.', 'danger');
-  });
-});
-window.cameraService.onOpenApiBaseUrlConfig(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  openApiBaseUrlConfig();
-});
-window.cameraService.onOpenUpdateFeedConfig(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  openUpdateFeedConfig();
-});
-window.cameraService.onOpenHelp(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  showHelp();
-});
-window.cameraService.onOpenCameraSearch(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  openQuickSearch().catch((error) => {
-    addActivity('Quick search failed', error.message || 'Unable to open quick search.', 'danger');
-  });
-});
-window.cameraService.onOpenLayoutConfig(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  openLayoutConfig();
-});
-window.cameraService.onEnterFocusMode(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  enterFocusMode();
-});
-window.cameraService.onLeaveFocusMode(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  leaveFocusMode();
-});
-window.cameraService.onReloadStreams(() => {
-  if (isSosModeActive()) {
-    return;
-  }
-  refreshCurrentStreams().catch((error) => {
-    addActivity('Reload failed', error.message || 'Failed to reload streams.', 'danger');
-  });
-});
-
-window.__HKTV_PAUSE_GRID_STREAMS__ = () => {
-  clearPlayers();
-  addActivity('Grid streams paused', 'Streaming grid dihentikan sementara saat Asset Monitoring aktif.', 'warning');
-};
-
-window.__HKTV_RESUME_GRID_STREAMS__ = async () => {
-  if (isSosModeActive()) {
-    return;
-  }
-  if (!activeBranch || !activeBranch.id) {
-    return;
-  }
-  await refreshCurrentStreams();
-};
 
 
 

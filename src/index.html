@@ -316,7 +316,7 @@
           </div>
           <button id="closePickerBtn" type="button">Close</button>
         </div>
-        <p id="pickerStatus" class="picker-status">Press Shift+Alt+L to load branches.</p>
+        <p id="pickerStatus" class="picker-status">Press Shift+L to load branches.</p>
         <input
           id="branchSearchInput"
           class="api-config-input quick-input"
@@ -564,9 +564,8 @@
           <button id="closeHelpBtn" type="button">Close</button>
         </div>
         <ul class="help-shortcuts">
-          <li><strong>CCTV Mode</strong>: <code>Shift+Alt+L</code> branch picker, <code>Shift+Alt+G</code> layout, <code>Shift+Alt+F</code> focus, <code>Shift+Alt+N</code> normal, <code>Shift+Alt+R</code> reload, <code>Shift+Alt+M</code> health monitor, <code>Shift+Alt+X</code> close window</li>
-          <li><strong>Asset Mode</strong>: <code>Shift+Alt+H</code> help, <code>Shift+K</code> API config, <code>Shift+Alt+U</code> update info, <code>Shift+Alt+B</code> debug zoom</li>
-          <li><code>Ctrl+K</code> Open camera search</li>
+          <li><strong>CCTV Mode</strong>: <code>Shift+L</code> branch picker, <code>Shift+G</code> layout, <code>Shift+F</code> focus, <code>Shift+N</code> normal, <code>Shift+R</code> reload, <code>Shift+M</code> health monitor, <code>Shift+X</code> close window</li>
+          <li><strong>General</strong>: <code>Shift+H</code> help, <code>Shift+K</code> API config, <code>Shift+U</code> update info, <code>Ctrl+K</code> camera search</li>
           <li><code>Esc</code> Close modal or leave focus mode</li>
         </ul>
       </div>
@@ -675,6 +674,17 @@
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <script src="./services/capabilityService.js"></script>
     <script src="./state/sessionStore.js"></script>
+    <script src="./renderer/service-adapters.js"></script>
+    <script src="./renderer/activity-feed.js"></script>
+    <script src="./renderer/workspace-persistence.js"></script>
+    <script src="./renderer/branch-picker.js"></script>
+    <script src="./renderer/app-bootstrap.js"></script>
+    <script src="./renderer/modal-actions.js"></script>
+    <script src="./renderer/branch-flow.js"></script>
+    <script src="./renderer/sidebar-map.js"></script>
+    <script src="./renderer/camera-grid.js"></script>
+    <script src="./renderer/quick-search.js"></script>
+    <script src="./renderer/player-runtime.js"></script>
     <script src="./renderer.js"></script>
     <script src="./asset-monitoring.js"></script>
   </body>
