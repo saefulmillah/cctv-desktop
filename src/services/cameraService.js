@@ -198,6 +198,15 @@ const getMapNetworkArcs = (query = {}) =>
 const getMapWeather = (query = {}) =>
   requestJson(toPathAndSearch(buildUrl('/api/map/weather', query)));
 
+const getVehiclesLive = (query = {}) =>
+  requestJson(toPathAndSearch(buildUrl('/api/vehicles/live', query)));
+
+const getVehiclesSummary = (query = {}) =>
+  requestJson(toPathAndSearch(buildUrl('/api/vehicles/summary', query)));
+
+const getVehicleDetail = (vehicleId) =>
+  requestJson(`/api/vehicles/${encodePathSegment(vehicleId)}`);
+
 const getBranchPages = (branchId) => requestJson(`/api/cameras/branch/${branchId}/pages`);
 
 const getCamerasByBranch = (branchId, page = 1) =>
@@ -257,6 +266,9 @@ module.exports = {
   getGateAlertDetail,
   getMapNetworkArcs,
   getMapWeather,
+  getVehiclesLive,
+  getVehiclesSummary,
+  getVehicleDetail,
   getHealth,
   checkApiBaseUrl,
   setApiAuthToken,

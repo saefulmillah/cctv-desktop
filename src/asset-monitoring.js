@@ -17,6 +17,11 @@
   const MAP_ZOOM_GATE = 11;
   const MAP_ZOOM_ASSET = 11;
   const MAP_ZOOM_SOS = 14;
+  const DEFAULT_VEHICLE_TYPE_ICON_PATH = '/static/vehicle-types/default.svg';
+  const VEHICLE_INTERPOLATION_MIN_MS = 240;
+  const VEHICLE_INTERPOLATION_MAX_MS = 1600;
+  const VEHICLE_INTERPOLATION_DEFAULT_MS = 700;
+  const VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS = 1200;
 
   const $ = (id) => document.getElementById(id);
   const sosMonitorBtn = $('sosMonitorBtn');
@@ -56,6 +61,9 @@
   const foControlPopup = $('foControlPopup');
   const weatherControlBtn = $('weatherControlBtn');
   const weatherControlPopup = $('weatherControlPopup');
+  const vehicleControlBtn = $('vehicleControlBtn');
+  const vehicleControlPopup = $('vehicleControlPopup');
+  const vehicleTypeToggleListEl = $('vehicleTypeToggleList');
   const toolbarMenuBtnEl = document.getElementById('toolbarMenuBtn');
   const toolbarMenuPanelEl = document.getElementById('toolbarMenuPanel');
   const mapCameraDebugEl = $('mapCameraDebug');
@@ -65,6 +73,24 @@
   const sosIncidentFiltersEl = $('sosIncidentFilters');
   const sosIncidentListEl = $('sosIncidentList');
   const sosIncidentListLoadingEl = $('sosIncidentListLoading');
+  const sosPanelEyebrowEl = $('sosPanelEyebrow');
+  const sosPanelTitleEl = $('sosPanelTitle');
+  const vehicleSummaryCardsEl = $('vehicleSummaryCards');
+  const vehicleSummaryTotalBtn = $('vehicleSummaryTotalBtn');
+  const vehicleSummaryMovingBtn = $('vehicleSummaryMovingBtn');
+  const vehicleSummaryAnomalyBtn = $('vehicleSummaryAnomalyBtn');
+  const vehicleSummaryTotalEl = $('vehicleSummaryTotal');
+  const vehicleSummaryGpsEl = $('vehicleSummaryGps');
+  const vehicleSummaryMovingEl = $('vehicleSummaryMoving');
+  const vehicleSummaryMovementEl = $('vehicleSummaryMovement');
+  const vehicleSummaryAnomaliesEl = $('vehicleSummaryAnomalies');
+  const vehicleSummaryFreshnessEl = $('vehicleSummaryFreshness');
+  const sosVehiclePanelEyebrowEl = $('sosVehiclePanelEyebrow');
+  const sosVehiclePanelTitleEl = $('sosVehiclePanelTitle');
+  const sosVehicleCountBadgeEl = $('sosVehicleCountBadge');
+  const sosVehicleFiltersEl = $('sosVehicleFilters');
+  const sosVehicleListEl = $('sosVehicleList');
+  const sosVehicleListLoadingEl = $('sosVehicleListLoading');
   const sosDetailPanelEl = $('sosDetailPanel');
   const sosDetailTitleEl = $('sosDetailTitle');
   const sosDetailStatusEl = $('sosDetailStatus');
@@ -237,6 +263,20 @@
       markers: new Map(),
       markerClass: null,
     },
+    vehicles: {
+      apiBaseUrl: '',
+      items: new Map(),
+      markers: new Map(),
+      markerClass: null,
+      summary: null,
+      details: new Map(),
+      selectedVehicleId: null,
+      listFilter: 'all',
+      hiddenTypeKeys: new Set(),
+      animationFrame: 0,
+      lastSnapshotAt: '',
+      lastRefreshAt: '',
+    },
     incidents: {
       alerts: new Map(),
       ticketsBySosId: new Map(),
@@ -324,6 +364,7 @@
     streamRetryTimer: null,
     ticketRefreshTimer: null,
     alertRefreshTimer: null,
+    vehicleFallbackTimer: null,
     isInitialSnapshotLoaded: false,
     activeWorkspaceBranch: null,
   };
@@ -434,6 +475,15 @@
     sosIncidentListLoadingEl.classList.toggle('sidebar-section-hidden', !visible);
     if (sosIncidentListEl) {
       sosIncidentListEl.classList.toggle('sos-incident-list--loading', visible);
+    }
+  };
+  const setVehicleListLoadingVisible = (visible) => {
+    if (!sosVehicleListLoadingEl) {
+      return;
+    }
+    sosVehicleListLoadingEl.classList.toggle('sidebar-section-hidden', !visible);
+    if (sosVehicleListEl) {
+      sosVehicleListEl.classList.toggle('sos-incident-list--loading', visible);
     }
   };
 
@@ -709,6 +759,199 @@
     return `${String(prefix || 'notif')}:${Date.now()}:${state.notificationCounter}`;
   };
 
+  const parseCoordinate = (value) => {
+    if (value === null || value === undefined) {
+      return NaN;
+    }
+    if (typeof value === 'string' && !value.trim()) {
+      return NaN;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  };
+
+  const createVehicleFallbackIconDataUrl = () =>
+    `data:image/svg+xml;utf8,${encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#0c3f73"/><path d="M18 36h4l3-11h14l7 11h4v8h-4a4 4 0 1 1-8 0H26a4 4 0 1 1-8 0h-4z" fill="#f4fbff"/><circle cx="24" cy="44" r="4" fill="#1ed8de"/><circle cx="40" cy="44" r="4" fill="#1ed8de"/></svg>'
+    )}`;
+
+  const resolveVehicleTypeIconUrl = (
+    iconPath,
+    apiBaseUrl = '',
+    fallbackPath = DEFAULT_VEHICLE_TYPE_ICON_PATH
+  ) => {
+    const normalizedApiBaseUrl = String(apiBaseUrl || '').trim();
+    const tryResolve = (value) => {
+      const rawValue = String(value || '').trim();
+      if (!rawValue) {
+        return '';
+      }
+      try {
+        return new URL(rawValue).toString();
+      } catch (_) {
+        if (!normalizedApiBaseUrl) {
+          return '';
+        }
+        try {
+          return new URL(rawValue, normalizedApiBaseUrl).toString();
+        } catch (_) {
+          return '';
+        }
+      }
+    };
+    return (
+      tryResolve(iconPath) ||
+      tryResolve(fallbackPath) ||
+      createVehicleFallbackIconDataUrl()
+    );
+  };
+
+  const normalizeVehicleTypeRef = (item, apiBaseUrl = '') => {
+    if (!item || typeof item !== 'object') {
+      return null;
+    }
+    const iconPath = String(item.icon_path || '').trim();
+    return {
+      id: Number.isFinite(Number(item.id)) ? Number(item.id) : null,
+      type_code: String(item.type_code || '').trim() || null,
+      type_name: String(item.type_name || '').trim() || null,
+      icon_path: iconPath || DEFAULT_VEHICLE_TYPE_ICON_PATH,
+      is_active: item.is_active === null || item.is_active === undefined ? null : Boolean(item.is_active),
+      icon_url: resolveVehicleTypeIconUrl(iconPath, apiBaseUrl),
+    };
+  };
+
+  const VEHICLE_TYPE_FILTER_OPTIONS = [
+    { key: 'all', label: 'Semua Kendaraan' },
+    { key: 'patroli', label: 'Patroli' },
+    { key: 'derek', label: 'Derek' },
+    { key: 'rescue', label: 'Rescue' },
+    { key: 'ambulance', label: 'Ambulance' },
+    { key: 'pjr', label: 'PJR' },
+  ];
+
+  const normalizeVehicleTypeKey = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) {
+      return 'unknown';
+    }
+    if (['patroli', 'patrol'].includes(normalized)) {
+      return 'patroli';
+    }
+    if (['derek', 'towing', 'tow'].includes(normalized)) {
+      return 'derek';
+    }
+    if (normalized === 'rescue') {
+      return 'rescue';
+    }
+    if (['ambulance', 'ambulan'].includes(normalized)) {
+      return 'ambulance';
+    }
+    if (['pjr', 'police', 'polisi'].includes(normalized)) {
+      return 'pjr';
+    }
+    return 'unknown';
+  };
+
+  const getVehicleTypeKey = (vehicle) => {
+    const typeRef = vehicle && vehicle.vehicle_type_ref ? vehicle.vehicle_type_ref : null;
+    const keySource =
+      (typeRef && (typeRef.type_code || typeRef.type_name || typeRef.id)) ||
+      (vehicle && vehicle.vehicle_type) ||
+      'unknown';
+    return normalizeVehicleTypeKey(keySource);
+  };
+
+  const getVehicleTypeLabel = (vehicle) => {
+    const key = getVehicleTypeKey(vehicle);
+    const matched = VEHICLE_TYPE_FILTER_OPTIONS.find((item) => item.key === key);
+    return matched ? matched.label : 'Lainnya';
+  };
+
+  const getVehiclePopupTypeLabel = (vehicle) => {
+    const key = getVehicleTypeKey(vehicle);
+    if (key === 'unknown') {
+      return 'n.a';
+    }
+    return getVehicleTypeLabel(vehicle);
+  };
+
+  const areAllSpecificVehicleTypesVisible = () =>
+    VEHICLE_TYPE_FILTER_OPTIONS.filter((item) => item.key !== 'all').every(
+      (item) => !state.vehicles.hiddenTypeKeys.has(item.key)
+    );
+
+  const isVehicleTypeVisible = (vehicle) => {
+    const vehicleTypeKey = getVehicleTypeKey(vehicle);
+    if (vehicleTypeKey === 'unknown') {
+      return areAllSpecificVehicleTypesVisible();
+    }
+    return !state.vehicles.hiddenTypeKeys.has(vehicleTypeKey);
+  };
+
+  const getVehicleGpsTone = (vehicle) => {
+    const status = String(vehicle && vehicle.gps_status ? vehicle.gps_status : 'offline').toLowerCase();
+    if (status === 'online') return 'success';
+    if (status === 'delayed') return 'warning';
+    if (status === 'stale') return 'danger';
+    if (status === 'offline') return 'neutral';
+    return 'neutral';
+  };
+
+  const getVehicleGpsLabel = (status) => {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'online') return 'Aktif';
+    if (normalized === 'delayed') return 'Terlambat';
+    if (normalized === 'stale') return 'Lama';
+    if (normalized === 'offline') return 'Offline';
+    return 'Tidak Diketahui';
+  };
+
+  const getVehicleMovementLabel = (status) => {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'moving') return 'Berjalan';
+    if (normalized === 'stopped') return 'Berhenti';
+    if (normalized === 'idle') return 'Diam';
+    return 'Tidak Diketahui';
+  };
+
+  const formatSpeedKmh = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)} km/h` : '-';
+  };
+
+  const formatBearing = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}°` : '-';
+  };
+
+  const haversineDistanceMeters = (fromLatLng, toLatLng) => {
+    if (!(fromLatLng && toLatLng)) {
+      return Infinity;
+    }
+    const toRad = (value) => (Number(value) * Math.PI) / 180;
+    const earthRadius = 6371000;
+    const dLat = toRad(Number(toLatLng.lat) - Number(fromLatLng.lat));
+    const dLng = toRad(Number(toLatLng.lng) - Number(fromLatLng.lng));
+    const lat1 = toRad(Number(fromLatLng.lat));
+    const lat2 = toRad(Number(toLatLng.lat));
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+
+  const getVehicleSummaryButtonLabel = (filter) => {
+    const normalized = String(filter || '').trim().toLowerCase();
+    if (normalized === 'moving') {
+      return 'Berjalan';
+    }
+    if (normalized === 'anomaly') {
+      return 'Anomali';
+    }
+    return 'Semua';
+  };
+
   const normalizeMapBranch = (item) => {
     if (!item || typeof item !== 'object' || !item.id) {
       return null;
@@ -891,6 +1134,94 @@
       marker_lng: resolvedMarkerLng,
       latLng: { lat: resolvedMarkerLat, lng: resolvedMarkerLng },
     };
+  };
+
+  const normalizeVehicleLive = (item, apiBaseUrl = state.vehicles.apiBaseUrl) => {
+    if (!item || typeof item !== 'object') {
+      return null;
+    }
+    const vehicleId = Number(item.vehicle_id);
+    if (!Number.isFinite(vehicleId)) {
+      return null;
+    }
+    const latitude = parseCoordinate(item.latitude);
+    const longitude = parseCoordinate(item.longitude);
+    const vehicleTypeRef = normalizeVehicleTypeRef(item.vehicle_type_ref, apiBaseUrl);
+    const latLng =
+      Number.isFinite(latitude) && Number.isFinite(longitude)
+        ? { lat: latitude, lng: longitude }
+        : null;
+    return {
+      ...item,
+      vehicle_id: vehicleId,
+      branch_id: String(item.branch_id || '').trim(),
+      branch_code: String(item.branch_code || '').trim(),
+      branch_name: String(item.branch_name || '').trim(),
+      label: String(item.label || item.vehicle_registration_plate || item.node || `Kendaraan ${vehicleId}`).trim(),
+      node: String(item.node || '').trim(),
+      gps_status: String(item.gps_status || 'offline').trim().toLowerCase(),
+      movement_status: String(item.movement_status || 'unknown').trim().toLowerCase(),
+      has_branch_anomaly: Boolean(item.has_branch_anomaly),
+      gps_time: String(item.gps_time || '').trim(),
+      received_at: String(item.received_at || '').trim(),
+      speed: Number.isFinite(Number(item.speed)) ? Number(item.speed) : null,
+      bearing: Number.isFinite(Number(item.bearing)) ? Number(item.bearing) : null,
+      data_age_seconds: Number.isFinite(Number(item.data_age_seconds)) ? Number(item.data_age_seconds) : null,
+      vehicle_type: String(item.vehicle_type || '').trim(),
+      vehicle_type_ref: vehicleTypeRef,
+      vehicle_type_icon_url: resolveVehicleTypeIconUrl(
+        vehicleTypeRef && vehicleTypeRef.icon_path,
+        apiBaseUrl
+      ),
+      latitude: Number.isFinite(latitude) ? latitude : null,
+      longitude: Number.isFinite(longitude) ? longitude : null,
+      latLng,
+      renderLatLng: latLng ? { ...latLng } : null,
+      lastPositionAt: Date.now(),
+    };
+  };
+
+  const normalizeVehicleSummary = (summary) => {
+    const source = summary && typeof summary === 'object' ? summary : {};
+    const pick = (key) => (Number.isFinite(Number(source[key])) ? Number(source[key]) : 0);
+    return {
+      total: pick('total'),
+      online: pick('online'),
+      delayed: pick('delayed'),
+      stale: pick('stale'),
+      offline: pick('offline'),
+      moving: pick('moving'),
+      stopped: pick('stopped'),
+      idle: pick('idle'),
+      unknown: pick('unknown'),
+      anomalies: pick('anomalies'),
+    };
+  };
+
+  const deriveVehicleSummaryFromItems = () => {
+    const summary = normalizeVehicleSummary({});
+    Array.from(state.vehicles.items.values()).forEach((vehicle) => {
+      if (!(vehicle && isEntityInSelectedBranch(vehicle.branch_id))) {
+        return;
+      }
+      summary.total += 1;
+      const gpsStatus = String(vehicle.gps_status || 'offline').toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(summary, gpsStatus)) {
+        summary[gpsStatus] += 1;
+      } else {
+        summary.offline += 1;
+      }
+      const movementStatus = String(vehicle.movement_status || 'unknown').toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(summary, movementStatus)) {
+        summary[movementStatus] += 1;
+      } else {
+        summary.unknown += 1;
+      }
+      if (vehicle.has_branch_anomaly) {
+        summary.anomalies += 1;
+      }
+    });
+    return summary;
   };
 
   const getGateLogEntries = (gate) => {
@@ -2112,6 +2443,9 @@
         ref.latLng || null
       );
     }
+    if (ref.kind === 'vehicle') {
+      return getVehicleMarkerLabelPayload(state.vehicles.items.get(Number(ref.id)) || null);
+    }
     return null;
   };
 
@@ -2127,6 +2461,9 @@
         state.standaloneAssets.items.get(String(state.standaloneAssets.selectedAssetKey)) || null,
         state.standaloneAssets.selectedLabelLatLng || null
       );
+    }
+    if (state.ui.selectedEntityType === 'vehicle' && state.vehicles.selectedVehicleId) {
+      return getVehicleMarkerLabelPayload(state.vehicles.items.get(Number(state.vehicles.selectedVehicleId)) || null);
     }
     return null;
   };
@@ -2421,6 +2758,100 @@
 
   const getWeatherMarkerZIndex = (isExpanded = false) =>
     getLayerStackZIndex(5, { selected: isExpanded });
+
+  const getVehicleMarkerClass = () => {
+    if (state.vehicles.markerClass) {
+      return state.vehicles.markerClass;
+    }
+    state.vehicles.markerClass = class VehicleMarker extends window.google.maps.OverlayView {
+      constructor({ map, vehicle, onSelect }) {
+        super();
+        this.map = map;
+        this.vehicle = vehicle;
+        this.onSelect = onSelect;
+        this.element = null;
+        this.renderKey = '';
+        this.setMap(map);
+      }
+
+      onAdd() {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'sos-map-marker vehicle-map-marker';
+        button.addEventListener('mouseenter', () => {
+          setPreviewMarkerLabel(
+            createMarkerLabelRef('vehicle', this.vehicle.vehicle_id, {
+              latLng: this.vehicle.renderLatLng || this.vehicle.latLng || null,
+            })
+          );
+        });
+        button.addEventListener('mouseleave', () => {
+          clearPreviewMarkerLabelIfUnlocked();
+        });
+        button.addEventListener('click', () => {
+          state.cctvSuppressMapClickUntil = Date.now() + 250;
+          this.onSelect(this.vehicle.vehicle_id);
+        });
+        this.element = button;
+        this.getPanes().overlayMouseTarget.appendChild(button);
+        this.draw();
+      }
+
+      draw() {
+        const position = this.vehicle && (this.vehicle.renderLatLng || this.vehicle.latLng);
+        if (!this.element || !position) {
+          return;
+        }
+        const pixel = this.getProjection().fromLatLngToDivPixel(
+          new window.google.maps.LatLng(Number(position.lat), Number(position.lng))
+        );
+        if (!pixel) {
+          return;
+        }
+        const gpsStatus = String(this.vehicle.gps_status || 'offline').toLowerCase();
+        const isSelected = Number(state.vehicles.selectedVehicleId) === Number(this.vehicle.vehicle_id);
+        const isMoving = String(this.vehicle.movement_status || '').toLowerCase() === 'moving';
+        const iconUrl = this.vehicle.vehicle_type_icon_url || createVehicleFallbackIconDataUrl();
+        this.element.className = `sos-map-marker vehicle-map-marker vehicle-map-marker--${gpsStatus} ${
+          isMoving ? 'vehicle-map-marker--moving' : ''
+        } ${isSelected ? 'is-selected' : ''}`;
+        this.element.style.left = `${pixel.x}px`;
+        this.element.style.top = `${pixel.y}px`;
+        this.element.style.zIndex = String(
+          isSelected ? getMapMarkerZIndex('selected') : getMapMarkerZIndex('asset') + 4
+        );
+        this.element.title = String(this.vehicle.label || `Kendaraan ${this.vehicle.vehicle_id}`).trim();
+        const nextRenderKey = JSON.stringify({
+          iconUrl,
+          gpsStatus,
+          isMoving,
+          isSelected,
+        });
+        if (this.renderKey !== nextRenderKey) {
+          this.renderKey = nextRenderKey;
+          this.element.innerHTML = `
+            <span class="sos-map-marker__pulse"></span>
+            <span class="sos-map-marker__dot">
+              <img class="vehicle-map-marker__icon" src="${escapeHtml(iconUrl)}" alt="" aria-hidden="true" />
+            </span>
+          `;
+        }
+      }
+
+      onRemove() {
+        if (this.element && this.element.parentNode) {
+          this.element.parentNode.removeChild(this.element);
+        }
+        this.element = null;
+      }
+
+      update(vehicle) {
+        this.vehicle = vehicle;
+        this.draw();
+      }
+    };
+    return state.vehicles.markerClass;
+  };
 
   const getCctvClusterMarkerClass = () => {
     if (state.standaloneAssets.clusterMarkerClass) {
@@ -3774,10 +4205,14 @@
     const hasAssets = Array.from(state.standaloneAssets.items.values()).some(
       (item) => item && item.latLng && isEntityInSelectedBranch(item.branch_id) && isStandaloneAssetTypeVisible(item)
     );
+    const hasVehicles = Array.from(state.vehicles.items.values()).some(
+      (item) => item && item.latLng && isEntityInSelectedBranch(item.branch_id) && isVehicleTypeVisible(item)
+    );
     if (
       !getVisibleAlerts().length &&
       !hasGateMarkers &&
       !hasAssets &&
+      !hasVehicles &&
       !(isWeatherLayerActive() && Array.isArray(state.weather.items) && state.weather.items.length > 0) &&
       state.networkArcs.visible &&
       state.networkArcs.hasLoaded &&
@@ -3786,7 +4221,7 @@
     ) {
       return 'Belum ada koneksi fiber untuk filter branch aktif.';
     }
-    return 'Belum ada marker gate alert, CCTV, VMS, weather, koneksi fiber, atau SOS aktif untuk ditampilkan.';
+    return 'Belum ada marker kejadian, kendaraan, CCTV, weather, atau koneksi fiber untuk ditampilkan.';
   };
   const hasRenderableMapData = () =>
     getVisibleAlerts().length > 0 ||
@@ -3803,6 +4238,9 @@
         item.latLng &&
         isEntityInSelectedBranch(item.branch_id) &&
         isStandaloneAssetTypeVisible(item)
+    ) ||
+    Array.from(state.vehicles.items.values()).some(
+      (item) => item && item.latLng && isEntityInSelectedBranch(item.branch_id) && isVehicleTypeVisible(item)
     ) ||
     (isWeatherLayerActive() && Array.isArray(state.weather.items) && state.weather.items.length > 0) ||
     (state.networkArcs.visible && Array.isArray(state.networkArcs.items) && state.networkArcs.items.length > 0);
@@ -4022,7 +4460,600 @@
     });
   };
 
+  const getVisibleVehicleItems = () => {
+    const filter = String(state.vehicles.listFilter || 'all').toLowerCase();
+    const rows = Array.from(state.vehicles.items.values()).filter(
+      (vehicle) => vehicle && isEntityInSelectedBranch(vehicle.branch_id) && isVehicleTypeVisible(vehicle)
+    );
+    const filtered = rows.filter((vehicle) => {
+      if (filter === 'moving') {
+        return vehicle.movement_status === 'moving';
+      }
+      if (filter === 'anomaly') {
+        return Boolean(vehicle.has_branch_anomaly);
+      }
+      return true;
+    });
+    return filtered.sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
+  };
+
+  const reconcileSelectedVehicle = () => {
+    if (!state.vehicles.selectedVehicleId) {
+      return;
+    }
+    const selectedVehicle = state.vehicles.items.get(Number(state.vehicles.selectedVehicleId));
+    const stillVisible = getVisibleVehicleItems().some(
+      (vehicle) => Number(vehicle.vehicle_id) === Number(state.vehicles.selectedVehicleId)
+    );
+    if (!selectedVehicle || !stillVisible) {
+      state.vehicles.selectedVehicleId = null;
+      if (state.ui.selectedEntityType === 'vehicle') {
+        state.ui.selectedEntityType = '';
+        state.ui.selectedEntityId = null;
+        state.detailRenderKey = '';
+      }
+      clearMarkerLabelState({ preserveSosLocked: false });
+    }
+  };
+
+  const getVehicleMarkerLabelPayload = (vehicle) => {
+    if (!(vehicle && (vehicle.renderLatLng || vehicle.latLng))) {
+      return null;
+    }
+    const latLng = vehicle.renderLatLng || vehicle.latLng;
+    const gpsTone = getVehicleGpsTone(vehicle);
+    const plateNumber = String(vehicle.vehicle_registration_plate || vehicle.license_plate || '').trim() || '-';
+    return {
+      key: `vehicle:${vehicle.vehicle_id}`,
+      latLng,
+      className: 'selected-map-label selected-map-label--vehicle',
+      html: `
+        <div class="selected-map-label__vehicle-head">
+          <div class="selected-map-label__vehicle-title">${escapeHtml(vehicle.label || `Kendaraan ${vehicle.vehicle_id}`)}</div>
+          <span class="selected-map-label__vehicle-gps-indicator ${escapeHtml(gpsTone)}" aria-label="${escapeHtml(getVehicleGpsLabel(vehicle.gps_status))}"></span>
+        </div>
+        <div class="selected-map-label__vehicle-grid">
+          <div><span>Node</span><strong>${escapeHtml(vehicle.node || '-')}</strong></div>
+          <div><span>Plat</span><strong>${escapeHtml(plateNumber)}</strong></div>
+          <div><span>Tipe</span><strong>${escapeHtml(getVehiclePopupTypeLabel(vehicle))}</strong></div>
+          <div><span>Kecepatan</span><strong>${escapeHtml(formatSpeedKmh(vehicle.speed))}</strong></div>
+          <div><span>Status</span><strong>${escapeHtml(getVehicleMovementLabel(vehicle.movement_status))}</strong></div>
+        </div>
+      `,
+    };
+  };
+
+  const getVehicleSummaryStats = () =>
+    state.vehicles.items.size
+      ? deriveVehicleSummaryFromItems()
+      : normalizeVehicleSummary(state.vehicles.summary);
+
+  const setVehicleListFilter = (filter) => {
+    state.vehicles.listFilter = ['all', 'moving', 'anomaly'].includes(String(filter || ''))
+      ? String(filter)
+      : 'all';
+  };
+
+  const getAvailableVehicleTypes = () => {
+    const counts = new Map();
+    VEHICLE_TYPE_FILTER_OPTIONS.filter((item) => item.key !== 'all').forEach((item) => {
+      counts.set(item.key, { key: item.key, label: item.label, count: 0 });
+    });
+    Array.from(state.vehicles.items.values()).forEach((vehicle) => {
+      if (!(vehicle && isEntityInSelectedBranch(vehicle.branch_id))) {
+        return;
+      }
+      const key = getVehicleTypeKey(vehicle);
+      if (!counts.has(key)) {
+        return;
+      }
+      const current = counts.get(key);
+      current.count += 1;
+    });
+    const totalCount = Array.from(state.vehicles.items.values()).filter(
+      (vehicle) => vehicle && isEntityInSelectedBranch(vehicle.branch_id)
+    ).length;
+    return [
+      { key: 'all', label: 'Semua Kendaraan', count: totalCount },
+      ...VEHICLE_TYPE_FILTER_OPTIONS.filter((item) => item.key !== 'all').map(
+        (item) => counts.get(item.key) || { key: item.key, label: item.label, count: 0 }
+      ),
+    ];
+  };
+
+  const syncVehicleControlButtonState = () => {
+    if (!vehicleControlBtn) {
+      return;
+    }
+    const availableTypes = getAvailableVehicleTypes();
+    const specificTypes = availableTypes.filter((typeItem) => typeItem.key !== 'all');
+    const visibleCount = specificTypes.filter((typeItem) => !state.vehicles.hiddenTypeKeys.has(typeItem.key)).length;
+    vehicleControlBtn.textContent =
+      !specificTypes.length || visibleCount === specificTypes.length
+        ? 'Kendaraan'
+        : `Kendaraan ${visibleCount}/${specificTypes.length}`;
+    vehicleControlBtn.classList.toggle('is-active', visibleCount > 0);
+    vehicleControlBtn.setAttribute(
+      'aria-expanded',
+      vehicleControlPopup && !vehicleControlPopup.classList.contains('hidden') ? 'true' : 'false'
+    );
+  };
+
+  const renderVehicleTypeToggleControls = () => {
+    if (!vehicleTypeToggleListEl) {
+      return;
+    }
+    const vehicleTypes = getAvailableVehicleTypes();
+    if (!vehicleTypes.length) {
+      vehicleTypeToggleListEl.innerHTML =
+        '<div class="asset-filter-option asset-filter-option--empty">Belum ada data kendaraan.</div>';
+      syncVehicleControlButtonState();
+      return;
+    }
+    const areAllSpecificTypesVisible = areAllSpecificVehicleTypesVisible();
+    vehicleTypeToggleListEl.innerHTML = vehicleTypes
+      .map(
+        (typeItem) => `
+          <label class="asset-filter-option" title="Tampilkan tipe kendaraan ${escapeHtml(typeItem.label)}">
+            <input type="checkbox" data-vehicle-type-toggle="${escapeHtml(typeItem.key)}" ${
+              typeItem.key === 'all'
+                ? areAllSpecificTypesVisible
+                  ? 'checked'
+                  : ''
+                : state.vehicles.hiddenTypeKeys.has(typeItem.key)
+                  ? ''
+                  : 'checked'
+            } />
+            <span>${escapeHtml(typeItem.label)} (${typeItem.count})</span>
+          </label>
+        `
+      )
+      .join('');
+    syncVehicleControlButtonState();
+  };
+
+  const renderVehicleSummaryCards = () => {
+    if (!vehicleSummaryCardsEl) {
+      return;
+    }
+    const vehicleSummary = getVehicleSummaryStats();
+    vehicleSummaryCardsEl.classList.add('hidden');
+    [vehicleSummaryTotalBtn, vehicleSummaryMovingBtn, vehicleSummaryAnomalyBtn].forEach((button) => {
+      if (!button) {
+        return;
+      }
+      button.classList.toggle(
+        'is-active',
+        button.getAttribute('data-vehicle-summary-filter') === state.vehicles.listFilter
+      );
+    });
+    setText(vehicleSummaryTotalEl, vehicleSummary.total);
+    setText(vehicleSummaryGpsEl, `GPS aktif ${vehicleSummary.online}`);
+    setText(vehicleSummaryMovingEl, vehicleSummary.moving);
+    setText(vehicleSummaryMovementEl, `Berhenti ${vehicleSummary.stopped} • Diam ${vehicleSummary.idle}`);
+    setText(vehicleSummaryAnomaliesEl, vehicleSummary.anomalies);
+    setText(
+      vehicleSummaryFreshnessEl,
+      `Terlambat ${vehicleSummary.delayed} • Lama ${vehicleSummary.stale} • Offline ${vehicleSummary.offline}`
+    );
+  };
+
+  const renderVehicleFilterControls = () => {
+    if (!sosVehicleFiltersEl) {
+      return;
+    }
+    const visibleTypeRows = Array.from(state.vehicles.items.values()).filter(
+      (vehicle) => vehicle && isEntityInSelectedBranch(vehicle.branch_id) && isVehicleTypeVisible(vehicle)
+    );
+    const countsByFilter = {
+      all: visibleTypeRows.length,
+      moving: visibleTypeRows.filter((vehicle) => vehicle.movement_status === 'moving').length,
+      anomaly: visibleTypeRows.filter((vehicle) => Boolean(vehicle.has_branch_anomaly)).length,
+    };
+    sosVehicleFiltersEl.innerHTML = ['all', 'moving', 'anomaly']
+      .map((filter) => {
+        const isActive = state.vehicles.listFilter === filter;
+        return `<button type="button" class="sos-incident-filter-chip ${isActive ? 'is-active' : ''}" data-vehicle-filter="${filter}" aria-pressed="${isActive ? 'true' : 'false'}">${escapeHtml(
+          getVehicleSummaryButtonLabel(filter)
+        )} (${countsByFilter[filter] || 0})</button>`;
+      })
+      .join('');
+  };
+
+  const renderVehiclePanel = () => {
+    if (sosVehiclePanelEyebrowEl) {
+      setText(sosVehiclePanelEyebrowEl, 'Kendaraan Live');
+    }
+    if (sosVehiclePanelTitleEl) {
+      setText(sosVehiclePanelTitleEl, 'Daftar Kendaraan');
+    }
+    renderVehicleFilterControls();
+    const visibleVehicles = getVisibleVehicleItems();
+    if (sosVehicleCountBadgeEl) {
+      setText(sosVehicleCountBadgeEl, `${visibleVehicles.length || 0} unit`);
+    }
+    if (!sosVehicleListEl) {
+      return;
+    }
+    if (!visibleVehicles.length) {
+      sosVehicleListEl.innerHTML =
+        '<div class="vehicle-list-empty">Belum ada kendaraan untuk filter ini.</div>';
+      return;
+    }
+    sosVehicleListEl.innerHTML = visibleVehicles
+      .map((vehicle) => {
+        const gpsTone = getVehicleGpsTone(vehicle);
+        const isDisabled = !vehicle.latLng;
+        return `
+          <article class="vehicle-list-item ${
+            Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id) ? 'is-selected' : ''
+          } ${isDisabled ? 'is-disabled' : ''}" data-entity-type="vehicle" data-vehicle-id="${vehicle.vehicle_id}" ${
+            isDisabled ? 'data-incident-disabled="true"' : 'tabindex="0" role="button"'
+          }>
+            <div class="vehicle-list-item__top">
+              <div class="vehicle-list-item__title" title="${escapeHtml(vehicle.label || `Kendaraan ${vehicle.vehicle_id}`)}">${escapeHtml(vehicle.label || `Kendaraan ${vehicle.vehicle_id}`)}</div>
+              <span class="vehicle-list-item__gps-pill ${gpsTone}">${escapeHtml(getVehicleGpsLabel(vehicle.gps_status))}</span>
+            </div>
+            <div class="vehicle-list-item__divider"></div>
+            <div class="vehicle-list-item__metrics">
+              <div class="vehicle-list-item__metric">
+                <div class="vehicle-list-item__metric-label">Status</div>
+                <div class="vehicle-list-item__metric-value">${escapeHtml(getVehicleMovementLabel(vehicle.movement_status))}</div>
+              </div>
+              <div class="vehicle-list-item__metric">
+                <div class="vehicle-list-item__metric-label">Kecepatan</div>
+                <div class="vehicle-list-item__metric-value">${escapeHtml(formatSpeedKmh(vehicle.speed))}</div>
+              </div>
+              <div class="vehicle-list-item__metric">
+                <div class="vehicle-list-item__metric-label">Node</div>
+                <div class="vehicle-list-item__metric-value" title="${escapeHtml(vehicle.node || '-')}">${escapeHtml(vehicle.node || '-')}</div>
+              </div>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+  };
+
+  const selectVehicle = (vehicleId, options = {}) => {
+    const vehicle = state.vehicles.items.get(Number(vehicleId));
+    if (!vehicle) {
+      return;
+    }
+    state.vehicles.selectedVehicleId = vehicle.vehicle_id;
+    state.selectedSosId = null;
+    state.incidents.selectedSosId = null;
+    state.gateAlerts.selectedGateId = null;
+    state.standaloneAssets.selectedAssetKey = null;
+    state.cctvSelectedCameraId = '';
+    state.weather.selectedWeatherId = null;
+    state.networkArcs.selectedEdgeKey = null;
+    state.ui.selectedEntityType = 'vehicle';
+    state.ui.selectedEntityId = String(vehicle.vehicle_id);
+    if (vehicle.renderLatLng || vehicle.latLng) {
+      setLockedMarkerLabel(createMarkerLabelRef('vehicle', vehicle.vehicle_id, { latLng: vehicle.renderLatLng || vehicle.latLng }));
+      if (options.focus !== false && vehicle.latLng) {
+        focusEntityOnMap(vehicle.latLng, MAP_ZOOM_SOS);
+      }
+    } else {
+      clearMarkerLabelState({ preserveSosLocked: false });
+    }
+    renderAll();
+  };
+
+  const upsertVehicleLive = (vehicle, options = {}) => {
+    const normalized =
+      vehicle && typeof vehicle === 'object' && Number.isFinite(Number(vehicle.vehicle_id))
+        ? normalizeVehicleLive(vehicle, state.vehicles.apiBaseUrl)
+        : null;
+    if (!normalized) {
+      return null;
+    }
+    const existing = state.vehicles.items.get(normalized.vehicle_id) || null;
+    const nextLatLng = normalized.latLng || (existing && existing.latLng) || null;
+    const renderLatLng =
+      options.preserveRenderLatLng === false
+        ? nextLatLng
+        : (existing && existing.renderLatLng) || nextLatLng;
+    const merged = {
+      ...(existing || {}),
+      ...normalized,
+      latLng: nextLatLng,
+      renderLatLng: renderLatLng ? { ...renderLatLng } : null,
+      lastPositionAt:
+        normalized.latLng &&
+        existing &&
+        existing.latLng &&
+        (Number(existing.latLng.lat) !== Number(normalized.latLng.lat) ||
+          Number(existing.latLng.lng) !== Number(normalized.latLng.lng))
+          ? Date.now()
+          : (existing && existing.lastPositionAt) || Date.now(),
+    };
+    state.vehicles.items.set(merged.vehicle_id, merged);
+    return merged;
+  };
+
+  const clearVehicleDetailCache = (vehicleId = null) => {
+    if (vehicleId === null || vehicleId === undefined || vehicleId === '') {
+      state.vehicles.details.clear();
+      return;
+    }
+    state.vehicles.details.delete(Number(vehicleId));
+  };
+
+  const clearVehicleMarkers = () => {
+    state.vehicles.markers.forEach((entry) => {
+      if (entry && entry.animationFrame) {
+        window.cancelAnimationFrame(entry.animationFrame);
+      }
+      if (entry && entry.marker) {
+        entry.marker.setMap(null);
+      }
+    });
+    state.vehicles.markers.clear();
+  };
+
+  const loadVehiclesLive = async () => {
+    const response = await window.cameraService.getVehiclesLive();
+    if (!response || response.status >= 400) {
+      throw new Error((response && response.message) || 'Gagal memuat kendaraan live.');
+    }
+    const rows = unwrapCollection(response.data);
+    const nextItems = new Map();
+    rows.forEach((item) => {
+      const normalized = normalizeVehicleLive(item, state.vehicles.apiBaseUrl);
+      if (!normalized || !isEntityInSelectedBranch(normalized.branch_id)) {
+        return;
+      }
+      const existing = state.vehicles.items.get(normalized.vehicle_id) || null;
+      nextItems.set(normalized.vehicle_id, {
+        ...(existing || {}),
+        ...normalized,
+        renderLatLng: (existing && existing.renderLatLng) || normalized.latLng,
+      });
+    });
+    state.vehicles.items = nextItems;
+    state.vehicles.lastRefreshAt = Date.now();
+    reconcileSelectedVehicle();
+    return Array.from(nextItems.values());
+  };
+
+  const loadVehiclesSummary = async () => {
+    const response = await window.cameraService.getVehiclesSummary();
+    if (!response || response.status >= 400) {
+      throw new Error((response && response.message) || 'Gagal memuat ringkasan kendaraan.');
+    }
+    state.vehicles.summary = normalizeVehicleSummary(unwrapSingle(response.data));
+    return state.vehicles.summary;
+  };
+
+  const loadVehicleDetail = async (vehicleId, options = {}) => {
+    const normalizedVehicleId = Number(vehicleId);
+    if (!Number.isFinite(normalizedVehicleId)) {
+      return null;
+    }
+    if (!options.force && state.vehicles.details.has(normalizedVehicleId)) {
+      return state.vehicles.details.get(normalizedVehicleId) || null;
+    }
+    const response = await window.cameraService.getVehicleDetail(normalizedVehicleId);
+    if (!response || response.status >= 400) {
+      throw new Error((response && response.message) || 'Gagal memuat detail kendaraan.');
+    }
+    const detail = normalizeVehicleLive(unwrapSingle(response.data), state.vehicles.apiBaseUrl);
+    if (!detail) {
+      return null;
+    }
+    state.vehicles.details.set(normalizedVehicleId, detail);
+    upsertVehicleLive(detail);
+    return detail;
+  };
+
+  const focusVehicleOnMap = (vehicle) => {
+    if (!(vehicle && vehicle.latLng)) {
+      return;
+    }
+    focusEntityOnMap(vehicle.latLng, MAP_ZOOM_SOS);
+  };
+
+  const startVehicleFallbackLoop = () => {
+    if (state.vehicleFallbackTimer) {
+      return;
+    }
+    state.vehicleFallbackTimer = window.setInterval(() => {
+      if (!state.isActive) {
+        return;
+      }
+      void Promise.allSettled([loadVehiclesLive(), loadVehiclesSummary()]).then(() => {
+        renderAll();
+      });
+    }, SOS_TICKET_REFRESH_MS);
+  };
+
+  const stopVehicleFallbackLoop = () => {
+    if (state.vehicleFallbackTimer) {
+      clearInterval(state.vehicleFallbackTimer);
+      state.vehicleFallbackTimer = null;
+    }
+  };
+
+  const syncVehicleMarkers = () => {
+    if (!state.map || !window.google || !window.google.maps) {
+      return;
+    }
+    const visibleVehicles = getVisibleVehicleItems();
+    const visibleIds = new Set();
+    const bounds = state.map && typeof state.map.getBounds === 'function' ? state.map.getBounds() : null;
+    const shouldCull = isAllBranchesSelected() || visibleVehicles.length > 60;
+
+    visibleVehicles.forEach((vehicle) => {
+      if (!(vehicle && vehicle.latLng)) {
+        return;
+      }
+      if (
+        shouldCull &&
+        bounds &&
+        typeof bounds.contains === 'function' &&
+        !bounds.contains(new window.google.maps.LatLng(vehicle.latLng.lat, vehicle.latLng.lng))
+      ) {
+        return;
+      }
+      visibleIds.add(vehicle.vehicle_id);
+      let entry = state.vehicles.markers.get(vehicle.vehicle_id) || null;
+      if (!entry) {
+        const marker = new window.google.maps.Marker({
+          map: state.map,
+          position: vehicle.renderLatLng || vehicle.latLng,
+          title: vehicle.label || `Kendaraan ${vehicle.vehicle_id}`,
+          optimized: true,
+          zIndex: getMapMarkerZIndex('asset') + 4,
+          icon: {
+            url: vehicle.vehicle_type_icon_url || createVehicleFallbackIconDataUrl(),
+            scaledSize: new window.google.maps.Size(40, 40),
+          },
+        });
+        marker.addListener('click', () => {
+          selectVehicle(vehicle.vehicle_id, { focus: true });
+          void loadVehicleDetail(vehicle.vehicle_id).then(() => renderDetailPanel()).catch(() => {});
+        });
+        marker.addListener('mouseover', () => {
+          setPreviewMarkerLabel(
+            createMarkerLabelRef('vehicle', vehicle.vehicle_id, {
+              latLng: vehicle.renderLatLng || vehicle.latLng,
+            })
+          );
+        });
+        marker.addListener('mouseout', () => {
+          clearPreviewMarkerLabelIfUnlocked();
+        });
+        entry = {
+          marker,
+          animationFrame: null,
+          lastUpdateAt: Date.now(),
+          iconUrl: '',
+          currentLatLng: vehicle.renderLatLng || vehicle.latLng,
+          targetKey: '',
+        };
+        state.vehicles.markers.set(vehicle.vehicle_id, entry);
+      }
+
+      const iconUrl = vehicle.vehicle_type_icon_url || createVehicleFallbackIconDataUrl();
+      if (entry.iconUrl !== iconUrl) {
+        entry.iconUrl = iconUrl;
+        entry.marker.setIcon({
+          url: iconUrl,
+          scaledSize: new window.google.maps.Size(40, 40),
+        });
+      }
+      entry.marker.setTitle(vehicle.label || `Kendaraan ${vehicle.vehicle_id}`);
+      entry.marker.setZIndex(
+        Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id)
+          ? getMapMarkerZIndex('selected')
+          : getMapMarkerZIndex('asset') + 4
+      );
+      if (!entry.marker.getMap()) {
+        entry.marker.setMap(state.map);
+      }
+      const nextLatLng = vehicle.latLng;
+      const nextTargetKey = nextLatLng ? `${nextLatLng.lat}:${nextLatLng.lng}` : '';
+      if (entry.targetKey === nextTargetKey) {
+        if (vehicle.renderLatLng) {
+          entry.currentLatLng = vehicle.renderLatLng;
+          entry.marker.setPosition(vehicle.renderLatLng);
+        }
+        return;
+      }
+      entry.targetKey = nextTargetKey;
+
+      const currentLatLng = vehicle.renderLatLng || entry.currentLatLng || vehicle.latLng;
+      const distance = haversineDistanceMeters(currentLatLng, nextLatLng);
+      const elapsed = Math.max(200, Date.now() - Number(entry.lastUpdateAt || 0));
+      const duration = Math.max(
+        VEHICLE_INTERPOLATION_MIN_MS,
+        Math.min(VEHICLE_INTERPOLATION_MAX_MS, elapsed || VEHICLE_INTERPOLATION_DEFAULT_MS)
+      );
+      entry.lastUpdateAt = Date.now();
+      if (entry.animationFrame) {
+        window.cancelAnimationFrame(entry.animationFrame);
+        entry.animationFrame = null;
+      }
+      if (!currentLatLng || !nextLatLng || distance > VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS) {
+        vehicle.renderLatLng = nextLatLng ? { ...nextLatLng } : null;
+        entry.currentLatLng = vehicle.renderLatLng;
+        if (nextLatLng) {
+          entry.marker.setPosition(nextLatLng);
+        }
+        if (Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id)) {
+          syncSelectedMarkerLabelOverlay();
+        }
+        return;
+      }
+      const startedAt = performance.now();
+      const origin = { lat: Number(currentLatLng.lat), lng: Number(currentLatLng.lng) };
+      const target = { lat: Number(nextLatLng.lat), lng: Number(nextLatLng.lng) };
+      const tick = (now) => {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const interpolated = {
+          lat: origin.lat + (target.lat - origin.lat) * progress,
+          lng: origin.lng + (target.lng - origin.lng) * progress,
+        };
+        vehicle.renderLatLng = interpolated;
+        entry.currentLatLng = interpolated;
+        entry.marker.setPosition(interpolated);
+        if (Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id)) {
+          syncSelectedMarkerLabelOverlay();
+        }
+        if (progress < 1) {
+          entry.animationFrame = window.requestAnimationFrame(tick);
+        } else {
+          entry.animationFrame = null;
+        }
+      };
+      entry.animationFrame = window.requestAnimationFrame(tick);
+    });
+
+    Array.from(state.vehicles.markers.entries()).forEach(([vehicleId, entry]) => {
+      if (visibleIds.has(Number(vehicleId))) {
+        return;
+      }
+      if (entry && entry.animationFrame) {
+        window.cancelAnimationFrame(entry.animationFrame);
+      }
+      if (entry && entry.marker) {
+        entry.marker.setMap(null);
+      }
+      state.vehicles.markers.delete(Number(vehicleId));
+    });
+  };
+
+  const applyVehiclePatch = async (payload) => {
+    const normalized = normalizeVehicleLive(payload, state.vehicles.apiBaseUrl);
+    if (!normalized) {
+      return;
+    }
+    if (!isEntityInSelectedBranch(normalized.branch_id)) {
+      state.vehicles.items.delete(normalized.vehicle_id);
+      state.vehicles.details.delete(normalized.vehicle_id);
+      renderAll();
+      return;
+    }
+    upsertVehicleLive(normalized);
+    state.vehicles.lastSnapshotAt = Date.now();
+    if (Number(state.vehicles.selectedVehicleId) === Number(normalized.vehicle_id)) {
+      state.vehicles.details.set(normalized.vehicle_id, {
+        ...(state.vehicles.details.get(normalized.vehicle_id) || {}),
+        ...normalized,
+      });
+    }
+    renderAll();
+  };
+
   const renderSummary = () => {
+    if (sosPanelEyebrowEl) {
+      setText(sosPanelEyebrowEl, 'Monitoring Aktif');
+    }
+    if (sosPanelTitleEl) {
+      setText(sosPanelTitleEl, 'Daftar Kejadian');
+    }
     const gateAlertCount = Array.from(state.gateAlerts.items.values()).filter(
       (gate) => gate && gate.showInSummary !== false && (gate.status === 'error' || gate.status === 'warning')
     ).length;
@@ -4115,6 +5146,7 @@
     syncAssetFilterButtonState();
     syncFoControlButtonState();
     syncWeatherControlButtonState();
+    syncVehicleControlButtonState();
     syncBranchControlButtonState();
     const selectedBranch = getSelectedBranch();
     const branchLabel = isAllBranchesSelected()
@@ -4122,11 +5154,14 @@
       : selectedBranch
         ? selectedBranch.branch_name || selectedBranch.branch_code || selectedBranch.id
         : 'Tanpa branch';
+    const visibleVehicleCount = Array.from(state.vehicles.items.values()).filter(
+      (vehicle) => vehicle && isEntityInSelectedBranch(vehicle.branch_id) && isVehicleTypeVisible(vehicle)
+    ).length;
     const weatherSummary = getWeatherSummaryLabel();
     if (assetMapSubtitleEl) {
       setText(
         assetMapSubtitleEl,
-        `Branch aktif: ${branchLabel} • ${getNetworkSummaryLabel()}${weatherSummary ? ` • ${weatherSummary}` : ''}`
+        `Branch aktif: ${branchLabel} • ${visibleVehicleCount} kendaraan • ${getNetworkSummaryLabel()}${weatherSummary ? ` • ${weatherSummary}` : ''}`
       );
     }
   };
@@ -4201,6 +5236,60 @@
   const renderDetailPanel = () => {
     if (state.ui.selectedEntityType !== 'gate' || !state.gateAlerts.selectedGateId) {
       stopGateDetailDurationTimer();
+    }
+    if (state.ui.selectedEntityType === 'vehicle' && state.vehicles.selectedVehicleId) {
+      const baseVehicle =
+        state.vehicles.details.get(Number(state.vehicles.selectedVehicleId)) ||
+        state.vehicles.items.get(Number(state.vehicles.selectedVehicleId)) ||
+        null;
+      if (baseVehicle) {
+        const detailKey = JSON.stringify({
+          type: 'vehicle',
+          vehicleId: baseVehicle.vehicle_id,
+          gpsStatus: baseVehicle.gps_status,
+          movementStatus: baseVehicle.movement_status,
+          speed: baseVehicle.speed,
+          bearing: baseVehicle.bearing,
+          gpsTime: baseVehicle.gps_time,
+          branchId: baseVehicle.branch_id,
+          lat: baseVehicle.latitude,
+          lng: baseVehicle.longitude,
+        });
+        if (state.detailRenderKey !== detailKey || sosDetailPanelEl.classList.contains('hidden')) {
+          state.detailRenderKey = detailKey;
+          setText(sosDetailTitleEl, baseVehicle.label || `Kendaraan ${baseVehicle.vehicle_id}`);
+          setClass(sosDetailStatusEl, `status-pill ${getVehicleGpsTone(baseVehicle)}`);
+          setText(sosDetailStatusEl, getVehicleGpsLabel(baseVehicle.gps_status));
+          sosDetailMetaEl.classList.remove('hidden');
+          sosDetailMetaEl.innerHTML = `
+            <div class="sos-detail-hero">
+              <div class="sos-detail-hero__name">${escapeHtml(baseVehicle.label || `Kendaraan ${baseVehicle.vehicle_id}`)}</div>
+              <div class="sos-detail-hero__support">
+                <span class="meta-pill">${escapeHtml(getVehicleMovementLabel(baseVehicle.movement_status).toUpperCase())}</span>
+                <span class="meta-pill">${escapeHtml(getVehicleTypeLabel(baseVehicle).toUpperCase())}</span>
+                ${baseVehicle.has_branch_anomaly ? '<span class="meta-pill">ANOMALI</span>' : ''}
+              </div>
+            </div>
+          `;
+          sosDetailBodyEl.innerHTML = `
+            <div class="sos-detail-body__grid">
+              <div><span class="sos-detail-label">Ruas</span><strong>${escapeHtml(baseVehicle.branch_name || baseVehicle.branch_code || '-')}</strong></div>
+              <div><span class="sos-detail-label">Node</span><strong>${escapeHtml(baseVehicle.node || '-')}</strong></div>
+              <div><span class="sos-detail-label">Status</span><strong>${escapeHtml(getVehicleMovementLabel(baseVehicle.movement_status))}</strong></div>
+              <div><span class="sos-detail-label">Kecepatan</span><strong>${escapeHtml(formatSpeedKmh(baseVehicle.speed))}</strong></div>
+              <div><span class="sos-detail-label">Arah</span><strong>${escapeHtml(formatBearing(baseVehicle.bearing))}</strong></div>
+              <div><span class="sos-detail-label">Waktu GPS</span><strong>${escapeHtml(toDateTime(baseVehicle.gps_time || baseVehicle.received_at || '-'))}</strong></div>
+              <div><span class="sos-detail-label">Latitude</span><strong>${escapeHtml(baseVehicle.latitude !== null ? String(baseVehicle.latitude) : '-')}</strong></div>
+              <div><span class="sos-detail-label">Longitude</span><strong>${escapeHtml(baseVehicle.longitude !== null ? String(baseVehicle.longitude) : '-')}</strong></div>
+            </div>
+          `;
+          sosDetailPanelEl.classList.remove('hidden');
+          sosDetailPanelEl.classList.add('is-visible');
+          replayDetailPanelAnimation();
+        }
+        applySosActionButtonState(null);
+        return;
+      }
     }
     if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
       const gateDetail = state.gateAlerts.details.get(String(state.gateAlerts.selectedGateId));
@@ -6173,14 +7262,18 @@
   };
 
   const renderAll = () => {
+    reconcileSelectedVehicle();
     renderSummary();
     renderBranchOptions();
     renderAssetToolbar();
     renderIncidentList();
+    renderVehicleTypeToggleControls();
+    renderVehiclePanel();
     renderDetailPanel();
     renderNotifications();
     syncGateAlertMarkers();
     syncMapMarkers();
+    syncVehicleMarkers();
     syncSelectedMarkerLabelOverlay();
     syncWeatherMarkers();
     syncNetworkOverlay();
@@ -6409,6 +7502,7 @@
     state.incidents.selectedSosId = null;
     state.gateAlerts.selectedGateId = null;
     state.standaloneAssets.selectedAssetKey = null;
+    state.vehicles.selectedVehicleId = null;
     state.cctvSelectedCameraId = '';
     state.networkArcs.selectedEdgeKey = null;
     state.weather.selectedWeatherId = null;
@@ -6499,10 +7593,13 @@
     state.ui.mapEmptyMessage = getDefaultMapEmptyMessage();
     setMapLoadingVisible(true);
     setIncidentListLoadingVisible(true);
+    setVehicleListLoadingVisible(true);
     setConnectionBadge('Loading...', 'warning');
     debugLog('refreshDashboard:start');
     try {
       await loadMapBranches();
+      const apiBaseUrl = await window.cameraService.getApiBaseUrl().catch(() => '');
+      state.vehicles.apiBaseUrl = String(apiBaseUrl || '').trim();
       const branch = getSelectedBranch();
       if (
         state.map &&
@@ -6520,6 +7617,8 @@
         updateDefaultCctvMarkers(),
         loadNetworkArcs(),
         loadWeatherMarkers(),
+        loadVehiclesLive(),
+        loadVehiclesSummary(),
         loadSnapshot(),
         loadOpenTickets(),
       ]);
@@ -6539,6 +7638,7 @@
     } finally {
       setMapLoadingVisible(false);
       setIncidentListLoadingVisible(false);
+      setVehicleListLoadingVisible(false);
     }
   };
 
@@ -6548,6 +7648,7 @@
     }
     const hasGateAlertsPayload = Object.prototype.hasOwnProperty.call(payload, 'gate_alerts');
     const hasAssetsPayload = Object.prototype.hasOwnProperty.call(payload, 'assets');
+    const hasVehiclesPayload = Object.prototype.hasOwnProperty.call(payload, 'vehicles');
     const gateAlerts = toArray(payload.gate_alerts)
       .map(normalizeGateAlert)
       .filter((gate) => gate && isEntityInSelectedBranch(gate.branch_id));
@@ -6555,6 +7656,9 @@
       .map(normalizeStandaloneAsset)
       .filter((asset) => asset && isEntityInSelectedBranch(asset.branch_id))
       .map((asset) => ({ ...asset, showInSummary: true }));
+    const vehicles = toArray(payload.vehicles)
+      .map((item) => normalizeVehicleLive(item, state.vehicles.apiBaseUrl))
+      .filter((vehicle) => vehicle && isEntityInSelectedBranch(vehicle.branch_id));
     const sosAlerts = toArray(payload.sos).filter(Boolean);
     const branchId = getSelectedBranch() && getSelectedBranch().id ? String(getSelectedBranch().id) : '';
     if (hasGateAlertsPayload) {
@@ -6589,6 +7693,19 @@
         state.cctvCacheByBranch.set(branchKey, mergedAssets);
       }
       void updateDefaultCctvMarkers();
+    }
+    if (hasVehiclesPayload) {
+      const nextVehicleItems = new Map();
+      vehicles.forEach((vehicle) => {
+        const existing = state.vehicles.items.get(vehicle.vehicle_id) || null;
+        nextVehicleItems.set(vehicle.vehicle_id, {
+          ...(existing || {}),
+          ...vehicle,
+          renderLatLng: (existing && existing.renderLatLng) || vehicle.latLng,
+        });
+      });
+      state.vehicles.items = nextVehicleItems;
+      state.vehicles.lastSnapshotAt = Date.now();
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'sos')) {
       state.alerts.clear();
@@ -6726,11 +7843,13 @@
       applyMapSnapshot(payload);
       syncGateAlertMarkers();
       syncMapMarkers();
+      syncVehicleMarkers();
       void updateDefaultCctvMarkers();
       renderAll();
       return;
     }
     if (eventName === 'connected' || eventName === 'heartbeat') {
+      stopVehicleFallbackLoop();
       return;
     }
     if (eventName === 'gate_status_changed') {
@@ -6740,6 +7859,10 @@
     }
     if (eventName === 'asset_status_changed') {
       void applyStandaloneAssetPatch(payload);
+      return;
+    }
+    if (eventName === 'vehicle_position_updated') {
+      void applyVehiclePatch(payload);
       return;
     }
     let latestAlert = null;
@@ -6772,6 +7895,7 @@
     if (!state.isActive || state.streamRetryTimer) {
       return;
     }
+    startVehicleFallbackLoop();
     setConnectionBadge('Reconnecting...', 'warning');
     state.streamRetryTimer = window.setTimeout(() => {
       state.streamRetryTimer = null;
@@ -6801,6 +7925,7 @@
         window.cameraService.getApiBaseUrl(),
         window.cameraService.getApiAuthToken(),
       ]);
+      state.vehicles.apiBaseUrl = String(apiBaseUrl || '').trim();
       debugLog('connectStream:start', {
         apiBaseUrl,
         hasToken: Boolean(apiAuthToken),
@@ -6822,6 +7947,7 @@
       debugLog('connectStream:connected', {
         status: response.status,
       });
+      stopVehicleFallbackLoop();
       setConnectionBadge('Streaming', 'success');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -6843,6 +7969,7 @@
         message: error && error.message ? error.message : String(error),
       });
       setConnectionBadge('Stream Error', 'danger');
+      startVehicleFallbackLoop();
       scheduleStreamReconnect();
     }
   };
@@ -6913,6 +8040,7 @@
         if (!isViewportCullingActive()) {
           syncGateAlertMarkers();
           syncWeatherMarkers();
+          syncVehicleMarkers();
         }
       });
       state.map.addListener('idle', () => {
@@ -6920,6 +8048,7 @@
         state.ui.mapInteractionActive = false;
         syncGateAlertMarkers();
         syncWeatherMarkers();
+        syncVehicleMarkers();
         if (isViewportCullingActive()) {
           void updateDefaultCctvMarkers();
           return;
@@ -6938,6 +8067,13 @@
         }
         collapseCctvSpiderfy();
         clearMarkerLabelState();
+        if (state.vehicles.selectedVehicleId && state.ui.selectedEntityType === 'vehicle') {
+          state.vehicles.selectedVehicleId = null;
+          state.ui.selectedEntityType = '';
+          state.ui.selectedEntityId = null;
+          state.detailRenderKey = '';
+          renderAll();
+        }
         if (state.weather.selectedWeatherId) {
           state.weather.selectedWeatherId = null;
           if (state.ui.selectedEntityType === 'weather') {
@@ -7282,6 +8418,9 @@
     setAssetFilterPopupVisible(false);
     setFoControlPopupVisible(false);
     setWeatherControlPopupVisible(false);
+    if (vehicleControlPopup) {
+      vehicleControlPopup.classList.add('hidden');
+    }
     setBranchControlPopupVisible(false);
     document.body.classList.remove('sos-mode');
     sosDashboardEl.classList.add('hidden');
@@ -7292,14 +8431,18 @@
     closeCctvModal();
     stopGateDetailDurationTimer();
     state.gateAlerts.selectedGateId = null;
+    state.vehicles.selectedVehicleId = null;
     state.ui.selectedEntityType = '';
     state.ui.selectedEntityId = null;
     clearGateMarkers();
+    clearVehicleMarkers();
+    clearVehicleDetailCache();
     resetStandaloneLayerState();
     resetNetworkLayerState();
     resetWeatherLayerState();
     stopStream();
     stopTicketRefreshLoop();
+    stopVehicleFallbackLoop();
     setConnectionBadge('Idle', 'neutral');
     setToolbarState();
     void persistAssetMonitoringPrefs();
@@ -7911,6 +9054,90 @@
       target.click();
     }
   });
+  if (vehicleControlBtn) {
+    vehicleControlBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (vehicleControlPopup) {
+        vehicleControlPopup.classList.toggle('hidden');
+        syncVehicleControlButtonState();
+      }
+    });
+  }
+
+  if (vehicleTypeToggleListEl) {
+    vehicleTypeToggleListEl.addEventListener('change', (event) => {
+      const input =
+        event.target instanceof HTMLInputElement ? event.target.closest('[data-vehicle-type-toggle]') : null;
+      const toggleEl = input instanceof HTMLInputElement ? input : null;
+      if (!toggleEl) {
+        return;
+      }
+      const key = String(toggleEl.getAttribute('data-vehicle-type-toggle') || '');
+      if (key === 'all') {
+        if (toggleEl.checked) {
+          state.vehicles.hiddenTypeKeys.clear();
+        } else {
+          VEHICLE_TYPE_FILTER_OPTIONS.filter((item) => item.key !== 'all').forEach((item) => {
+            state.vehicles.hiddenTypeKeys.add(item.key);
+          });
+        }
+      } else if (toggleEl.checked) {
+        state.vehicles.hiddenTypeKeys.delete(key);
+      } else {
+        state.vehicles.hiddenTypeKeys.add(key);
+      }
+      reconcileSelectedVehicle();
+      renderAll();
+    });
+  }
+
+  if (sosVehicleFiltersEl) {
+    sosVehicleFiltersEl.addEventListener('click', (event) => {
+      const target =
+        event.target instanceof HTMLElement ? event.target.closest('[data-vehicle-filter]') : null;
+      if (!target) {
+        return;
+      }
+      setVehicleListFilter(target.getAttribute('data-vehicle-filter') || 'all');
+      renderAll();
+    });
+  }
+
+  if (sosVehicleListEl) {
+    sosVehicleListEl.addEventListener('click', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest('[data-vehicle-id]') : null;
+      if (!target || target.getAttribute('data-incident-disabled') === 'true') {
+        return;
+      }
+      const vehicleId = Number(target.getAttribute('data-vehicle-id'));
+      if (!Number.isFinite(vehicleId)) {
+        return;
+      }
+      selectVehicle(vehicleId, { focus: true });
+      void loadVehicleDetail(vehicleId).then(() => renderDetailPanel()).catch(() => {});
+    });
+    sosVehicleListEl.addEventListener('keydown', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest('[data-vehicle-id]') : null;
+      if (!target || target.getAttribute('data-incident-disabled') === 'true') {
+        return;
+      }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        target.click();
+      }
+    });
+  }
+
+  [vehicleSummaryTotalBtn, vehicleSummaryMovingBtn, vehicleSummaryAnomalyBtn].forEach((button) => {
+    if (!button) {
+      return;
+    }
+    button.addEventListener('click', () => {
+      setVehicleListFilter(button.getAttribute('data-vehicle-summary-filter') || 'all');
+      renderAll();
+    });
+  });
   sosDispatchBtn.addEventListener('click', openDispatchModal);
   sosCompleteBtn.addEventListener('click', openCompleteModal);
   closeSosDetailBtn.addEventListener('click', clearSelectedAlert);
@@ -7989,6 +9216,15 @@
   });
 
   document.addEventListener('click', (event) => {
+    if (
+      vehicleControlPopup &&
+      vehicleControlBtn &&
+      !vehicleControlPopup.classList.contains('hidden') &&
+      !(event.target instanceof HTMLElement && (event.target.closest('#vehicleControlPopup') || event.target.closest('#vehicleControlBtn')))
+    ) {
+      vehicleControlPopup.classList.add('hidden');
+      syncVehicleControlButtonState();
+    }
     if (event.target === sosDispatchModalEl) {
       hideModal(sosDispatchModalEl);
     }

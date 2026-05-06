@@ -1843,6 +1843,65 @@ body.sos-mode .current-branch {
   min-height: 0;
 }
 
+.vehicle-summary-cards {
+  display: none !important;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  max-width: min(560px, calc(100vw - 560px));
+}
+
+.vehicle-summary-btn {
+  display: inline-grid;
+  gap: 3px;
+  min-width: 104px;
+  padding: 8px 10px;
+  border: 1px solid rgba(226, 243, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(7, 23, 42, 0.72);
+  color: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(4, 14, 28, 0.18);
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.vehicle-summary-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(86, 193, 255, 0.42);
+  background: rgba(11, 34, 61, 0.88);
+}
+
+.vehicle-summary-btn.is-active {
+  border-color: rgba(86, 193, 255, 0.56);
+  background: rgba(86, 193, 255, 0.16);
+}
+
+.vehicle-summary-btn__label {
+  color: rgba(214, 235, 255, 0.76);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vehicle-summary-btn__value {
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.vehicle-summary-btn__meta,
+.vehicle-summary-card__meta {
+  color: rgba(224, 241, 255, 0.84);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .sos-map-shell,
 .sos-side-panel,
 .sos-detail-panel,
@@ -2108,6 +2167,14 @@ body.sos-mode .current-branch {
   overflow: hidden;
 }
 
+.sos-side-panel-stack {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
 .sos-side-panel__section {
   position: relative;
   display: flex;
@@ -2122,6 +2189,17 @@ body.sos-mode .current-branch {
 .sos-cctv-list {
   display: grid;
   gap: 12px;
+}
+
+.vehicle-type-toggle-list {
+  display: grid;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.asset-filter-option--empty {
+  justify-content: center;
+  cursor: default;
 }
 
 .sos-incident-group {
@@ -2468,6 +2546,302 @@ body.sos-mode .current-branch {
 .sos-incident-item--weather span,
 .sos-incident-item--weather strong {
   color: inherit;
+}
+
+.vehicle-list-item {
+  display: grid;
+  gap: 0;
+  width: 100%;
+  min-height: 132px;
+  padding: 0;
+  text-align: left;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 241, 255, 0.22);
+  background:
+    radial-gradient(circle at top left, rgba(55, 117, 190, 0.2), transparent 36%),
+    linear-gradient(180deg, rgba(18, 56, 102, 0.96), rgba(10, 39, 75, 0.98));
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.vehicle-list-item:hover {
+  transform: translateY(-1px);
+  background:
+    radial-gradient(circle at top left, rgba(79, 148, 231, 0.2), transparent 36%),
+    linear-gradient(180deg, rgba(19, 60, 109, 0.98), rgba(10, 43, 82, 1));
+}
+
+.vehicle-list-item:focus-visible {
+  outline: 2px solid rgba(255, 159, 28, 0.55);
+  outline-offset: 2px;
+}
+
+.vehicle-list-item.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vehicle-list-item.is-selected {
+  border-color: rgba(99, 197, 255, 0.75);
+  box-shadow:
+    0 0 0 1px rgba(99, 197, 255, 0.2),
+    0 18px 38px rgba(3, 14, 28, 0.22);
+}
+
+.vehicle-list-item__top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 14px 18px 12px;
+}
+
+.vehicle-list-item__title {
+  min-width: 0;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vehicle-list-item__gps-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 200, 210, 0.32);
+  background: rgba(255, 206, 218, 0.08);
+  color: #ffd8e0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.vehicle-list-item__gps-pill::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 14px currentColor;
+}
+
+.vehicle-list-item__gps-pill.success {
+  border-color: rgba(114, 255, 194, 0.32);
+  background: rgba(60, 192, 129, 0.12);
+  color: #b8ffdc;
+}
+
+.vehicle-list-item__gps-pill.warning {
+  border-color: rgba(255, 220, 134, 0.34);
+  background: rgba(245, 176, 65, 0.12);
+  color: #ffe2a6;
+}
+
+.vehicle-list-item__gps-pill.danger {
+  border-color: rgba(255, 194, 206, 0.34);
+  background: rgba(255, 124, 153, 0.1);
+  color: #ffd0db;
+}
+
+.vehicle-list-item__gps-pill.neutral {
+  border-color: rgba(205, 217, 232, 0.28);
+  background: rgba(164, 179, 199, 0.12);
+  color: #e1e7ee;
+}
+
+.vehicle-list-item__divider {
+  height: 1px;
+  margin: 0 0 0;
+  background: rgba(199, 222, 246, 0.14);
+}
+
+.vehicle-list-item__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 58px;
+}
+
+.vehicle-list-item__metric {
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  min-width: 0;
+  padding: 12px 18px 14px;
+}
+
+.vehicle-list-item__metric + .vehicle-list-item__metric {
+  border-left: 1px solid rgba(199, 222, 246, 0.14);
+}
+
+.vehicle-list-item__metric-label {
+  color: rgba(170, 203, 235, 0.82);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.vehicle-list-item__metric-value {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  display: block;
+  line-height: 1.25;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vehicle-list-empty {
+  display: grid;
+  place-items: center;
+  min-height: 128px;
+  padding: 20px;
+  border-radius: 20px;
+  border: 1px solid rgba(242, 249, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(215, 236, 255, 0.76);
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.selected-map-label--vehicle {
+  display: inline-grid;
+  gap: 4px;
+  min-width: 0;
+  max-width: 280px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  white-space: normal;
+}
+
+.selected-map-label__vehicle-title {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.selected-map-label__vehicle-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.selected-map-label__vehicle-gps-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+  box-shadow: 0 0 10px currentColor;
+  background: currentColor;
+}
+
+.selected-map-label__vehicle-gps-indicator.success {
+  color: #72ffc2;
+}
+
+.selected-map-label__vehicle-gps-indicator.warning {
+  color: #ffe2a6;
+}
+
+.selected-map-label__vehicle-gps-indicator.danger {
+  color: #ffd0db;
+}
+
+.selected-map-label__vehicle-gps-indicator.neutral {
+  color: #e1e7ee;
+}
+
+.selected-map-label__vehicle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.selected-map-label__vehicle-grid span {
+  color: rgba(224, 241, 255, 0.72);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.selected-map-label__vehicle-grid strong {
+  display: block;
+  margin-top: 3px;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.vehicle-map-marker.sos-map-marker {
+  width: 60px;
+  height: 60px;
+  will-change: left, top;
+  contain: layout style paint;
+}
+
+.vehicle-map-marker .sos-map-marker__dot {
+  inset: 11px;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.24);
+}
+
+.vehicle-map-marker__icon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.vehicle-map-marker--online .sos-map-marker__pulse,
+.vehicle-map-marker--online .sos-map-marker__dot {
+  background: rgba(46, 213, 115, 0.94);
+}
+
+.vehicle-map-marker--delayed .sos-map-marker__pulse,
+.vehicle-map-marker--delayed .sos-map-marker__dot {
+  background: rgba(245, 176, 65, 0.94);
+}
+
+.vehicle-map-marker--stale .sos-map-marker__pulse,
+.vehicle-map-marker--stale .sos-map-marker__dot {
+  background: rgba(255, 140, 66, 0.94);
+}
+
+.vehicle-map-marker--offline .sos-map-marker__pulse,
+.vehicle-map-marker--offline .sos-map-marker__dot {
+  background: rgba(139, 151, 168, 0.94);
+}
+
+.vehicle-map-marker--moving .sos-map-marker__pulse {
+  background: rgba(46, 213, 115, 0.94);
+  opacity: 0.95;
+  animation: sosPulse 1s ease-out infinite;
+}
+
+.vehicle-map-marker:not(.vehicle-map-marker--moving) .sos-map-marker__pulse {
+  opacity: 0.2;
+  animation: none;
 }
 
 .sos-whatsapp-btn {

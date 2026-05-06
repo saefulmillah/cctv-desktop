@@ -987,6 +987,39 @@ const registerServiceHandlers = () => {
     }
   });
 
+  ipcMain.handle('camera-service:get-vehicles-live', async (_event, query) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.getVehiclesLive(query),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-vehicles-summary', async (_event, query) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.getVehiclesSummary(query),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-vehicle-detail', async (_event, vehicleId) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.getVehicleDetail(vehicleId),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
   ipcMain.handle('camera-service:get-branch-pages', async (_event, branchId) => {
     try {
       return await cameraService.getBranchPages(branchId);

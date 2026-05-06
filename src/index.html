@@ -167,6 +167,14 @@
               </label>
             </div>
           </div>
+          <div class="toolbar-menu-wrap asset-toolbar-control">
+            <button id="vehicleControlBtn" class="toolbar-btn" type="button" aria-haspopup="true" aria-expanded="false">
+              Kendaraan
+            </button>
+            <div id="vehicleControlPopup" class="toolbar-menu-panel asset-filter-popup hidden">
+              <div id="vehicleTypeToggleList" class="vehicle-type-toggle-list" aria-label="Filter tipe kendaraan"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -222,6 +230,23 @@
               <p id="assetMapVersionEyebrow" class="eyebrow">Version -</p>
               <h2 id="sosRouteTitle">MOVISION</h2>
               <p id="assetMapSubtitle" class="asset-map-topbar__subtitle">Pantau gate alert, CCTV, VMS, dan insiden dari satu peta.</p>
+              <div id="vehicleSummaryCards" class="vehicle-summary-cards" aria-label="Ringkasan kendaraan live">
+                <button id="vehicleSummaryTotalBtn" class="vehicle-summary-btn" type="button" data-vehicle-summary-filter="all">
+                  <span class="vehicle-summary-btn__label">Total</span>
+                  <strong id="vehicleSummaryTotal" class="vehicle-summary-btn__value">0</strong>
+                  <span id="vehicleSummaryGps" class="vehicle-summary-btn__meta">GPS aktif 0</span>
+                </button>
+                <button id="vehicleSummaryMovingBtn" class="vehicle-summary-btn" type="button" data-vehicle-summary-filter="moving">
+                  <span class="vehicle-summary-btn__label">Berjalan</span>
+                  <strong id="vehicleSummaryMoving" class="vehicle-summary-btn__value">0</strong>
+                  <span id="vehicleSummaryMovement" class="vehicle-summary-card__meta">Berhenti 0 • Diam 0</span>
+                </button>
+                <button id="vehicleSummaryAnomalyBtn" class="vehicle-summary-btn" type="button" data-vehicle-summary-filter="anomaly">
+                  <span class="vehicle-summary-btn__label">Anomali</span>
+                  <strong id="vehicleSummaryAnomalies" class="vehicle-summary-btn__value">0</strong>
+                  <span id="vehicleSummaryFreshness" class="vehicle-summary-card__meta">Terlambat 0 • Lama 0 • Offline 0</span>
+                </button>
+              </div>
             </div>
             <div class="asset-map-topbar__controls">
               <div class="toolbar-menu-wrap asset-map-topbar__branch-wrap">
@@ -278,32 +303,54 @@
           </article>
         </section>
 
-        <aside class="sos-side-panel">
-          <section class="sos-side-panel__section">
-            <div class="sos-panel__header">
-              <div>
-                <p class="eyebrow">Open Ticket</p>
-                <h3>List Insiden</h3>
+        <div class="sos-side-panel-stack">
+          <aside class="sos-side-panel">
+            <section class="sos-side-panel__section">
+              <div class="sos-panel__header">
+                <div>
+                  <p id="sosPanelEyebrow" class="eyebrow">Kejadian Aktif</p>
+                  <h3 id="sosPanelTitle">Daftar Kejadian</h3>
+                </div>
+                <span id="sosOpenCountBadge" class="status-pill neutral">0 aktif</span>
               </div>
-              <span id="sosOpenCountBadge" class="status-pill neutral">0 aktif</span>
-            </div>
-            <div id="sosIncidentFilters" class="sos-incident-filters" aria-label="Filter list insiden">
-              <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="sos" aria-pressed="true">SOS</button>
-              <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="cctv" aria-pressed="true">CCTV</button>
-              <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="vms" aria-pressed="true">VMS</button>
-              <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="gate" aria-pressed="true">Gate</button>
-              <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="weather" aria-pressed="true">Weather</button>
-            </div>
-            <div id="sosIncidentListLoading" class="sidebar-map-loading sidebar-section-hidden sos-incident-list-loading" aria-live="polite">
-              <div class="sidebar-map-loading__pulse"></div>
-              <div class="sidebar-map-loading__text">
-                <strong>Memuat list kejadian...</strong>
-                <span>Menyiapkan ticket SOS yang masih aktif</span>
+              <div id="sosIncidentFilters" class="sos-incident-filters" aria-label="Filter daftar kejadian">
+                <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="sos" aria-pressed="true">SOS</button>
+                <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="cctv" aria-pressed="true">CCTV</button>
+                <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="vms" aria-pressed="true">VMS</button>
+                <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="gate" aria-pressed="true">Gate</button>
+                <button type="button" class="sos-incident-filter-chip is-active" data-incident-filter="weather" aria-pressed="true">Cuaca</button>
               </div>
-            </div>
-            <div id="sosIncidentList" class="sos-incident-list"></div>
-          </section>
-        </aside>
+              <div id="sosIncidentListLoading" class="sidebar-map-loading sidebar-section-hidden sos-incident-list-loading" aria-live="polite">
+                <div class="sidebar-map-loading__pulse"></div>
+                <div class="sidebar-map-loading__text">
+                  <strong>Memuat daftar kejadian...</strong>
+                  <span>Menyiapkan ticket SOS yang masih aktif</span>
+                </div>
+              </div>
+              <div id="sosIncidentList" class="sos-incident-list"></div>
+            </section>
+          </aside>
+          <aside class="sos-side-panel">
+            <section class="sos-side-panel__section">
+              <div class="sos-panel__header">
+                <div>
+                  <p id="sosVehiclePanelEyebrow" class="eyebrow">Kendaraan Live</p>
+                  <h3 id="sosVehiclePanelTitle">Daftar Kendaraan</h3>
+                </div>
+                <span id="sosVehicleCountBadge" class="status-pill neutral">0 unit</span>
+              </div>
+              <div id="sosVehicleFilters" class="sos-incident-filters" aria-label="Filter daftar kendaraan"></div>
+              <div id="sosVehicleListLoading" class="sidebar-map-loading sidebar-section-hidden sos-incident-list-loading" aria-live="polite">
+                <div class="sidebar-map-loading__pulse"></div>
+                <div class="sidebar-map-loading__text">
+                  <strong>Memuat daftar kendaraan...</strong>
+                  <span>Menyiapkan posisi kendaraan terbaru</span>
+                </div>
+              </div>
+              <div id="sosVehicleList" class="sos-incident-list"></div>
+            </section>
+          </aside>
+        </div>
       </div>
     </section>
 
