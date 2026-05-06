@@ -22,6 +22,10 @@
   const VEHICLE_INTERPOLATION_MAX_MS = 1600;
   const VEHICLE_INTERPOLATION_DEFAULT_MS = 700;
   const VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS = 1200;
+  const VEHICLE_PREDICTION_MIN_MS = 900;
+  const VEHICLE_PREDICTION_MAX_MS = 2600;
+  const VEHICLE_PREDICTION_CORRECTION_SNAP_METERS = 420;
+  const VEHICLE_PREDICTION_MAX_SPEED_KMH = 180;
 
   const $ = (id) => document.getElementById(id);
   const sosMonitorBtn = $('sosMonitorBtn');
@@ -950,6 +954,188 @@
       return 'Anomali';
     }
     return 'Semua';
+  };
+
+  const isVehiclePredictionEligible = (vehicle) => {
+    if (!vehicle) {
+      return false;
+    }
+    const gpsStatus = String(vehicle.gps_status || '').trim().toLowerCase();
+    const movementStatus = String(vehicle.movement_status || '').trim().toLowerCase();
+    const speed = Number(vehicle.speed);
+    const bearing = Number(vehicle.bearing);
+    if (gpsStatus === 'offline' || gpsStatus === 'stale') {
+      return false;
+    }
+    if (movementStatus !== 'moving') {
+      return false;
+    }
+    if (!Number.isFinite(speed) || speed <= 0 || speed > VEHICLE_PREDICTION_MAX_SPEED_KMH) {
+      return false;
+    }
+    return Number.isFinite(bearing);
+  };
+
+  const getVehiclePredictionHorizonMs = (entry) => {
+    const lastBackendAt = Number(entry && entry.lastBackendAt);
+    const previousBackendAt = Number(entry && entry.previousBackendAt);
+    const backendDelta =
+      Number.isFinite(lastBackendAt) && Number.isFinite(previousBackendAt) && lastBackendAt > previousBackendAt
+        ? lastBackendAt - previousBackendAt
+        : VEHICLE_INTERPOLATION_DEFAULT_MS * 2;
+    return Math.max(
+      VEHICLE_PREDICTION_MIN_MS,
+      Math.min(VEHICLE_PREDICTION_MAX_MS, backendDelta)
+    );
+  };
+
+  const projectLatLngByDistanceAndBearing = (latLng, bearingDeg, distanceMeters) => {
+    if (!(latLng && Number.isFinite(Number(bearingDeg)) && Number.isFinite(Number(distanceMeters)))) {
+      return latLng ? { lat: Number(latLng.lat), lng: Number(latLng.lng) } : null;
+    }
+    const earthRadius = 6371000;
+    const angularDistance = Number(distanceMeters) / earthRadius;
+    const bearingRad = (Number(bearingDeg) * Math.PI) / 180;
+    const lat1 = (Number(latLng.lat) * Math.PI) / 180;
+    const lng1 = (Number(latLng.lng) * Math.PI) / 180;
+    const sinLat1 = Math.sin(lat1);
+    const cosLat1 = Math.cos(lat1);
+    const sinAngular = Math.sin(angularDistance);
+    const cosAngular = Math.cos(angularDistance);
+    const lat2 = Math.asin(
+      sinLat1 * cosAngular + cosLat1 * sinAngular * Math.cos(bearingRad)
+    );
+    const lng2 =
+      lng1 +
+      Math.atan2(
+        Math.sin(bearingRad) * sinAngular * cosLat1,
+        cosAngular - sinLat1 * Math.sin(lat2)
+      );
+    return {
+      lat: (lat2 * 180) / Math.PI,
+      lng: ((((lng2 * 180) / Math.PI) + 540) % 360) - 180,
+    };
+  };
+
+  const getVehiclePredictedLatLng = (entry, now = performance.now()) => {
+    if (!(entry && entry.isPredicting && entry.lastBackendLatLng)) {
+      return null;
+    }
+    const startedAt = Number(entry.predictionStartedAt || 0);
+    const until = Number(entry.predictionUntil || 0);
+    const elapsedMs = Math.max(0, now - startedAt);
+    const clampedElapsedMs = until ? Math.min(elapsedMs, Math.max(0, until - startedAt)) : elapsedMs;
+    const speedMetersPerSecond = (Number(entry.lastKnownSpeed || 0) * 1000) / 3600;
+    const distanceMeters = speedMetersPerSecond * (clampedElapsedMs / 1000);
+    return projectLatLngByDistanceAndBearing(
+      entry.lastBackendLatLng,
+      Number(entry.lastKnownBearing || 0),
+      distanceMeters
+    );
+  };
+
+  const stopVehiclePrediction = (entry) => {
+    if (!entry) {
+      return;
+    }
+    entry.isPredicting = false;
+    entry.predictedLatLng = null;
+    entry.predictionStartedAt = 0;
+    entry.predictionUntil = 0;
+  };
+
+  const scheduleVehicleMotionFrame = (entry, vehicle, frameFn) => {
+    if (!(entry && vehicle && typeof frameFn === 'function')) {
+      return;
+    }
+    if (entry.animationFrame) {
+      window.cancelAnimationFrame(entry.animationFrame);
+      entry.animationFrame = null;
+    }
+    entry.animationFrame = window.requestAnimationFrame((now) => {
+      entry.animationFrame = null;
+      frameFn(now);
+    });
+  };
+
+  const updateVehicleMarkerVisualPosition = (entry, vehicle, latLng) => {
+    if (!(entry && vehicle && latLng)) {
+      return;
+    }
+    vehicle.renderLatLng = { lat: Number(latLng.lat), lng: Number(latLng.lng) };
+    entry.currentLatLng = vehicle.renderLatLng;
+    if (entry.marker) {
+      entry.marker.setPosition(vehicle.renderLatLng);
+    }
+    if (Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id)) {
+      syncSelectedMarkerLabelOverlay();
+    }
+  };
+
+  const startVehiclePredictionMotion = (entry, vehicle) => {
+    if (!(entry && vehicle && isVehiclePredictionEligible(vehicle) && entry.lastBackendLatLng)) {
+      stopVehiclePrediction(entry);
+      return;
+    }
+    entry.isPredicting = true;
+    entry.predictionStartedAt = performance.now();
+    entry.predictionUntil = entry.predictionStartedAt + getVehiclePredictionHorizonMs(entry);
+    entry.predictedLatLng = entry.lastBackendLatLng ? { ...entry.lastBackendLatLng } : null;
+    const step = (now) => {
+      if (!entry.isPredicting) {
+        return;
+      }
+      if (!isVehiclePredictionEligible(vehicle)) {
+        stopVehiclePrediction(entry);
+        return;
+      }
+      if (now >= entry.predictionUntil) {
+        const finalLatLng = getVehiclePredictedLatLng(entry, entry.predictionUntil) || entry.lastBackendLatLng;
+        if (finalLatLng) {
+          entry.predictedLatLng = finalLatLng;
+          updateVehicleMarkerVisualPosition(entry, vehicle, finalLatLng);
+        }
+        stopVehiclePrediction(entry);
+        return;
+      }
+      const predictedLatLng = getVehiclePredictedLatLng(entry, now);
+      if (!predictedLatLng) {
+        stopVehiclePrediction(entry);
+        return;
+      }
+      entry.predictedLatLng = predictedLatLng;
+      updateVehicleMarkerVisualPosition(entry, vehicle, predictedLatLng);
+      scheduleVehicleMotionFrame(entry, vehicle, step);
+    };
+    scheduleVehicleMotionFrame(entry, vehicle, step);
+  };
+
+  const startVehicleInterpolationMotion = (entry, vehicle, targetLatLng, durationMs) => {
+    if (!(entry && vehicle && targetLatLng)) {
+      return;
+    }
+    const origin = vehicle.renderLatLng || entry.currentLatLng || vehicle.latLng;
+    if (!origin) {
+      updateVehicleMarkerVisualPosition(entry, vehicle, targetLatLng);
+      startVehiclePredictionMotion(entry, vehicle);
+      return;
+    }
+    const startedAt = performance.now();
+    const step = (now) => {
+      const progress = Math.min(1, (now - startedAt) / Math.max(1, durationMs));
+      const interpolated = {
+        lat: Number(origin.lat) + (Number(targetLatLng.lat) - Number(origin.lat)) * progress,
+        lng: Number(origin.lng) + (Number(targetLatLng.lng) - Number(origin.lng)) * progress,
+      };
+      updateVehicleMarkerVisualPosition(entry, vehicle, interpolated);
+      if (progress < 1) {
+        scheduleVehicleMotionFrame(entry, vehicle, step);
+        return;
+      }
+      updateVehicleMarkerVisualPosition(entry, vehicle, targetLatLng);
+      startVehiclePredictionMotion(entry, vehicle);
+    };
+    scheduleVehicleMotionFrame(entry, vehicle, step);
   };
 
   const normalizeMapBranch = (item) => {
@@ -4929,6 +5115,15 @@
           marker,
           animationFrame: null,
           lastUpdateAt: Date.now(),
+          previousBackendAt: 0,
+          lastBackendAt: Date.now(),
+          lastBackendLatLng: vehicle.latLng ? { ...vehicle.latLng } : null,
+          predictedLatLng: null,
+          predictionStartedAt: 0,
+          predictionUntil: 0,
+          lastKnownSpeed: Number.isFinite(Number(vehicle.speed)) ? Number(vehicle.speed) : null,
+          lastKnownBearing: Number.isFinite(Number(vehicle.bearing)) ? Number(vehicle.bearing) : null,
+          isPredicting: false,
           iconUrl: '',
           currentLatLng: vehicle.renderLatLng || vehicle.latLng,
           targetKey: '',
@@ -4956,12 +5151,27 @@
       const nextLatLng = vehicle.latLng;
       const nextTargetKey = nextLatLng ? `${nextLatLng.lat}:${nextLatLng.lng}` : '';
       if (entry.targetKey === nextTargetKey) {
-        if (vehicle.renderLatLng) {
-          entry.currentLatLng = vehicle.renderLatLng;
-          entry.marker.setPosition(vehicle.renderLatLng);
+        entry.lastKnownSpeed = Number.isFinite(Number(vehicle.speed)) ? Number(vehicle.speed) : null;
+        entry.lastKnownBearing = Number.isFinite(Number(vehicle.bearing)) ? Number(vehicle.bearing) : null;
+        if (entry.isPredicting && !isVehiclePredictionEligible(vehicle)) {
+          stopVehiclePrediction(entry);
+        }
+        if (entry.isPredicting) {
+          const predictedLatLng = getVehiclePredictedLatLng(entry);
+          if (predictedLatLng) {
+            entry.predictedLatLng = predictedLatLng;
+            updateVehicleMarkerVisualPosition(entry, vehicle, predictedLatLng);
+          }
+        } else if (vehicle.renderLatLng) {
+          updateVehicleMarkerVisualPosition(entry, vehicle, vehicle.renderLatLng);
         }
         return;
       }
+      entry.previousBackendAt = Number(entry.lastBackendAt || 0);
+      entry.lastBackendAt = Date.now();
+      entry.lastBackendLatLng = nextLatLng ? { ...nextLatLng } : null;
+      entry.lastKnownSpeed = Number.isFinite(Number(vehicle.speed)) ? Number(vehicle.speed) : null;
+      entry.lastKnownBearing = Number.isFinite(Number(vehicle.bearing)) ? Number(vehicle.bearing) : null;
       entry.targetKey = nextTargetKey;
 
       const currentLatLng = vehicle.renderLatLng || entry.currentLatLng || vehicle.latLng;
@@ -4972,43 +5182,23 @@
         Math.min(VEHICLE_INTERPOLATION_MAX_MS, elapsed || VEHICLE_INTERPOLATION_DEFAULT_MS)
       );
       entry.lastUpdateAt = Date.now();
-      if (entry.animationFrame) {
-        window.cancelAnimationFrame(entry.animationFrame);
-        entry.animationFrame = null;
-      }
-      if (!currentLatLng || !nextLatLng || distance > VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS) {
-        vehicle.renderLatLng = nextLatLng ? { ...nextLatLng } : null;
-        entry.currentLatLng = vehicle.renderLatLng;
+      stopVehiclePrediction(entry);
+      if (!currentLatLng || !nextLatLng) {
         if (nextLatLng) {
-          entry.marker.setPosition(nextLatLng);
-        }
-        if (Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id)) {
-          syncSelectedMarkerLabelOverlay();
+          updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
+          startVehiclePredictionMotion(entry, vehicle);
         }
         return;
       }
-      const startedAt = performance.now();
-      const origin = { lat: Number(currentLatLng.lat), lng: Number(currentLatLng.lng) };
-      const target = { lat: Number(nextLatLng.lat), lng: Number(nextLatLng.lng) };
-      const tick = (now) => {
-        const progress = Math.min(1, (now - startedAt) / duration);
-        const interpolated = {
-          lat: origin.lat + (target.lat - origin.lat) * progress,
-          lng: origin.lng + (target.lng - origin.lng) * progress,
-        };
-        vehicle.renderLatLng = interpolated;
-        entry.currentLatLng = interpolated;
-        entry.marker.setPosition(interpolated);
-        if (Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id)) {
-          syncSelectedMarkerLabelOverlay();
-        }
-        if (progress < 1) {
-          entry.animationFrame = window.requestAnimationFrame(tick);
-        } else {
-          entry.animationFrame = null;
-        }
-      };
-      entry.animationFrame = window.requestAnimationFrame(tick);
+      const shouldSnapFromPrediction =
+        Boolean(entry.predictedLatLng) &&
+        haversineDistanceMeters(entry.predictedLatLng, nextLatLng) > VEHICLE_PREDICTION_CORRECTION_SNAP_METERS;
+      if (shouldSnapFromPrediction || distance > VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS) {
+        updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
+        startVehiclePredictionMotion(entry, vehicle);
+        return;
+      }
+      startVehicleInterpolationMotion(entry, vehicle, nextLatLng, duration);
     });
 
     Array.from(state.vehicles.markers.entries()).forEach(([vehicleId, entry]) => {
