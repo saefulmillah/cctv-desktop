@@ -107,6 +107,7 @@
   const sosSmartResponseStatusEl = $('sosSmartResponseStatus');
   const sosSmartResponseBodyEl = $('sosSmartResponseBody');
   const closeSosDetailBtn = $('closeSosDetailBtn');
+  const sosContactReporterBtn = $('sosContactReporterBtn');
   const sosDispatchBtn = $('sosDispatchBtn');
   const sosCompleteBtn = $('sosCompleteBtn');
   const sosDispatchModalEl = $('sosDispatchModal');
@@ -190,6 +191,14 @@
       alert.ticket &&
       alert.ticket.ticket_no &&
       Number(alert.status) === 1;
+    const canContact = Boolean(
+      alert &&
+      alert.user &&
+      getWhatsAppLink(alert.user.phone || '')
+    );
+    if (sosContactReporterBtn) {
+      sosContactReporterBtn.disabled = !canContact;
+    }
     sosDispatchBtn.disabled = !canDispatch;
     sosCompleteBtn.disabled = !canComplete;
   };
@@ -296,6 +305,9 @@
       selectedTicketNo: '',
       selectedResponse: null,
       selectedTimeline: [],
+      activeTab: 'summary',
+      expandedCandidateVehicleId: null,
+      timelineExpanded: false,
       selectedResponseLoading: false,
       selectedTimelineLoading: false,
       selectedResponseError: '',
@@ -609,7 +621,22 @@
     return single ? [payload] : [];
   };
 
-  const toDateTime = (value) => {
+  const DATE_MONTH_NAMES = [
+    'Januari',
+    'Februari',
+    'Maret',
+    'April',
+    'Mei',
+    'Juni',
+    'Juli',
+    'Agustus',
+    'September',
+    'Oktober',
+    'November',
+    'Desember',
+  ];
+
+  const formatFullDateTime = (value) => {
     if (!value) {
       return '-';
     }
@@ -617,57 +644,49 @@
     if (Number.isNaN(date.getTime())) {
       return String(value);
     }
-    const monthNames = [
-      'januari',
-      'februari',
-      'maret',
-      'april',
-      'mei',
-      'juni',
-      'juli',
-      'agustus',
-      'september',
-      'oktober',
-      'november',
-      'desember',
-    ];
     const day = String(date.getDate()).padStart(2, '0');
-    const month = monthNames[date.getMonth()] || '';
-    const year = String(date.getFullYear());
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${day}-${month}-${year} ${hours}:${minutes}`;
-  };
-  const toDateTimeWithSeconds = (value) => {
-    if (!value) {
-      return '-';
-    }
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return String(value);
-    }
-    const monthNames = [
-      'januari',
-      'februari',
-      'maret',
-      'april',
-      'mei',
-      'juni',
-      'juli',
-      'agustus',
-      'september',
-      'oktober',
-      'november',
-      'desember',
-    ];
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = monthNames[date.getMonth()] || '';
+    const month = DATE_MONTH_NAMES[date.getMonth()] || '';
     const year = String(date.getFullYear());
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
-    return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
+    return `${day} ${month} ${year} \u2022 ${hours}:${minutes}:${seconds}`;
   };
+
+  const toDateTime = (value) => formatFullDateTime(value);
+  const toDateTimeWithSeconds = (value) => formatFullDateTime(value);
+
+  const formatDispatchDateTime = (value) => formatFullDateTime(value);
+
+  const formatTimeOnly = (value) => {
+    if (!value) {
+      return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+  };
+
+
+  const sortSmartResponseTimelineItems = (items) =>
+    (Array.isArray(items) ? items.slice() : []).sort((left, right) => {
+      const leftTime = new Date(left && left.event_at ? left.event_at : 0).getTime();
+      const rightTime = new Date(right && right.event_at ? right.event_at : 0).getTime();
+      if (leftTime !== rightTime) {
+        return rightTime - leftTime;
+      }
+      const leftId = Number(left && left.id);
+      const rightId = Number(right && right.id);
+      if (Number.isFinite(leftId) && Number.isFinite(rightId) && leftId !== rightId) {
+        return rightId - leftId;
+      }
+      return String(right && right.id || '').localeCompare(String(left && left.id || ''));
+    });
 
   const formatWeatherObservedAt = (value) => {
     if (!value) {
@@ -689,6 +708,7 @@
     }
     return toDateTime(value);
   };
+
 
   const formatGateIssueDuration = (value, now = Date.now()) => {
     if (!value) {
@@ -981,7 +1001,7 @@
 
   const formatBearing = (value) => {
     const numeric = Number(value);
-    return Number.isFinite(numeric) ? `${Math.round(numeric)}°` : '-';
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}\u00B0` : '-';
   };
 
   const haversineDistanceMeters = (fromLatLng, toLatLng) => {
@@ -1764,7 +1784,7 @@
 
   const formatWeatherTemperature = (value) => {
     const numeric = Number(value);
-    return Number.isFinite(numeric) ? `${Math.round(numeric)}°` : '-';
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}\u00B0` : '-';
   };
 
   const normalizeWeatherIconToken = (value) =>
@@ -2075,13 +2095,13 @@
 
   const formatWeatherTemperatureDisplay = (value) => {
     const numeric = Number(value);
-    return Number.isFinite(numeric) ? `${Math.round(numeric)}°C` : '-';
+    return Number.isFinite(numeric) ? `${Math.round(numeric)}\u00B0C` : '-';
   };
 
   const getWeatherContextLine = (weather) =>
     [weather && weather.segment_name ? weather.segment_name : '', weather && weather.corridor_name ? weather.corridor_name : '']
       .filter(Boolean)
-      .join(' • ') || '-';
+      .join(' \u2022 ') || '-';
 
   const loadOnlyIconDataUris = () => {
     if (state.onlyIconLoaderPromise) {
@@ -2708,22 +2728,22 @@
   const formatElapsedSince = (value) => {
     const timestamp = new Date(value || '').getTime();
     if (!Number.isFinite(timestamp)) {
-      return '⏱ -';
+      return '\u23F1 -';
     }
     const diffMs = Math.max(0, Date.now() - timestamp);
     const minutes = Math.floor(diffMs / 60000);
     if (minutes < 1) {
-      return '⏱ Baru saja';
+      return '\u23F1 Baru saja';
     }
     if (minutes < 60) {
-      return `⏱ ${minutes} m yang lalu`;
+      return `\u23F1 ${minutes} m yang lalu`;
     }
     const hours = Math.floor(minutes / 60);
     if (hours < 24) {
-      return `⏱ ${hours} j yang lalu`;
+      return `\u23F1 ${hours} j yang lalu`;
     }
     const days = Math.floor(hours / 24);
-    return `⏱ ${days} h yang lalu`;
+    return `\u23F1 ${days} h yang lalu`;
   };
 
   const getSosMarkerLabelPayload = (alert) => {
@@ -4711,7 +4731,7 @@
     if (!state.networkArcs.visible) {
       return 'Layer network disembunyikan';
     }
-    return `${arcCount} arc${arcCount === 1 ? '' : 's'}${crossBranch ? ' • cross-branch' : ''}${state.networkArcs.experimentalEnabled ? ' • arc fx' : ''}`;
+    return `${arcCount} arc${arcCount === 1 ? '' : 's'}${crossBranch ? ' \u2022 cross-branch' : ''}${state.networkArcs.experimentalEnabled ? ' \u2022 arc fx' : ''}`;
   };
   const getWeatherSummaryLabel = () => {
     if (!isWeatherLayerActive()) {
@@ -4725,7 +4745,7 @@
       (state.weather.meta && state.weather.meta.has_stale_items) ||
       state.weather.items.some((item) => item && item.is_stale)
     );
-    return `${itemCount} weather point${itemCount === 1 ? '' : 's'}${hasStaleItems ? ' • sebagian data lama' : ''}`;
+    return `${itemCount} weather point${itemCount === 1 ? '' : 's'}${hasStaleItems ? ' \u2022 sebagian data lama' : ''}`;
   };
 
   const getDefaultMapEmptyMessage = () => {
@@ -5164,11 +5184,11 @@
     setText(vehicleSummaryTotalEl, vehicleSummary.total);
     setText(vehicleSummaryGpsEl, `GPS aktif ${vehicleSummary.online}`);
     setText(vehicleSummaryMovingEl, vehicleSummary.moving);
-    setText(vehicleSummaryMovementEl, `Berhenti ${vehicleSummary.stopped} • Diam ${vehicleSummary.idle}`);
+    setText(vehicleSummaryMovementEl, `Berhenti ${vehicleSummary.stopped} \u2022 Diam ${vehicleSummary.idle}`);
     setText(vehicleSummaryAnomaliesEl, vehicleSummary.anomalies);
     setText(
       vehicleSummaryFreshnessEl,
-      `Terlambat ${vehicleSummary.delayed} • Lama ${vehicleSummary.stale} • Offline ${vehicleSummary.offline}`
+      `Terlambat ${vehicleSummary.delayed} \u2022 Lama ${vehicleSummary.stale} \u2022 Offline ${vehicleSummary.offline}`
     );
   };
 
@@ -5576,7 +5596,7 @@
     if (Number(state.vehicles.selectedVehicleId) === Number(normalized.vehicle_id)) {
       state.vehicles.details.set(normalized.vehicle_id, {
         ...(state.vehicles.details.get(normalized.vehicle_id) || {}),
-        ...normalized,
+          ...normalized,
       });
     }
     renderAll();
@@ -5607,7 +5627,7 @@
       state.networkArcs.visible && Array.isArray(state.networkArcs.items)
         ? state.networkArcs.items.length
         : 0;
-    setText(sosOpenCountBadgeEl, `${totalItems} item${arcCount ? ` • ${arcCount} arc` : ''}`);
+    setText(sosOpenCountBadgeEl, `${totalItems} item${arcCount ? ` \u2022 ${arcCount} arc` : ''}`);
   };
 
   const renderBranchOptions = () => {
@@ -5665,7 +5685,6 @@
     resetIncidentListAnimationState();
     resetStandaloneLayerState();
     resetNetworkLayerState();
-    resetWeatherLayerState();
     renderBranchOptions();
     void persistAssetMonitoringPrefs();
     void refreshDashboard().catch((error) => {
@@ -5696,7 +5715,7 @@
     if (assetMapSubtitleEl) {
       setText(
         assetMapSubtitleEl,
-        `Branch aktif: ${branchLabel} • ${visibleVehicleCount} kendaraan • ${getNetworkSummaryLabel()}${weatherSummary ? ` • ${weatherSummary}` : ''}`
+        `Branch aktif: ${branchLabel} \u2022 ${visibleVehicleCount} kendaraan \u2022 ${getNetworkSummaryLabel()}${weatherSummary ? ` \u2022 ${weatherSummary}` : ''}`
       );
     }
   };
@@ -5823,7 +5842,6 @@
           replayDetailPanelAnimation();
         }
         applySosActionButtonState(null);
-        return;
       }
     }
     if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
@@ -5854,7 +5872,7 @@
           sosDetailMetaEl.innerHTML = `
             <div class="sos-detail-hero">
               <div class="sos-detail-hero__name">${escapeHtml(
-                `${(networkEdge.source && networkEdge.source.node_name) || 'Source'} → ${(networkEdge.target && networkEdge.target.node_name) || 'Target'}`
+                `${(networkEdge.source && networkEdge.source.node_name) || 'Source'} \u2192 ${(networkEdge.target && networkEdge.target.node_name) || 'Target'}`
               )}</div>
               <div class="sos-detail-hero__support">
                 <span class="meta-pill">${escapeHtml(String(networkEdge.connection_type || 'fiber').toUpperCase())}</span>
@@ -5907,7 +5925,20 @@
       createdAt: alert.created_at,
       phone: alert.user && alert.user.phone,
       address: alert.user && alert.user.address,
-      sex: alert.user && alert.user.sex,
+      primaryCandidate:
+        state.smartResponse.selectedResponse &&
+        getSmartResponsePrimaryCandidate(
+          state.smartResponse.selectedResponse,
+          getSmartResponseSummaryForAlert(alert)
+        ) &&
+        getSmartResponsePrimaryCandidate(
+          state.smartResponse.selectedResponse,
+          getSmartResponseSummaryForAlert(alert)
+        ).vehicle_id,
+      pendingArrival:
+        state.smartResponse.selectedResponse &&
+        getPendingArrivalCandidate(state.smartResponse.selectedResponse) &&
+        getPendingArrivalCandidate(state.smartResponse.selectedResponse).vehicle_id,
     });
     if (state.detailRenderKey === detailKey && !sosDetailPanelEl.classList.contains('hidden')) {
       applySosActionButtonState(alert);
@@ -5915,36 +5946,82 @@
     }
     state.detailRenderKey = detailKey;
     const statusMeta = getStatusMeta(alert.status);
-    setText(sosDetailTitleEl, alert.ticket && alert.ticket.ticket_no ? alert.ticket.ticket_no : `SOS-${alert.sos_id}`);
+    const responseSummary = getSmartResponseSummaryForAlert(alert);
+    const primaryCandidate = getSmartResponsePrimaryCandidate(state.smartResponse.selectedResponse, responseSummary);
+    const pendingArrivalCandidate = getPendingArrivalCandidate(state.smartResponse.selectedResponse);
+    const rawPhoneNumber = alert.user && alert.user.phone ? String(alert.user.phone) : '';
+    const phoneNumber = getDisplayPhoneNumber(rawPhoneNumber) || '-';
+    const whatsAppLink = getWhatsAppLink(rawPhoneNumber);
+    const locationText = String(alert.user && alert.user.address ? alert.user.address : '-').trim() || '-';
+    const dispatchTime =
+      alert.ticket && alert.ticket.dispatched_at
+        ? formatDispatchDateTime(alert.ticket.dispatched_at)
+        : 'Belum dispatch';
+    const coordinateText =
+      Number.isFinite(Number(alert.latitude)) && Number.isFinite(Number(alert.longitude))
+        ? `${String(alert.latitude).trim()} / ${String(alert.longitude).trim()}`
+        : '-';
+    setText(sosDetailTitleEl, '');
     setClass(sosDetailStatusEl, `status-pill ${statusMeta.tone}`);
     setText(sosDetailStatusEl, statusMeta.label);
     sosDetailMetaEl.classList.remove('hidden');
-    const sexCode = String(alert.user && alert.user.sex ? alert.user.sex : '')
-      .toUpperCase()
-      .trim();
-    const sexLabel =
-      sexCode === 'P' || sexCode === 'F'
-        ? 'Perempuan'
-        : sexCode === 'L' || sexCode === 'M'
-          ? 'Laki-laki'
-          : '-';
     sosDetailMetaEl.innerHTML = `
-      <div class="sos-detail-hero">
-        <div class="sos-detail-hero__name">${escapeHtml(getAlertName(alert))}</div>
-        <div class="sos-detail-hero__support">
-          <span class="meta-pill">${escapeHtml(sexLabel)}</span>
-          <span class="meta-pill">Waktu Lapor : ${escapeHtml(toDateTime(alert.created_at))}</span>
+      <div class="sos-incident-summary">
+        <div class="sos-incident-summary__ticket">${escapeHtml(
+          alert.ticket && alert.ticket.ticket_no ? alert.ticket.ticket_no : `SOS-${alert.sos_id}`
+        )}</div>
+        <div class="sos-incident-summary__reporter">${escapeHtml(getAlertName(alert))}</div>
+        <div class="sos-incident-summary__meta">
+          <span class="sos-incident-summary__meta-item"><i class="bi bi-calendar3 sos-inline-icon" aria-hidden="true"></i>${escapeHtml(toDateTime(alert.created_at))}</span>
+          <span class="sos-incident-summary__meta-item"><i class="bi bi-telephone sos-inline-icon" aria-hidden="true"></i>${escapeHtml(phoneNumber)}</span>
         </div>
       </div>
     `;
     sosDetailBodyEl.innerHTML = `
-      <div class="sos-detail-body__grid">
-        <div><span class="sos-detail-label">Koordinat</span><strong>${escapeHtml(alert.latitude || '-')} / ${escapeHtml(alert.longitude || '-')}</strong></div>
-        <div><span class="sos-detail-label">Telepon</span><strong>${escapeHtml(getDisplayPhoneNumber(alert.user && alert.user.phone ? alert.user.phone : '') || '-')}</strong></div>
-        <div><span class="sos-detail-label">Alamat</span><strong>${escapeHtml(alert.user && alert.user.address ? alert.user.address : '-')}</strong></div>
-        <div><span class="sos-detail-label">Dispatch</span><strong>${escapeHtml(alert.ticket && alert.ticket.dispatched_at ? toDateTime(alert.ticket.dispatched_at) : 'Belum dispatch')}</strong></div>
+      <div class="sos-incident-body">
+        <div class="sos-incident-location">
+          <span class="sos-detail-label"><i class="bi bi-geo-alt sos-inline-icon" aria-hidden="true"></i>Lokasi</span>
+          <strong>${escapeHtml(locationText)}</strong>
+          <span class="sos-incident-location__coords">Koordinat: ${escapeHtml(coordinateText)}</span>
+        </div>
+        <div class="sos-incident-secondary">
+          <div class="sos-incident-secondary__item">
+            <span class="sos-detail-label"><i class="bi bi-clock-history sos-inline-icon" aria-hidden="true"></i>Dispatch Time</span>
+            <strong>${escapeHtml(dispatchTime)}</strong>
+          </div>
+          ${
+            primaryCandidate
+              ? `
+          <div class="sos-incident-secondary__item">
+            <span class="sos-detail-label">Primary Unit</span>
+            <strong>${escapeHtml(primaryCandidate.vehicle_label || '-')}</strong>
+          </div>
+          `
+              : ''
+          }
+        </div>
+        ${
+          pendingArrivalCandidate
+            ? `
+        <div class="sos-incident-contextual-action">
+          <div>
+            <span class="sos-detail-label">Aksi Kontekstual</span>
+            <strong>${escapeHtml((pendingArrivalCandidate.vehicle_label || 'Unit utama') + ' tiba dan menunggu validasi.')}</strong>
+          </div>
+          <button
+            type="button"
+            class="toolbar-btn toolbar-btn--accent"
+            data-confirm-arrival="${escapeHtml(String(pendingArrivalCandidate.vehicle_id))}"
+          >Confirm Arrival</button>
+        </div>
+        `
+            : ''
+        }
       </div>
     `;
+    if (sosContactReporterBtn) {
+      sosContactReporterBtn.dataset.waLink = whatsAppLink || '';
+    }
     applySosActionButtonState(alert);
     sosDetailPanelEl.classList.remove('hidden');
     sosDetailPanelEl.classList.add('is-visible');
@@ -5957,6 +6034,52 @@
       return '';
     }
     return String(alert.ticket.ticket_no).trim();
+  };
+
+  const getSmartResponsePrimaryCandidate = (detail, summary = null) => {
+    const candidates = detail && Array.isArray(detail.vehicle_candidates) ? detail.vehicle_candidates : [];
+    const byPrimaryFlag = candidates.find((candidate) => candidate && candidate.is_primary);
+    if (byPrimaryFlag) {
+      return byPrimaryFlag;
+    }
+    const primaryVehicleId = Number(summary && summary.primary_vehicle_id);
+    if (Number.isFinite(primaryVehicleId)) {
+      const bySummaryId = candidates.find((candidate) => Number(candidate && candidate.vehicle_id) === primaryVehicleId);
+      if (bySummaryId) {
+        return bySummaryId;
+      }
+    }
+    return candidates[0] || null;
+  };
+
+  const getPendingArrivalCandidate = (detail) => {
+    const candidates = detail && Array.isArray(detail.vehicle_candidates) ? detail.vehicle_candidates : [];
+    return candidates.find((candidate) => String(candidate && candidate.detection_status || '') === 'ARRIVED_PENDING_CONFIRMATION') || null;
+  };
+
+  const setSmartResponseTab = (tabKey) => {
+    const normalized = String(tabKey || '').trim().toLowerCase();
+    const nextTab = ['summary', 'candidates', 'timeline'].includes(normalized) ? normalized : 'summary';
+    if (state.smartResponse.activeTab === nextTab) {
+      return;
+    }
+    state.smartResponse.activeTab = nextTab;
+    if (nextTab !== 'timeline') {
+      state.smartResponse.timelineExpanded = false;
+    }
+    renderSmartResponsePanel();
+  };
+
+  const toggleSmartResponseCandidate = (vehicleId) => {
+    const normalizedVehicleId = Number(vehicleId);
+    if (!Number.isFinite(normalizedVehicleId)) {
+      return;
+    }
+    state.smartResponse.expandedCandidateVehicleId =
+      Number(state.smartResponse.expandedCandidateVehicleId) === normalizedVehicleId
+        ? null
+        : normalizedVehicleId;
+    renderSmartResponsePanel();
   };
 
   const loadSelectedSmartResponseDetail = async (ticketNo, options = {}) => {
@@ -5999,6 +6122,7 @@
     } finally {
       if (state.smartResponse.responseRequestKey === requestKey) {
         state.smartResponse.selectedResponseLoading = false;
+        renderDetailPanel();
         renderSmartResponsePanel();
         renderIncidentList();
       }
@@ -6056,6 +6180,9 @@
       state.smartResponse.selectedTicketNo = '';
       state.smartResponse.selectedResponse = null;
       state.smartResponse.selectedTimeline = [];
+      state.smartResponse.activeTab = 'summary';
+      state.smartResponse.expandedCandidateVehicleId = null;
+      state.smartResponse.timelineExpanded = false;
       state.smartResponse.selectedResponseLoading = false;
       state.smartResponse.selectedTimelineLoading = false;
       state.smartResponse.selectedResponseError = '';
@@ -6072,6 +6199,9 @@
     if (ticketChanged) {
       state.smartResponse.selectedResponse = null;
       state.smartResponse.selectedTimeline = [];
+      state.smartResponse.activeTab = 'summary';
+      state.smartResponse.expandedCandidateVehicleId = null;
+      state.smartResponse.timelineExpanded = false;
       state.smartResponse.selectedResponseError = '';
       state.smartResponse.selectedTimelineError = '';
       state.smartResponse.confirmArrivalSuccessMessage = '';
@@ -6095,14 +6225,23 @@
       return;
     }
     const alert = getSelectedAlert();
-    const ticketNo = getSelectedSosTicketNo();
     const summary = getSmartResponseSummaryForAlert(alert);
     const statusMeta = getSmartResponseStatusMeta(summary && summary.response_status);
-    setText(sosSmartResponseTitleEl, ticketNo ? `Ticket ${ticketNo}` : 'Tracking responder');
+    const detail = state.smartResponse.selectedResponse;
+    const candidates = detail && Array.isArray(detail.vehicle_candidates) ? detail.vehicle_candidates : [];
+    const timelineItems = sortSmartResponseTimelineItems(state.smartResponse.selectedTimeline);
+    const responseError = state.smartResponse.selectedResponseError;
+    const timelineError = state.smartResponse.selectedTimelineError;
+    const activeTab = state.smartResponse.activeTab || 'summary';
+    const resolvedSummary = (detail && detail.response_summary) || summary;
+    const primaryCandidate = getSmartResponsePrimaryCandidate(detail, resolvedSummary);
+    const pendingArrivalCandidate = getPendingArrivalCandidate(detail);
+
+    setText(sosSmartResponseTitleEl, 'Smart Response');
     setClass(sosSmartResponseStatusEl, `status-pill ${statusMeta.tone}`);
     setText(sosSmartResponseStatusEl, statusMeta.label);
 
-    if (!ticketNo) {
+    if (!getSelectedSosTicketNo()) {
       sosSmartResponseBodyEl.innerHTML = `
         <div class="sos-smart-response-empty">
           <strong>Smart Response belum aktif.</strong>
@@ -6113,12 +6252,6 @@
       sosSmartResponsePanelEl.classList.add('is-visible');
       return;
     }
-
-    const detail = state.smartResponse.selectedResponse;
-    const candidates = detail && Array.isArray(detail.vehicle_candidates) ? detail.vehicle_candidates : [];
-    const timelineItems = Array.isArray(state.smartResponse.selectedTimeline) ? state.smartResponse.selectedTimeline : [];
-    const responseError = state.smartResponse.selectedResponseError;
-    const timelineError = state.smartResponse.selectedTimelineError;
 
     if (state.smartResponse.selectedResponseLoading && !detail) {
       sosSmartResponseBodyEl.innerHTML = `
@@ -6144,106 +6277,216 @@
       return;
     }
 
-    const resolvedSummary = (detail && detail.response_summary) || summary;
-    const candidateMarkup = candidates.length
-      ? candidates.map((candidate) => {
-          const candidateStatusMeta = getSmartResponseStatusMeta(candidate.detection_status);
-          const isPendingConfirmation = candidate.detection_status === 'ARRIVED_PENDING_CONFIRMATION';
-          const isSubmitting =
-            Number(state.smartResponse.confirmArrivalSubmittingVehicleId) === Number(candidate.vehicle_id);
-          const confirmDisabled =
-            !isPendingConfirmation ||
-            !canConfirmSosResponse() ||
-            isSubmitting;
-          return `
-            <article class="sos-smart-response-candidate ${candidate.is_primary ? 'is-primary' : ''}">
-              <div class="sos-smart-response-candidate__head">
-                <div>
-                  <strong>${escapeHtml(candidate.vehicle_label || `Vehicle ${candidate.vehicle_id}`)}</strong>
-                  <span>${escapeHtml(`ID ${candidate.vehicle_id}`)}</span>
-                </div>
-                <span class="status-pill ${candidateStatusMeta.tone}">${escapeHtml(candidateStatusMeta.label)}</span>
-              </div>
-              <div class="sos-smart-response-candidate__meta">
-                <span class="meta-pill">${escapeHtml(`Confidence ${formatConfidenceScore(candidate.confidence_score)}`)}</span>
-                <span class="meta-pill">${escapeHtml(`Jarak ${formatDistanceMetersSmartResponse(candidate.distance_meters)}`)}</span>
-                ${candidate.is_primary ? '<span class="meta-pill">PRIMARY</span>' : ''}
-              </div>
-              <div class="sos-smart-response-candidate__grid">
-                <div><span class="sos-detail-label">Kecepatan</span><strong>${escapeHtml(formatSpeedKmh(candidate.speed_kmh))}</strong></div>
-                <div><span class="sos-detail-label">Sudut</span><strong>${Number.isFinite(Number(candidate.angle_diff)) ? `${Math.round(Number(candidate.angle_diff))}&deg;` : '-'}</strong></div>
-                <div><span class="sos-detail-label">Terdeteksi</span><strong>${escapeHtml(toDateTime(candidate.detected_at || '-'))}</strong></div>
-                <div><span class="sos-detail-label">Evaluasi</span><strong>${escapeHtml(toDateTime(candidate.last_evaluated_at || '-'))}</strong></div>
-              </div>
-              ${isPendingConfirmation ? `
-                <div class="sos-smart-response-candidate__actions">
-                  <button
-                    type="button"
-                    class="toolbar-btn ${confirmDisabled ? '' : 'toolbar-btn--accent'}"
-                    data-confirm-arrival="${escapeHtml(String(candidate.vehicle_id))}"
-                    ${confirmDisabled ? 'disabled' : ''}
-                  >${escapeHtml(isSubmitting ? 'Mengirim...' : 'Confirm Arrival')}</button>
-                </div>
-              ` : ''}
-            </article>
-          `;
-        }).join('')
-      : `
-        <div class="sos-smart-response-empty sos-smart-response-empty--section">
-          <strong>Belum ada kandidat vehicle yang valid.</strong>
-          <span>Backend belum menemukan responder yang cukup meyakinkan untuk ticket ini.</span>
-        </div>
-      `;
-
-    const timelineMarkup = timelineItems.length
-      ? timelineItems.map((item) => `
-          <article class="sos-smart-response-timeline-item">
-            <div class="sos-smart-response-timeline-item__head">
-              <strong>${escapeHtml(formatSmartResponseEventLabel(item.event_type))}</strong>
-              <span>${escapeHtml(toDateTime(item.event_at || '-'))}</span>
+    const renderCandidateCompactRow = (candidate, options = {}) => {
+      const candidateStatusMeta = getSmartResponseStatusMeta(candidate.detection_status);
+      const isExpanded =
+        Number(state.smartResponse.expandedCandidateVehicleId) === Number(candidate.vehicle_id);
+      const isPendingConfirmation = candidate.detection_status === 'ARRIVED_PENDING_CONFIRMATION';
+      const isSubmitting =
+        Number(state.smartResponse.confirmArrivalSubmittingVehicleId) === Number(candidate.vehicle_id);
+      const confirmDisabled = !isPendingConfirmation || !canConfirmSosResponse() || isSubmitting;
+      return `
+        <article class="sos-smart-response-candidate-row ${candidate.is_primary ? 'is-primary' : ''} ${isExpanded ? 'is-expanded' : ''}">
+          <button
+            type="button"
+            class="sos-smart-response-candidate-row__summary"
+            data-candidate-expand="${escapeHtml(String(candidate.vehicle_id))}"
+            aria-expanded="${isExpanded ? 'true' : 'false'}"
+          >
+            <div class="sos-smart-response-candidate-row__identity">
+              <strong>${escapeHtml(candidate.vehicle_label || `Vehicle ${candidate.vehicle_id}`)}</strong>
+              ${candidate.is_primary ? '<span class="meta-pill">Primary</span>' : ''}
             </div>
-            <div class="sos-smart-response-timeline-item__meta">
-              ${item.vehicle_id ? `<span class="meta-pill">${escapeHtml(`Vehicle ${item.vehicle_id}`)}</span>` : ''}
-              ${item.metadata && item.metadata.response_status ? `<span class="meta-pill">${escapeHtml(String(item.metadata.response_status).toUpperCase())}</span>` : ''}
+            <div class="sos-smart-response-candidate-row__metrics">
+              <span>${escapeHtml(formatConfidenceScore(candidate.confidence_score))}</span>
+              <span>${escapeHtml(formatDistanceMetersSmartResponse(candidate.distance_meters))}</span>
+              <span>${escapeHtml(formatSpeedKmh(candidate.speed_kmh))}</span>
+            <span>${escapeHtml(formatTimeOnly(candidate.detected_at || '-'))}</span>
+            </div>
+            <span class="sos-smart-response-candidate-row__chevron" aria-hidden="true">
+              <i class="bi ${isExpanded ? 'bi-chevron-up' : 'bi-chevron-right'}"></i>
+            </span>
+          </button>
+          ${
+            isExpanded
+              ? `
+          <div class="sos-smart-response-candidate-row__details">
+            <div class="sos-smart-response-candidate-row__detail-grid">
+              <div><span class="sos-detail-label">Status</span><strong>${escapeHtml(candidateStatusMeta.label)}</strong></div>
+              <div><span class="sos-detail-label">Jarak Sebelumnya</span><strong>${escapeHtml(formatDistanceMetersSmartResponse(candidate.previous_distance_meters))}</strong></div>
+              <div><span class="sos-detail-label">Sudut</span><strong>${Number.isFinite(Number(candidate.angle_diff)) ? `${Math.round(Number(candidate.angle_diff))}&deg;` : '-'}</strong></div>
+              <div><span class="sos-detail-label">Evaluasi</span><strong>${escapeHtml(formatTimeOnly(candidate.last_evaluated_at || '-'))}</strong></div>
+              <div><span class="sos-detail-label">Node / ID</span><strong>${escapeHtml(String(candidate.vehicle_id))}</strong></div>
+              <div><span class="sos-detail-label">Arrival Confirmed</span><strong>${escapeHtml(formatTimeOnly(candidate.arrival_confirmed_at || '-'))}</strong></div>
+            </div>
+            ${
+              isPendingConfirmation
+                ? `
+            <div class="sos-smart-response-candidate-row__actions">
+              <button
+                type="button"
+                class="toolbar-btn toolbar-btn--accent"
+                data-confirm-arrival="${escapeHtml(String(candidate.vehicle_id))}"
+                ${confirmDisabled ? 'disabled' : ''}
+              >${escapeHtml(isSubmitting ? 'Mengirim...' : 'Confirm Arrival')}</button>
+            </div>
+            `
+                : ''
+            }
+          </div>
+          `
+              : ''
+          }
+        </article>
+      `;
+    };
+
+    const compactCandidates = candidates
+      .filter((candidate) => !primaryCandidate || Number(candidate.vehicle_id) !== Number(primaryCandidate.vehicle_id));
+    const summaryCandidatesMarkup = compactCandidates.length
+      ? compactCandidates.slice(0, 3).map((candidate) => renderCandidateCompactRow(candidate)).join('')
+      : '<div class="sos-smart-response-empty sos-smart-response-empty--section"><strong>Belum ada kandidat lain.</strong><span>Primary unit akan muncul di sini saat evaluasi kandidat tersedia.</span></div>';
+    const candidatesTabMarkup = candidates.length
+      ? candidates.map((candidate) => renderCandidateCompactRow(candidate, { detailed: true })).join('')
+      : '<div class="sos-smart-response-empty sos-smart-response-empty--section"><strong>Belum ada kandidat utama.</strong><span>Smart Response masih menunggu kandidat vehicle yang cukup kuat.</span></div>';
+
+    const visibleTimelineItems = activeTab === 'timeline'
+      ? (
+        state.smartResponse.timelineExpanded
+          ? timelineItems
+          : timelineItems.slice(0, 5)
+      )
+      : timelineItems.slice(0, 3);
+    const timelineMarkup = visibleTimelineItems.length
+      ? visibleTimelineItems.map((item) => `
+          <article class="sos-smart-response-timeline-item">
+            <div class="sos-smart-response-timeline-item__dot"></div>
+            <div class="sos-smart-response-timeline-item__content">
+              <div class="sos-smart-response-timeline-item__head">
+                <span class="sos-smart-response-timeline-item__label">${escapeHtml(formatSmartResponseEventLabel(item.event_type))}</span>
+                <span>${escapeHtml(formatTimeOnly(item.event_at || '-'))}</span>
+              </div>
             </div>
           </article>
         `).join('')
-      : `
-        <div class="sos-smart-response-empty sos-smart-response-empty--section">
-          <strong>Timeline belum tersedia.</strong>
-          <span>Belum ada event response yang tercatat untuk ticket ini.</span>
+      : '<div class="sos-smart-response-empty sos-smart-response-empty--section"><strong>Timeline belum tersedia.</strong><span>Belum ada event response yang tercatat untuk ticket ini.</span></div>';
+
+    const summaryTabMarkup = primaryCandidate
+      ? `
+      <section class="sos-smart-response-hero">
+        <div class="sos-smart-response-hero__top">
+          <div class="sos-smart-response-hero__identity">
+            <div class="sos-smart-response-hero__icon"><i class="bi bi-car-front-fill" aria-hidden="true"></i></div>
+            <div class="sos-smart-response-hero__identity-copy">
+              <span class="sos-smart-response-hero__label">Primary Unit</span>
+              <h4>${escapeHtml(primaryCandidate.vehicle_label || '-')}</h4>
+            </div>
+          </div>
         </div>
-      `;
+        <div class="sos-smart-response-hero__metrics">
+          <div><span class="sos-detail-label">Confidence</span><strong>${escapeHtml(formatConfidenceScore(primaryCandidate.confidence_score))}</strong></div>
+          <div><span class="sos-detail-label">Jarak</span><strong>${escapeHtml(formatDistanceMetersSmartResponse(primaryCandidate.distance_meters))}</strong></div>
+          <div><span class="sos-detail-label">Kecepatan</span><strong>${escapeHtml(formatSpeedKmh(primaryCandidate.speed_kmh))}</strong></div>
+          <div><span class="sos-detail-label">Terdeteksi</span><strong>${escapeHtml(formatTimeOnly(primaryCandidate.detected_at || '-'))}</strong></div>
+        </div>
+        ${
+          pendingArrivalCandidate && Number(pendingArrivalCandidate.vehicle_id) === Number(primaryCandidate.vehicle_id)
+            ? `
+        <div class="sos-smart-response-hero__action">
+          <button
+            type="button"
+            class="toolbar-btn toolbar-btn--accent"
+            data-confirm-arrival="${escapeHtml(String(primaryCandidate.vehicle_id))}"
+            ${
+              !canConfirmSosResponse() ||
+              Number(state.smartResponse.confirmArrivalSubmittingVehicleId) === Number(primaryCandidate.vehicle_id)
+                ? 'disabled'
+                : ''
+            }
+          >${escapeHtml(
+            Number(state.smartResponse.confirmArrivalSubmittingVehicleId) === Number(primaryCandidate.vehicle_id)
+              ? 'Mengirim...'
+              : 'Confirm Arrival'
+          )}</button>
+        </div>
+        `
+            : ''
+        }
+      </section>
+      `
+      : '<div class="sos-smart-response-empty"><strong>Belum ada kandidat utama.</strong><span>Smart Response masih memproses kendaraan terdekat yang paling relevan.</span></div>';
+
+    const tabContent = activeTab === 'candidates'
+      ? `
+        <section class="sos-smart-response-section">
+          <div class="sos-smart-response-list-head">
+            <strong>Daftar Kandidat</strong>
+            <span>${escapeHtml(`${candidates.length} unit`)}</span>
+          </div>
+          <div class="sos-smart-response-candidate-table">
+            <div class="sos-smart-response-candidate-table__head">
+              <span>Unit</span>
+              <span>Confidence</span>
+              <span>Jarak</span>
+              <span>Kecepatan</span>
+              <span>Deteksi</span>
+            </div>
+            ${candidatesTabMarkup}
+          </div>
+        </section>
+      `
+      : activeTab === 'timeline'
+        ? `
+        <section class="sos-smart-response-section">
+          <div class="sos-smart-response-list-head">
+            <strong>Timeline Response</strong>
+            <span>${escapeHtml(`${timelineItems.length} event`)}</span>
+          </div>
+          ${timelineError ? `<div class="sos-smart-response-banner warning">${escapeHtml(timelineError)}</div>` : ''}
+          <div class="sos-smart-response-timeline-list">${timelineMarkup}</div>
+          ${
+            timelineItems.length > 5
+              ? `<button type="button" class="sos-smart-response-link-btn" data-toggle-timeline>${escapeHtml(
+                state.smartResponse.timelineExpanded ? 'Ringkas Timeline' : 'Lihat Selengkapnya'
+              )}</button>`
+              : ''
+          }
+        </section>
+        `
+        : `
+        <section class="sos-smart-response-section">
+          ${summaryTabMarkup}
+        </section>
+        <section class="sos-smart-response-section">
+          <div class="sos-smart-response-list-head">
+            <div class="sos-smart-response-section-title">Kandidat Lain</div>
+            <button type="button" class="sos-smart-response-link-btn" data-smart-tab="candidates">Buka Semua</button>
+          </div>
+          <div class="sos-smart-response-candidate-table">
+            ${summaryCandidatesMarkup}
+          </div>
+        </section>
+        <section class="sos-smart-response-section">
+          <div class="sos-smart-response-list-head">
+            <div class="sos-smart-response-section-title">Timeline Preview</div>
+            <button type="button" class="sos-smart-response-link-btn" data-smart-tab="timeline">Lihat Selengkapnya</button>
+          </div>
+          <div class="sos-smart-response-timeline-list">${timelineMarkup}</div>
+        </section>
+        `;
 
     sosSmartResponseBodyEl.innerHTML = `
       ${state.smartResponse.confirmArrivalError ? `<div class="sos-smart-response-banner danger">${escapeHtml(state.smartResponse.confirmArrivalError)}</div>` : ''}
       ${state.smartResponse.confirmArrivalSuccessMessage ? `<div class="sos-smart-response-banner success">${escapeHtml(state.smartResponse.confirmArrivalSuccessMessage)}</div>` : ''}
       ${responseError && detail ? `<div class="sos-smart-response-banner warning">${escapeHtml(responseError)}</div>` : ''}
-      <section class="sos-smart-response-section">
-        <div class="sos-smart-response-summary">
-          <div><span class="sos-detail-label">Kandidat Utama</span><strong>${escapeHtml((resolvedSummary && resolvedSummary.primary_vehicle_label) || '-')}</strong></div>
-          <div><span class="sos-detail-label">Confidence</span><strong>${escapeHtml(formatConfidenceScore(resolvedSummary && resolvedSummary.confidence_score))}</strong></div>
-          <div><span class="sos-detail-label">Jarak</span><strong>${escapeHtml(formatDistanceMetersSmartResponse(resolvedSummary && resolvedSummary.distance_meters))}</strong></div>
-          <div><span class="sos-detail-label">Kandidat Pertama</span><strong>${escapeHtml(toDateTime((resolvedSummary && resolvedSummary.first_candidate_detected_at) || '-'))}</strong></div>
-          <div><span class="sos-detail-label">Arrival Confirmed</span><strong>${escapeHtml(toDateTime((resolvedSummary && resolvedSummary.arrival_confirmed_at) || '-'))}</strong></div>
-          <div><span class="sos-detail-label">Update</span><strong>${escapeHtml(toDateTime((resolvedSummary && resolvedSummary.updated_at) || '-'))}</strong></div>
-        </div>
-      </section>
-      <section class="sos-smart-response-section">
-        <div class="sos-smart-response-section__head">
-          <strong>Kandidat Vehicle</strong>
-          ${state.smartResponse.selectedResponseLoading ? '<span>Memperbarui...</span>' : ''}
-        </div>
-        <div class="sos-smart-response-candidate-list">${candidateMarkup}</div>
-      </section>
-      <section class="sos-smart-response-section">
-        <div class="sos-smart-response-section__head">
-          <strong>Timeline Response</strong>
-          ${(state.smartResponse.selectedTimelineLoading && !timelineItems.length) ? '<span>Memuat...</span>' : ''}
-        </div>
-        ${timelineError ? `<div class="sos-smart-response-banner warning">${escapeHtml(timelineError)}</div>` : ''}
-        <div class="sos-smart-response-timeline">${timelineMarkup}</div>
-      </section>
+      <div class="sos-smart-response-tabs" role="tablist" aria-label="Smart Response Tabs">
+        <button type="button" class="sos-smart-response-tab ${activeTab === 'summary' ? 'is-active' : ''}" data-smart-tab="summary">Ringkasan</button>
+        <button type="button" class="sos-smart-response-tab ${activeTab === 'candidates' ? 'is-active' : ''}" data-smart-tab="candidates">Kandidat</button>
+        <button type="button" class="sos-smart-response-tab ${activeTab === 'timeline' ? 'is-active' : ''}" data-smart-tab="timeline">Timeline</button>
+      </div>
+      <div class="sos-smart-response-scroll">
+        ${tabContent}
+      </div>
     `;
     sosSmartResponsePanelEl.classList.remove('hidden');
     sosSmartResponsePanelEl.classList.add('is-visible');
@@ -6263,10 +6506,8 @@
     }
     if (state.ui.mapLoading) {
       sosMapEmptyEl.classList.add('hidden');
-      return;
     }
     const shouldShowEmpty = !hasRenderableMapData();
-    sosMapEmptyEl.classList.toggle('hidden', !shouldShowEmpty);
     if (shouldShowEmpty) {
       setText(
         sosMapEmptyEl,
@@ -6294,10 +6535,10 @@
     networkArcTooltipEl.innerHTML = `
       <strong>${escapeHtml(edge.edge_name || edge.edge_code || 'Fiber Network')}</strong>
       <span>${escapeHtml(
-        `${(edge.source && edge.source.node_name) || 'Source'} → ${(edge.target && edge.target.node_name) || 'Target'}`
+        `${(edge.source && edge.source.node_name) || 'Source'} \u2192 ${(edge.target && edge.target.node_name) || 'Target'}`
       )}</span>
       <span>${escapeHtml(
-        `${String(edge.status || 'normal').toUpperCase()} • ${String(edge.connection_type || 'fiber').toUpperCase()}${edge.bandwidth_label ? ` • ${edge.bandwidth_label}` : ''}${edge.distance_km !== null ? ` • ${edge.distance_km} km` : ''}`
+        `${String(edge.status || 'normal').toUpperCase()} \u2022 ${String(edge.connection_type || 'fiber').toUpperCase()}${edge.bandwidth_label ? ` \u2022 ${edge.bandwidth_label}` : ''}${edge.distance_km !== null ? ` \u2022 ${edge.distance_km} km` : ''}`
       )}</span>
     `;
     networkArcTooltipEl.style.left = `${Math.max(12, left + 18)}px`;
@@ -8156,6 +8397,9 @@
     state.smartResponse.selectedTicketNo = '';
     state.smartResponse.selectedResponse = null;
     state.smartResponse.selectedTimeline = [];
+    state.smartResponse.activeTab = 'summary';
+    state.smartResponse.expandedCandidateVehicleId = null;
+    state.smartResponse.timelineExpanded = false;
     state.smartResponse.selectedResponseLoading = false;
     state.smartResponse.selectedTimelineLoading = false;
     state.smartResponse.selectedResponseError = '';
@@ -9468,9 +9712,11 @@
       renderSmartResponsePanel();
     } catch (error) {
       state.smartResponse.confirmArrivalError = error && error.message ? error.message : 'Confirm arrival gagal.';
+      renderDetailPanel();
       renderSmartResponsePanel();
     } finally {
       state.smartResponse.confirmArrivalSubmittingVehicleId = null;
+      renderDetailPanel();
       renderSmartResponsePanel();
     }
   };
@@ -9954,8 +10200,8 @@
     }
   });
 
-  if (sosSmartResponseBodyEl) {
-    sosSmartResponseBodyEl.addEventListener('click', (event) => {
+  if (sosDetailBodyEl) {
+    sosDetailBodyEl.addEventListener('click', (event) => {
       const target =
         event.target instanceof HTMLElement ? event.target.closest('[data-confirm-arrival]') : null;
       if (!target) {
@@ -9967,6 +10213,56 @@
         return;
       }
       void confirmSelectedSmartResponseArrival(vehicleId);
+    });
+  }
+
+  if (sosSmartResponseBodyEl) {
+    sosSmartResponseBodyEl.addEventListener('click', (event) => {
+      const element = event.target instanceof HTMLElement ? event.target : null;
+      if (!element) {
+        return;
+      }
+      const tabTrigger = element.closest('[data-smart-tab]');
+      if (tabTrigger) {
+        event.preventDefault();
+        setSmartResponseTab(tabTrigger.getAttribute('data-smart-tab') || 'summary');
+        return;
+      }
+      const candidateTrigger = element.closest('[data-candidate-expand]');
+      if (candidateTrigger) {
+        event.preventDefault();
+        const vehicleId = Number(candidateTrigger.getAttribute('data-candidate-expand'));
+        if (Number.isFinite(vehicleId)) {
+          toggleSmartResponseCandidate(vehicleId);
+        }
+        return;
+      }
+      const timelineToggle = element.closest('[data-toggle-timeline]');
+      if (timelineToggle) {
+        event.preventDefault();
+        state.smartResponse.timelineExpanded = !state.smartResponse.timelineExpanded;
+        renderSmartResponsePanel();
+        return;
+      }
+      const target = element.closest('[data-confirm-arrival]');
+      if (!target) {
+        return;
+      }
+      event.preventDefault();
+      const vehicleId = Number(target.getAttribute('data-confirm-arrival'));
+      if (!Number.isFinite(vehicleId)) {
+        return;
+      }
+      void confirmSelectedSmartResponseArrival(vehicleId);
+    });
+  }
+
+  if (sosContactReporterBtn) {
+    sosContactReporterBtn.addEventListener('click', () => {
+      const waLink = sosContactReporterBtn.dataset.waLink || '';
+      if (waLink) {
+        window.open(waLink, '_blank', 'noopener,noreferrer');
+      }
     });
   }
 
@@ -10229,6 +10525,7 @@
     );
   });
 })();
+
 
 
 
