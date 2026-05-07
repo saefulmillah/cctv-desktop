@@ -18,16 +18,16 @@
   const MAP_ZOOM_ASSET = 11;
   const MAP_ZOOM_SOS = 14;
   const DEFAULT_VEHICLE_TYPE_ICON_PATH = '/static/vehicle-types/default.svg';
-  const VEHICLE_INTERPOLATION_MIN_MS = 240;
-  const VEHICLE_INTERPOLATION_MAX_MS = 1600;
   const VEHICLE_INTERPOLATION_DEFAULT_MS = 700;
   const VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS = 1200;
-  const VEHICLE_PREDICTION_MIN_MS = 6000;
-  const VEHICLE_PREDICTION_MAX_MS = 18000;
-  const VEHICLE_PREDICTION_MAX_AGE_MS = 18000;
+  const VEHICLE_PREDICTION_MIN_MS = 1600;
+  const VEHICLE_PREDICTION_MAX_MS = 4200;
+  const VEHICLE_PREDICTION_MAX_AGE_MS = 4200;
+  const VEHICLE_PREDICTION_CORRECTION_MIN_MS = 520;
+  const VEHICLE_PREDICTION_CORRECTION_MAX_MS = 1500;
   const VEHICLE_PREDICTION_CORRECTION_SNAP_METERS = 420;
   const VEHICLE_PREDICTION_MAX_SPEED_KMH = 180;
-  const VEHICLE_PREDICTION_SPEED_FACTOR = 0.58;
+  const VEHICLE_PREDICTION_SPEED_FACTOR = 0.92;
 
   const $ = (id) => document.getElementById(id);
   const sosMonitorBtn = $('sosMonitorBtn');
@@ -1011,6 +1011,30 @@
     return Number.isFinite(bearing);
   };
 
+  const normalizeLatLngLiteral = (latLng) => {
+    if (!latLng) {
+      return null;
+    }
+    const lat = typeof latLng.lat === 'function' ? latLng.lat() : latLng.lat;
+    const lng = typeof latLng.lng === 'function' ? latLng.lng() : latLng.lng;
+    return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
+      ? { lat: Number(lat), lng: Number(lng) }
+      : null;
+  };
+
+  const blendLatLngLiteral = (fromLatLng, toLatLng, progress) => {
+    const from = normalizeLatLngLiteral(fromLatLng);
+    const to = normalizeLatLngLiteral(toLatLng);
+    if (!(from && to)) {
+      return to || from || null;
+    }
+    const clamped = Math.max(0, Math.min(1, Number(progress) || 0));
+    return {
+      lat: from.lat + (to.lat - from.lat) * clamped,
+      lng: from.lng + (to.lng - from.lng) * clamped,
+    };
+  };
+
   const getVehiclePredictionHorizonMs = (entry) => {
     const lastBackendAt = Number(entry && entry.lastBackendAt);
     const previousBackendAt = Number(entry && entry.previousBackendAt);
@@ -1018,7 +1042,7 @@
       Number.isFinite(lastBackendAt) && Number.isFinite(previousBackendAt) && lastBackendAt > previousBackendAt
         ? lastBackendAt - previousBackendAt
         : VEHICLE_INTERPOLATION_DEFAULT_MS * 2;
-    const bufferedDelta = backendDelta * 2.4;
+    const bufferedDelta = backendDelta * 1.15;
     return Math.max(
       VEHICLE_PREDICTION_MIN_MS,
       Math.min(VEHICLE_PREDICTION_MAX_MS, bufferedDelta)
@@ -1053,33 +1077,102 @@
     };
   };
 
-  const getVehiclePredictedLatLng = (entry, now = performance.now()) => {
-    if (!(entry && entry.isPredicting && entry.lastBackendLatLng)) {
-      return null;
-    }
-    const startedAt = Number(entry.predictionStartedAt || 0);
-    const until = Number(entry.predictionUntil || 0);
-    const anchorAt = Number(entry.lastBackendPerfAt || startedAt || now);
-    const elapsedMs = Math.max(0, now - anchorAt);
-    const clampedElapsedMs = until ? Math.min(elapsedMs, Math.max(0, until - anchorAt)) : elapsedMs;
-    const speedMetersPerSecond =
-      ((Number(entry.lastKnownSpeed || 0) * VEHICLE_PREDICTION_SPEED_FACTOR) * 1000) / 3600;
-    const distanceMeters = speedMetersPerSecond * (clampedElapsedMs / 1000);
-    return projectLatLngByDistanceAndBearing(
-      entry.lastBackendLatLng,
-      Number(entry.lastKnownBearing || 0),
-      distanceMeters
-    );
-  };
+  const getVehiclePredictionSpeedMetersPerSecond = (entry) =>
+    ((Number(entry && entry.lastKnownSpeed ? entry.lastKnownSpeed : 0) * VEHICLE_PREDICTION_SPEED_FACTOR) * 1000) /
+    3600;
 
-  const stopVehiclePrediction = (entry) => {
+  const clearVehicleMotionCorrection = (entry) => {
     if (!entry) {
       return;
     }
-    entry.isPredicting = false;
-    entry.predictedLatLng = null;
-    entry.predictionStartedAt = 0;
-    entry.predictionUntil = 0;
+    entry.correctionOriginLatLng = null;
+    entry.correctionStartedAt = 0;
+    entry.correctionUntil = 0;
+  };
+
+  const isVehicleMotionCorrectionActive = (entry, now = performance.now()) =>
+    Boolean(
+      entry &&
+      entry.correctionOriginLatLng &&
+      Number(entry.correctionUntil || 0) > Number(entry.correctionStartedAt || 0) &&
+      now < Number(entry.correctionUntil || 0)
+    );
+
+  const getVehicleMotionBaseLatLng = (entry, vehicle, now = performance.now()) => {
+    const anchorLatLng = normalizeLatLngLiteral(entry && entry.lastBackendLatLng);
+    if (!anchorLatLng) {
+      return normalizeLatLngLiteral(
+        (entry && entry.currentLatLng) || (vehicle && (vehicle.renderLatLng || vehicle.latLng))
+      );
+    }
+    if (!isVehiclePredictionEligible(vehicle)) {
+      return anchorLatLng;
+    }
+    const anchorAt = Number(entry && entry.lastBackendPerfAt ? entry.lastBackendPerfAt : now);
+    const horizonMs = Math.min(VEHICLE_PREDICTION_MAX_AGE_MS, getVehiclePredictionHorizonMs(entry));
+    const clampedElapsedMs = Math.max(0, Math.min(now - anchorAt, horizonMs));
+    const speedMetersPerSecond = getVehiclePredictionSpeedMetersPerSecond(entry);
+    if (!(speedMetersPerSecond > 0)) {
+      return anchorLatLng;
+    }
+    return projectLatLngByDistanceAndBearing(
+      anchorLatLng,
+      Number(entry && entry.lastKnownBearing ? entry.lastKnownBearing : 0),
+      speedMetersPerSecond * (clampedElapsedMs / 1000)
+    );
+  };
+
+  const getVehicleMotionDisplayLatLng = (entry, vehicle, now = performance.now()) => {
+    if (!(entry && vehicle)) {
+      return null;
+    }
+    const baseLatLng = getVehicleMotionBaseLatLng(entry, vehicle, now);
+    if (!baseLatLng) {
+      return null;
+    }
+    if (!isVehicleMotionCorrectionActive(entry, now)) {
+      clearVehicleMotionCorrection(entry);
+      return baseLatLng;
+    }
+    const durationMs = Math.max(1, Number(entry.correctionUntil) - Number(entry.correctionStartedAt));
+    const progress = Math.max(0, Math.min(1, (now - Number(entry.correctionStartedAt)) / durationMs));
+    if (progress >= 1) {
+      clearVehicleMotionCorrection(entry);
+      return baseLatLng;
+    }
+    return blendLatLngLiteral(entry.correctionOriginLatLng, baseLatLng, progress);
+  };
+
+  const getVehicleCorrectionDurationMs = (entry, correctionDistanceMeters) => {
+    const lastBackendAt = Number(entry && entry.lastBackendAt);
+    const previousBackendAt = Number(entry && entry.previousBackendAt);
+    const backendDelta =
+      Number.isFinite(lastBackendAt) && Number.isFinite(previousBackendAt) && lastBackendAt > previousBackendAt
+        ? lastBackendAt - previousBackendAt
+        : VEHICLE_INTERPOLATION_DEFAULT_MS;
+    const speedMetersPerSecond = getVehiclePredictionSpeedMetersPerSecond(entry);
+    const speedDurationMs =
+      speedMetersPerSecond > 0 && Number.isFinite(Number(correctionDistanceMeters))
+        ? (Number(correctionDistanceMeters) / speedMetersPerSecond) * 1000
+        : backendDelta;
+    return Math.max(
+      VEHICLE_PREDICTION_CORRECTION_MIN_MS,
+      Math.min(
+        VEHICLE_PREDICTION_CORRECTION_MAX_MS,
+        Math.max(backendDelta * 0.8, speedDurationMs)
+      )
+    );
+  };
+
+  const stopVehicleMotion = (entry) => {
+    if (!entry) {
+      return;
+    }
+    if (entry.animationFrame) {
+      window.cancelAnimationFrame(entry.animationFrame);
+      entry.animationFrame = null;
+    }
+    clearVehicleMotionCorrection(entry);
   };
 
   const scheduleVehicleMotionFrame = (entry, vehicle, frameFn) => {
@@ -1110,71 +1203,30 @@
     }
   };
 
-  const startVehiclePredictionMotion = (entry, vehicle) => {
-    if (!(entry && vehicle && isVehiclePredictionEligible(vehicle) && entry.lastBackendLatLng)) {
-      stopVehiclePrediction(entry);
+  const ensureVehicleMotion = (entry, vehicle) => {
+    if (!(entry && vehicle)) {
       return;
     }
-    entry.isPredicting = true;
-    entry.predictionStartedAt = performance.now();
-    const anchorAt = Number(entry.lastBackendPerfAt || entry.predictionStartedAt);
-    const horizonMs = getVehiclePredictionHorizonMs(entry);
-    entry.predictionUntil = anchorAt + Math.min(VEHICLE_PREDICTION_MAX_AGE_MS, horizonMs);
-    entry.predictedLatLng = entry.lastBackendLatLng ? { ...entry.lastBackendLatLng } : null;
     const step = (now) => {
-      if (!entry.isPredicting) {
-        return;
+      const nextLatLng = getVehicleMotionDisplayLatLng(entry, vehicle, now);
+      if (nextLatLng) {
+        updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
       }
-      if (!isVehiclePredictionEligible(vehicle)) {
-        stopVehiclePrediction(entry);
-        return;
-      }
-      if (now >= entry.predictionUntil) {
-        const finalLatLng = getVehiclePredictedLatLng(entry, entry.predictionUntil) || entry.lastBackendLatLng;
-        if (finalLatLng) {
-          entry.predictedLatLng = finalLatLng;
-          updateVehicleMarkerVisualPosition(entry, vehicle, finalLatLng);
-        }
-        stopVehiclePrediction(entry);
-        return;
-      }
-      const predictedLatLng = getVehiclePredictedLatLng(entry, now);
-      if (!predictedLatLng) {
-        stopVehiclePrediction(entry);
-        return;
-      }
-      entry.predictedLatLng = predictedLatLng;
-      updateVehicleMarkerVisualPosition(entry, vehicle, predictedLatLng);
-      scheduleVehicleMotionFrame(entry, vehicle, step);
-    };
-    scheduleVehicleMotionFrame(entry, vehicle, step);
-  };
-
-  const startVehicleInterpolationMotion = (entry, vehicle, targetLatLng, durationMs) => {
-    if (!(entry && vehicle && targetLatLng)) {
-      return;
-    }
-    const origin = vehicle.renderLatLng || entry.currentLatLng || vehicle.latLng;
-    if (!origin) {
-      updateVehicleMarkerVisualPosition(entry, vehicle, targetLatLng);
-      startVehiclePredictionMotion(entry, vehicle);
-      return;
-    }
-    const startedAt = performance.now();
-    const step = (now) => {
-      const progress = Math.min(1, (now - startedAt) / Math.max(1, durationMs));
-      const interpolated = {
-        lat: Number(origin.lat) + (Number(targetLatLng.lat) - Number(origin.lat)) * progress,
-        lng: Number(origin.lng) + (Number(targetLatLng.lng) - Number(origin.lng)) * progress,
-      };
-      updateVehicleMarkerVisualPosition(entry, vehicle, interpolated);
-      if (progress < 1) {
+      const anchorAt = Number(entry.lastBackendPerfAt || 0);
+      const shouldContinueProjecting =
+        isVehiclePredictionEligible(vehicle) &&
+        Boolean(entry.lastBackendLatLng) &&
+        now - anchorAt < Math.min(VEHICLE_PREDICTION_MAX_AGE_MS, getVehiclePredictionHorizonMs(entry));
+      if (shouldContinueProjecting || isVehicleMotionCorrectionActive(entry, now)) {
         scheduleVehicleMotionFrame(entry, vehicle, step);
         return;
       }
-      updateVehicleMarkerVisualPosition(entry, vehicle, targetLatLng);
-      startVehiclePredictionMotion(entry, vehicle);
+      entry.animationFrame = null;
+      clearVehicleMotionCorrection(entry);
     };
+    if (entry.animationFrame) {
+      return;
+    }
     scheduleVehicleMotionFrame(entry, vehicle, step);
   };
 
@@ -5211,17 +5263,15 @@
           vehicle,
           marker,
           animationFrame: null,
-          lastUpdateAt: Date.now(),
           previousBackendAt: 0,
           lastBackendAt: Date.now(),
           lastBackendPerfAt: performance.now(),
           lastBackendLatLng: vehicle.latLng ? { ...vehicle.latLng } : null,
-          predictedLatLng: null,
-          predictionStartedAt: 0,
-          predictionUntil: 0,
+          correctionOriginLatLng: null,
+          correctionStartedAt: 0,
+          correctionUntil: 0,
           lastKnownSpeed: Number.isFinite(Number(vehicle.speed)) ? Number(vehicle.speed) : null,
           lastKnownBearing: Number.isFinite(Number(vehicle.bearing)) ? Number(vehicle.bearing) : null,
-          isPredicting: false,
           iconUrl: '',
           currentLatLng: vehicle.renderLatLng || vehicle.latLng,
           targetKey: '',
@@ -5258,62 +5308,67 @@
       if (entry.targetKey === nextTargetKey) {
         entry.lastKnownSpeed = Number.isFinite(Number(vehicle.speed)) ? Number(vehicle.speed) : null;
         entry.lastKnownBearing = Number.isFinite(Number(vehicle.bearing)) ? Number(vehicle.bearing) : null;
-        if (entry.isPredicting && !isVehiclePredictionEligible(vehicle)) {
-          stopVehiclePrediction(entry);
-        }
-        if (entry.isPredicting) {
-          const predictedLatLng = getVehiclePredictedLatLng(entry);
-          if (predictedLatLng) {
-            entry.predictedLatLng = predictedLatLng;
-            updateVehicleMarkerVisualPosition(entry, vehicle, predictedLatLng);
+        if (isVehiclePredictionEligible(vehicle)) {
+          ensureVehicleMotion(entry, vehicle);
+        } else {
+          stopVehicleMotion(entry);
+          if (nextLatLng) {
+            updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
+          } else if (vehicle.renderLatLng) {
+            updateVehicleMarkerVisualPosition(entry, vehicle, vehicle.renderLatLng);
           }
-        } else if (vehicle.renderLatLng) {
-          updateVehicleMarkerVisualPosition(entry, vehicle, vehicle.renderLatLng);
         }
         return;
       }
+      const motionNow = performance.now();
+      const displayLatLng =
+        getVehicleMotionDisplayLatLng(entry, vehicle, motionNow) ||
+        normalizeLatLngLiteral(vehicle.renderLatLng) ||
+        normalizeLatLngLiteral(entry.currentLatLng) ||
+        normalizeLatLngLiteral(nextLatLng);
       entry.previousBackendAt = Number(entry.lastBackendAt || 0);
       entry.lastBackendAt = Date.now();
-      entry.lastBackendPerfAt = performance.now();
+      entry.lastBackendPerfAt = motionNow;
       entry.lastBackendLatLng = nextLatLng ? { ...nextLatLng } : null;
       entry.lastKnownSpeed = Number.isFinite(Number(vehicle.speed)) ? Number(vehicle.speed) : null;
       entry.lastKnownBearing = Number.isFinite(Number(vehicle.bearing)) ? Number(vehicle.bearing) : null;
       entry.targetKey = nextTargetKey;
 
-      const currentLatLng = vehicle.renderLatLng || entry.currentLatLng || vehicle.latLng;
-      const distance = haversineDistanceMeters(currentLatLng, nextLatLng);
-      const elapsed = Math.max(200, Date.now() - Number(entry.lastUpdateAt || 0));
-      const duration = Math.max(
-        VEHICLE_INTERPOLATION_MIN_MS,
-        Math.min(VEHICLE_INTERPOLATION_MAX_MS, elapsed || VEHICLE_INTERPOLATION_DEFAULT_MS)
-      );
-      entry.lastUpdateAt = Date.now();
-      stopVehiclePrediction(entry);
-      if (!currentLatLng || !nextLatLng) {
+      if (!displayLatLng || !nextLatLng) {
+        stopVehicleMotion(entry);
         if (nextLatLng) {
           updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
-          startVehiclePredictionMotion(entry, vehicle);
+          if (isVehiclePredictionEligible(vehicle)) {
+            ensureVehicleMotion(entry, vehicle);
+          }
         }
         return;
       }
-      const shouldSnapFromPrediction =
-        Boolean(entry.predictedLatLng) &&
-        haversineDistanceMeters(entry.predictedLatLng, nextLatLng) > VEHICLE_PREDICTION_CORRECTION_SNAP_METERS;
-      if (shouldSnapFromPrediction || distance > VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS) {
+      const distance = haversineDistanceMeters(displayLatLng, nextLatLng);
+      if (
+        !isVehiclePredictionEligible(vehicle) ||
+        distance > VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS ||
+        distance > VEHICLE_PREDICTION_CORRECTION_SNAP_METERS * 2
+      ) {
+        stopVehicleMotion(entry);
         updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
-        startVehiclePredictionMotion(entry, vehicle);
+        if (isVehiclePredictionEligible(vehicle)) {
+          ensureVehicleMotion(entry, vehicle);
+        }
         return;
       }
-      startVehicleInterpolationMotion(entry, vehicle, nextLatLng, duration);
+      entry.correctionOriginLatLng = displayLatLng;
+      entry.correctionStartedAt = motionNow;
+      entry.correctionUntil = motionNow + getVehicleCorrectionDurationMs(entry, distance);
+      updateVehicleMarkerVisualPosition(entry, vehicle, displayLatLng);
+      ensureVehicleMotion(entry, vehicle);
     });
 
     Array.from(state.vehicles.markers.entries()).forEach(([vehicleId, entry]) => {
       if (visibleIds.has(Number(vehicleId))) {
         return;
       }
-      if (entry && entry.animationFrame) {
-        window.cancelAnimationFrame(entry.animationFrame);
-      }
+      stopVehicleMotion(entry);
       if (entry && entry.marker) {
         entry.marker.setMap(null);
       }
