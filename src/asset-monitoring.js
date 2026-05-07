@@ -102,6 +102,10 @@
   const sosDetailStatusEl = $('sosDetailStatus');
   const sosDetailMetaEl = $('sosDetailMeta');
   const sosDetailBodyEl = $('sosDetailBody');
+  const sosSmartResponsePanelEl = $('sosSmartResponsePanel');
+  const sosSmartResponseTitleEl = $('sosSmartResponseTitle');
+  const sosSmartResponseStatusEl = $('sosSmartResponseStatus');
+  const sosSmartResponseBodyEl = $('sosSmartResponseBody');
   const closeSosDetailBtn = $('closeSosDetailBtn');
   const sosDispatchBtn = $('sosDispatchBtn');
   const sosCompleteBtn = $('sosCompleteBtn');
@@ -167,6 +171,9 @@
 
   const canCompleteSos = () =>
     Boolean(capabilityApi && capabilityApi.canCompleteSos(getSessionSnapshot()));
+
+  const canConfirmSosResponse = () =>
+    Boolean(capabilityApi && capabilityApi.canConfirmSosResponse(getSessionSnapshot()));
 
   const filterAllowedBranches = (branches) =>
     capabilityApi && typeof capabilityApi.filterAllowedBranches === 'function'
@@ -282,6 +289,22 @@
       animationFrame: 0,
       lastSnapshotAt: '',
       lastRefreshAt: '',
+    },
+    smartResponse: {
+      summariesByTicketNo: new Map(),
+      summariesBySosId: new Map(),
+      selectedTicketNo: '',
+      selectedResponse: null,
+      selectedTimeline: [],
+      selectedResponseLoading: false,
+      selectedTimelineLoading: false,
+      selectedResponseError: '',
+      selectedTimelineError: '',
+      responseRequestKey: '',
+      timelineRequestKey: '',
+      confirmArrivalSubmittingVehicleId: null,
+      confirmArrivalError: '',
+      confirmArrivalSuccessMessage: '',
     },
     incidents: {
       alerts: new Map(),
@@ -2618,6 +2641,59 @@
     return { tone: 'neutral', label: 'Completed', markerClass: 'is-completed' };
   };
 
+  const getSmartResponseStatusMeta = (status) => {
+    const normalized = String(status || '').trim().toUpperCase();
+    if (normalized === 'TRACKING_STARTED') {
+      return { tone: 'neutral', label: 'Tracking Dimulai' };
+    }
+    if (normalized === 'NEARBY_CANDIDATE') {
+      return { tone: 'info', label: 'Kandidat Ditemukan' };
+    }
+    if (normalized === 'LIKELY_HEADING_TO_SOS') {
+      return { tone: 'warning', label: 'Menuju SOS' };
+    }
+    if (normalized === 'ARRIVED_PENDING_CONFIRMATION') {
+      return { tone: 'danger', label: 'Tiba, Menunggu Konfirmasi' };
+    }
+    if (normalized === 'ARRIVAL_CONFIRMED') {
+      return { tone: 'success', label: 'Kedatangan Terkonfirmasi' };
+    }
+    if (normalized === 'TICKET_COMPLETED') {
+      return { tone: 'success', label: 'Ticket Selesai' };
+    }
+    return { tone: 'neutral', label: 'Tracking' };
+  };
+
+  const formatDistanceMetersSmartResponse = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return '-';
+    }
+    if (numeric < 1000) {
+      return `${Math.round(numeric)} m`;
+    }
+    return `${(numeric / 1000).toFixed(numeric >= 10000 ? 1 : 2)} km`;
+  };
+
+  const formatConfidenceScore = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return '-';
+    }
+    return `${Math.round(numeric)}%`;
+  };
+
+  const formatSmartResponseEventLabel = (eventType) => {
+    const normalized = String(eventType || '').trim().toUpperCase();
+    if (normalized === 'TRACKING_STARTED') return 'Tracking dimulai';
+    if (normalized === 'VEHICLE_CANDIDATE_DETECTED') return 'Kandidat vehicle terdeteksi';
+    if (normalized === 'VEHICLE_LIKELY_HEADING') return 'Vehicle kemungkinan menuju SOS';
+    if (normalized === 'VEHICLE_ARRIVED_PENDING') return 'Vehicle tiba, menunggu konfirmasi';
+    if (normalized === 'VEHICLE_ARRIVAL_CONFIRMED') return 'Kedatangan vehicle dikonfirmasi';
+    if (normalized === 'TICKET_COMPLETED') return 'Ticket selesai';
+    return normalized || '-';
+  };
+
   const getAlertName = (alert) => {
     const user = alert && alert.user ? alert.user : {};
     const toTitleCase = (value) =>
@@ -2791,7 +2867,106 @@
     return {
       ...ticket,
       sos_id: sosId,
+      ticket_no: String(ticket.ticket_no || '').trim(),
       ticket_status: Number(ticket.ticket_status ?? ticket.status ?? 1),
+      response_summary: normalizeSmartResponseSummary(ticket.response_summary || null, ticket),
+    };
+  };
+
+  const normalizeSmartResponseSummary = (summary, fallback = null) => {
+    const source = summary && typeof summary === 'object' ? summary : fallback && typeof fallback === 'object' ? fallback : null;
+    if (!source) {
+      return null;
+    }
+    const ticketNo = String(source.ticket_no || (fallback && fallback.ticket_no) || '').trim();
+    const sosId = Number(source.sos_id || (fallback && fallback.sos_id));
+    if (!ticketNo && !Number.isFinite(sosId)) {
+      return null;
+    }
+    return {
+      ticket_no: ticketNo,
+      sos_id: Number.isFinite(sosId) ? sosId : null,
+      branch_id: Number.isFinite(Number(source.branch_id)) ? Number(source.branch_id) : null,
+      response_status: String(source.response_status || source.current_response_status || 'TRACKING_STARTED').trim(),
+      primary_vehicle_id: Number.isFinite(Number(source.primary_vehicle_id)) ? Number(source.primary_vehicle_id) : null,
+      primary_vehicle_label: String(source.primary_vehicle_label || '').trim() || null,
+      confidence_score: Number.isFinite(Number(source.confidence_score)) ? Number(source.confidence_score) : null,
+      distance_meters: Number.isFinite(Number(source.distance_meters)) ? Number(source.distance_meters) : null,
+      first_candidate_detected_at: String(source.first_candidate_detected_at || '').trim() || null,
+      arrival_confirmed_at: String(source.arrival_confirmed_at || '').trim() || null,
+      updated_at: String(source.updated_at || '').trim() || null,
+    };
+  };
+
+  const normalizeSmartResponseCandidate = (candidate) => {
+    if (!candidate || typeof candidate !== 'object') {
+      return null;
+    }
+    const vehicleId = Number(candidate.vehicle_id);
+    if (!Number.isFinite(vehicleId)) {
+      return null;
+    }
+    return {
+      vehicle_id: vehicleId,
+      vehicle_label: String(candidate.vehicle_label || `Vehicle ${vehicleId}`).trim(),
+      branch_id: Number.isFinite(Number(candidate.branch_id)) ? Number(candidate.branch_id) : null,
+      detection_status: String(candidate.detection_status || 'TRACKING_STARTED').trim(),
+      confidence_score: Number.isFinite(Number(candidate.confidence_score)) ? Number(candidate.confidence_score) : null,
+      distance_meters: Number.isFinite(Number(candidate.distance_meters)) ? Number(candidate.distance_meters) : null,
+      previous_distance_meters:
+        Number.isFinite(Number(candidate.previous_distance_meters)) ? Number(candidate.previous_distance_meters) : null,
+      speed_kmh: Number.isFinite(Number(candidate.speed_kmh)) ? Number(candidate.speed_kmh) : null,
+      movement_bearing: Number.isFinite(Number(candidate.movement_bearing)) ? Number(candidate.movement_bearing) : null,
+      bearing_to_sos: Number.isFinite(Number(candidate.bearing_to_sos)) ? Number(candidate.bearing_to_sos) : null,
+      angle_diff: Number.isFinite(Number(candidate.angle_diff)) ? Number(candidate.angle_diff) : null,
+      detected_at: String(candidate.detected_at || '').trim() || null,
+      last_evaluated_at: String(candidate.last_evaluated_at || '').trim() || null,
+      arrived_pending_at: String(candidate.arrived_pending_at || '').trim() || null,
+      arrival_confirmed_at: String(candidate.arrival_confirmed_at || '').trim() || null,
+      is_primary: Boolean(candidate.is_primary),
+    };
+  };
+
+  const normalizeSmartResponseTimelineItem = (item) => {
+    if (!item || typeof item !== 'object') {
+      return null;
+    }
+    const id = Number(item.id);
+    if (!Number.isFinite(id)) {
+      return null;
+    }
+    return {
+      id,
+      ticket_no: String(item.ticket_no || '').trim(),
+      sos_id: Number.isFinite(Number(item.sos_id)) ? Number(item.sos_id) : null,
+      branch_id: Number.isFinite(Number(item.branch_id)) ? Number(item.branch_id) : null,
+      event_type: String(item.event_type || '').trim(),
+      event_at: String(item.event_at || '').trim() || null,
+      actor_user_id: Number.isFinite(Number(item.actor_user_id)) ? Number(item.actor_user_id) : null,
+      vehicle_id: Number.isFinite(Number(item.vehicle_id)) ? Number(item.vehicle_id) : null,
+      metadata: item.metadata && typeof item.metadata === 'object' ? item.metadata : null,
+    };
+  };
+
+  const normalizeSmartResponseDetail = (payload) => {
+    const source =
+      unwrapCollection(payload).find((item) => item && typeof item === 'object') ||
+      unwrapSingle(payload);
+    if (!source || typeof source !== 'object') {
+      return null;
+    }
+    const ticket = normalizeTicket(source);
+    const sos = normalizeAlert(source);
+    const responseSummary = normalizeSmartResponseSummary(source.response_summary || null, source);
+    const vehicleCandidates = toArray(source.vehicle_candidates)
+      .map(normalizeSmartResponseCandidate)
+      .filter(Boolean);
+    return {
+      ...source,
+      ticket,
+      sos,
+      response_summary: responseSummary,
+      vehicle_candidates: vehicleCandidates,
     };
   };
 
@@ -4225,6 +4400,8 @@
     if (entry.entityType === 'sos') {
       const alert = entry.data;
       const statusMeta = getStatusMeta(alert.status);
+      const responseSummary = getSmartResponseSummaryForAlert(alert);
+      const responseMeta = responseSummary ? getSmartResponseStatusMeta(responseSummary.response_status) : null;
       const rawPhoneNumber = alert.user && alert.user.phone ? String(alert.user.phone) : '';
       const displayPhoneNumber = getDisplayPhoneNumber(rawPhoneNumber);
       const whatsAppLink = isLeaving ? '' : getWhatsAppLink(rawPhoneNumber);
@@ -4243,6 +4420,13 @@
               <span class="sos-incident-item__label">Nama</span>
               <div class="sos-incident-item__value">${escapeHtml(getAlertName(alert))}</div>
             </div>
+            ${responseSummary ? `
+              <div class="sos-incident-item__response-row">
+                <span class="status-pill ${escapeHtml(responseMeta.tone)}">${escapeHtml(responseMeta.label)}</span>
+                <span>${escapeHtml(responseSummary.primary_vehicle_label || 'Belum ada kandidat utama')}</span>
+                <span>${escapeHtml(formatDistanceMetersSmartResponse(responseSummary.distance_meters))}</span>
+              </div>
+            ` : ''}
             <div class="sos-incident-item__row">
               <div>
                 <span class="sos-incident-item__label">No Telepon</span>
@@ -5765,6 +5949,304 @@
     sosDetailPanelEl.classList.remove('hidden');
     sosDetailPanelEl.classList.add('is-visible');
     replayDetailPanelAnimation();
+  };
+
+  const getSelectedSosTicketNo = () => {
+    const alert = getSelectedAlert();
+    if (!(alert && alert.ticket && alert.ticket.ticket_no)) {
+      return '';
+    }
+    return String(alert.ticket.ticket_no).trim();
+  };
+
+  const loadSelectedSmartResponseDetail = async (ticketNo, options = {}) => {
+    const normalizedTicketNo = String(ticketNo || '').trim();
+    if (!normalizedTicketNo) {
+      state.smartResponse.selectedResponse = null;
+      state.smartResponse.selectedResponseLoading = false;
+      state.smartResponse.selectedResponseError = '';
+      return null;
+    }
+    const requestKey = `${normalizedTicketNo}:${Date.now()}`;
+    state.smartResponse.responseRequestKey = requestKey;
+    state.smartResponse.selectedResponseLoading = true;
+    state.smartResponse.selectedResponseError = '';
+    if (options.preserveSuccess !== true) {
+      state.smartResponse.confirmArrivalSuccessMessage = '';
+    }
+    renderSmartResponsePanel();
+    try {
+      const response = await window.cameraService.getSosTicketResponse(normalizedTicketNo);
+      if (!response || response.status >= 400) {
+        throw new Error((response && response.message) || 'Gagal memuat smart response ticket.');
+      }
+      const detail = normalizeSmartResponseDetail(response.data);
+      if (state.smartResponse.responseRequestKey !== requestKey) {
+        return detail;
+      }
+      state.smartResponse.selectedResponse = detail;
+      state.smartResponse.selectedResponseError = detail ? '' : 'Detail smart response tidak tersedia.';
+      if (detail && detail.response_summary) {
+        upsertSmartResponseSummary(detail.response_summary);
+      }
+      return detail;
+    } catch (error) {
+      if (state.smartResponse.responseRequestKey === requestKey) {
+        state.smartResponse.selectedResponse = null;
+        state.smartResponse.selectedResponseError = error && error.message ? error.message : 'Gagal memuat smart response ticket.';
+      }
+      return null;
+    } finally {
+      if (state.smartResponse.responseRequestKey === requestKey) {
+        state.smartResponse.selectedResponseLoading = false;
+        renderSmartResponsePanel();
+        renderIncidentList();
+      }
+    }
+  };
+
+  const loadSelectedSmartResponseTimeline = async (ticketNo) => {
+    const normalizedTicketNo = String(ticketNo || '').trim();
+    if (!normalizedTicketNo) {
+      state.smartResponse.selectedTimeline = [];
+      state.smartResponse.selectedTimelineLoading = false;
+      state.smartResponse.selectedTimelineError = '';
+      return [];
+    }
+    const requestKey = `${normalizedTicketNo}:${Date.now()}`;
+    state.smartResponse.timelineRequestKey = requestKey;
+    state.smartResponse.selectedTimelineLoading = true;
+    state.smartResponse.selectedTimelineError = '';
+    renderSmartResponsePanel();
+    try {
+      const response = await window.cameraService.getSosTicketTimeline(normalizedTicketNo);
+      if (!response || response.status >= 400) {
+        throw new Error((response && response.message) || 'Gagal memuat timeline smart response.');
+      }
+      const items = unwrapCollection(response.data)
+        .map(normalizeSmartResponseTimelineItem)
+        .filter(Boolean);
+      if (state.smartResponse.timelineRequestKey !== requestKey) {
+        return items;
+      }
+      state.smartResponse.selectedTimeline = items;
+      state.smartResponse.selectedTimelineError = '';
+      return items;
+    } catch (error) {
+      if (state.smartResponse.timelineRequestKey === requestKey) {
+        state.smartResponse.selectedTimeline = [];
+        state.smartResponse.selectedTimelineError = error && error.message ? error.message : 'Gagal memuat timeline smart response.';
+      }
+      return [];
+    } finally {
+      if (state.smartResponse.timelineRequestKey === requestKey) {
+        state.smartResponse.selectedTimelineLoading = false;
+        renderSmartResponsePanel();
+      }
+    }
+  };
+
+  const syncSelectedSmartResponseSelection = (options = {}) => {
+    if (state.ui.selectedEntityType !== 'sos' || !state.selectedSosId) {
+      resetSelectedSmartResponseState();
+      return;
+    }
+    const nextTicketNo = getSelectedSosTicketNo();
+    if (!nextTicketNo) {
+      state.smartResponse.selectedTicketNo = '';
+      state.smartResponse.selectedResponse = null;
+      state.smartResponse.selectedTimeline = [];
+      state.smartResponse.selectedResponseLoading = false;
+      state.smartResponse.selectedTimelineLoading = false;
+      state.smartResponse.selectedResponseError = '';
+      state.smartResponse.selectedTimelineError = '';
+      state.smartResponse.confirmArrivalSubmittingVehicleId = null;
+      state.smartResponse.confirmArrivalError = '';
+      state.smartResponse.confirmArrivalSuccessMessage = '';
+      return;
+    }
+    const shouldForce = Boolean(options.force);
+    const ticketChanged = String(state.smartResponse.selectedTicketNo || '') !== nextTicketNo;
+    state.smartResponse.selectedTicketNo = nextTicketNo;
+    state.smartResponse.confirmArrivalError = '';
+    if (ticketChanged) {
+      state.smartResponse.selectedResponse = null;
+      state.smartResponse.selectedTimeline = [];
+      state.smartResponse.selectedResponseError = '';
+      state.smartResponse.selectedTimelineError = '';
+      state.smartResponse.confirmArrivalSuccessMessage = '';
+    }
+    if (shouldForce || ticketChanged || !state.smartResponse.selectedResponse) {
+      void loadSelectedSmartResponseDetail(nextTicketNo, { preserveSuccess: !ticketChanged && !shouldForce });
+    }
+    if (shouldForce || ticketChanged || !state.smartResponse.selectedTimeline.length) {
+      void loadSelectedSmartResponseTimeline(nextTicketNo);
+    }
+  };
+
+  const renderSmartResponsePanel = () => {
+    if (!(sosSmartResponsePanelEl && sosSmartResponseBodyEl && sosSmartResponseStatusEl && sosSmartResponseTitleEl)) {
+      return;
+    }
+    if (state.ui.selectedEntityType !== 'sos' || !state.selectedSosId) {
+      sosSmartResponsePanelEl.classList.remove('is-visible');
+      sosSmartResponsePanelEl.classList.add('hidden');
+      sosSmartResponseBodyEl.innerHTML = '';
+      return;
+    }
+    const alert = getSelectedAlert();
+    const ticketNo = getSelectedSosTicketNo();
+    const summary = getSmartResponseSummaryForAlert(alert);
+    const statusMeta = getSmartResponseStatusMeta(summary && summary.response_status);
+    setText(sosSmartResponseTitleEl, ticketNo ? `Ticket ${ticketNo}` : 'Tracking responder');
+    setClass(sosSmartResponseStatusEl, `status-pill ${statusMeta.tone}`);
+    setText(sosSmartResponseStatusEl, statusMeta.label);
+
+    if (!ticketNo) {
+      sosSmartResponseBodyEl.innerHTML = `
+        <div class="sos-smart-response-empty">
+          <strong>Smart Response belum aktif.</strong>
+          <span>Dispatch ticket SOS terlebih dahulu agar kandidat responder dan timeline bisa dipantau.</span>
+        </div>
+      `;
+      sosSmartResponsePanelEl.classList.remove('hidden');
+      sosSmartResponsePanelEl.classList.add('is-visible');
+      return;
+    }
+
+    const detail = state.smartResponse.selectedResponse;
+    const candidates = detail && Array.isArray(detail.vehicle_candidates) ? detail.vehicle_candidates : [];
+    const timelineItems = Array.isArray(state.smartResponse.selectedTimeline) ? state.smartResponse.selectedTimeline : [];
+    const responseError = state.smartResponse.selectedResponseError;
+    const timelineError = state.smartResponse.selectedTimelineError;
+
+    if (state.smartResponse.selectedResponseLoading && !detail) {
+      sosSmartResponseBodyEl.innerHTML = `
+        <div class="sos-smart-response-empty">
+          <strong>Memuat Smart Response...</strong>
+          <span>Mengambil response summary dan kandidat vehicle terbaru.</span>
+        </div>
+      `;
+      sosSmartResponsePanelEl.classList.remove('hidden');
+      sosSmartResponsePanelEl.classList.add('is-visible');
+      return;
+    }
+
+    if (responseError && !detail) {
+      sosSmartResponseBodyEl.innerHTML = `
+        <div class="sos-smart-response-empty">
+          <strong>Smart Response tidak dapat dimuat.</strong>
+          <span>${escapeHtml(responseError)}</span>
+        </div>
+      `;
+      sosSmartResponsePanelEl.classList.remove('hidden');
+      sosSmartResponsePanelEl.classList.add('is-visible');
+      return;
+    }
+
+    const resolvedSummary = (detail && detail.response_summary) || summary;
+    const candidateMarkup = candidates.length
+      ? candidates.map((candidate) => {
+          const candidateStatusMeta = getSmartResponseStatusMeta(candidate.detection_status);
+          const isPendingConfirmation = candidate.detection_status === 'ARRIVED_PENDING_CONFIRMATION';
+          const isSubmitting =
+            Number(state.smartResponse.confirmArrivalSubmittingVehicleId) === Number(candidate.vehicle_id);
+          const confirmDisabled =
+            !isPendingConfirmation ||
+            !canConfirmSosResponse() ||
+            isSubmitting;
+          return `
+            <article class="sos-smart-response-candidate ${candidate.is_primary ? 'is-primary' : ''}">
+              <div class="sos-smart-response-candidate__head">
+                <div>
+                  <strong>${escapeHtml(candidate.vehicle_label || `Vehicle ${candidate.vehicle_id}`)}</strong>
+                  <span>${escapeHtml(`ID ${candidate.vehicle_id}`)}</span>
+                </div>
+                <span class="status-pill ${candidateStatusMeta.tone}">${escapeHtml(candidateStatusMeta.label)}</span>
+              </div>
+              <div class="sos-smart-response-candidate__meta">
+                <span class="meta-pill">${escapeHtml(`Confidence ${formatConfidenceScore(candidate.confidence_score)}`)}</span>
+                <span class="meta-pill">${escapeHtml(`Jarak ${formatDistanceMetersSmartResponse(candidate.distance_meters)}`)}</span>
+                ${candidate.is_primary ? '<span class="meta-pill">PRIMARY</span>' : ''}
+              </div>
+              <div class="sos-smart-response-candidate__grid">
+                <div><span class="sos-detail-label">Kecepatan</span><strong>${escapeHtml(formatSpeedKmh(candidate.speed_kmh))}</strong></div>
+                <div><span class="sos-detail-label">Sudut</span><strong>${Number.isFinite(Number(candidate.angle_diff)) ? `${Math.round(Number(candidate.angle_diff))}&deg;` : '-'}</strong></div>
+                <div><span class="sos-detail-label">Terdeteksi</span><strong>${escapeHtml(toDateTime(candidate.detected_at || '-'))}</strong></div>
+                <div><span class="sos-detail-label">Evaluasi</span><strong>${escapeHtml(toDateTime(candidate.last_evaluated_at || '-'))}</strong></div>
+              </div>
+              ${isPendingConfirmation ? `
+                <div class="sos-smart-response-candidate__actions">
+                  <button
+                    type="button"
+                    class="toolbar-btn ${confirmDisabled ? '' : 'toolbar-btn--accent'}"
+                    data-confirm-arrival="${escapeHtml(String(candidate.vehicle_id))}"
+                    ${confirmDisabled ? 'disabled' : ''}
+                  >${escapeHtml(isSubmitting ? 'Mengirim...' : 'Confirm Arrival')}</button>
+                </div>
+              ` : ''}
+            </article>
+          `;
+        }).join('')
+      : `
+        <div class="sos-smart-response-empty sos-smart-response-empty--section">
+          <strong>Belum ada kandidat vehicle yang valid.</strong>
+          <span>Backend belum menemukan responder yang cukup meyakinkan untuk ticket ini.</span>
+        </div>
+      `;
+
+    const timelineMarkup = timelineItems.length
+      ? timelineItems.map((item) => `
+          <article class="sos-smart-response-timeline-item">
+            <div class="sos-smart-response-timeline-item__head">
+              <strong>${escapeHtml(formatSmartResponseEventLabel(item.event_type))}</strong>
+              <span>${escapeHtml(toDateTime(item.event_at || '-'))}</span>
+            </div>
+            <div class="sos-smart-response-timeline-item__meta">
+              ${item.vehicle_id ? `<span class="meta-pill">${escapeHtml(`Vehicle ${item.vehicle_id}`)}</span>` : ''}
+              ${item.metadata && item.metadata.response_status ? `<span class="meta-pill">${escapeHtml(String(item.metadata.response_status).toUpperCase())}</span>` : ''}
+            </div>
+          </article>
+        `).join('')
+      : `
+        <div class="sos-smart-response-empty sos-smart-response-empty--section">
+          <strong>Timeline belum tersedia.</strong>
+          <span>Belum ada event response yang tercatat untuk ticket ini.</span>
+        </div>
+      `;
+
+    sosSmartResponseBodyEl.innerHTML = `
+      ${state.smartResponse.confirmArrivalError ? `<div class="sos-smart-response-banner danger">${escapeHtml(state.smartResponse.confirmArrivalError)}</div>` : ''}
+      ${state.smartResponse.confirmArrivalSuccessMessage ? `<div class="sos-smart-response-banner success">${escapeHtml(state.smartResponse.confirmArrivalSuccessMessage)}</div>` : ''}
+      ${responseError && detail ? `<div class="sos-smart-response-banner warning">${escapeHtml(responseError)}</div>` : ''}
+      <section class="sos-smart-response-section">
+        <div class="sos-smart-response-summary">
+          <div><span class="sos-detail-label">Kandidat Utama</span><strong>${escapeHtml((resolvedSummary && resolvedSummary.primary_vehicle_label) || '-')}</strong></div>
+          <div><span class="sos-detail-label">Confidence</span><strong>${escapeHtml(formatConfidenceScore(resolvedSummary && resolvedSummary.confidence_score))}</strong></div>
+          <div><span class="sos-detail-label">Jarak</span><strong>${escapeHtml(formatDistanceMetersSmartResponse(resolvedSummary && resolvedSummary.distance_meters))}</strong></div>
+          <div><span class="sos-detail-label">Kandidat Pertama</span><strong>${escapeHtml(toDateTime((resolvedSummary && resolvedSummary.first_candidate_detected_at) || '-'))}</strong></div>
+          <div><span class="sos-detail-label">Arrival Confirmed</span><strong>${escapeHtml(toDateTime((resolvedSummary && resolvedSummary.arrival_confirmed_at) || '-'))}</strong></div>
+          <div><span class="sos-detail-label">Update</span><strong>${escapeHtml(toDateTime((resolvedSummary && resolvedSummary.updated_at) || '-'))}</strong></div>
+        </div>
+      </section>
+      <section class="sos-smart-response-section">
+        <div class="sos-smart-response-section__head">
+          <strong>Kandidat Vehicle</strong>
+          ${state.smartResponse.selectedResponseLoading ? '<span>Memperbarui...</span>' : ''}
+        </div>
+        <div class="sos-smart-response-candidate-list">${candidateMarkup}</div>
+      </section>
+      <section class="sos-smart-response-section">
+        <div class="sos-smart-response-section__head">
+          <strong>Timeline Response</strong>
+          ${(state.smartResponse.selectedTimelineLoading && !timelineItems.length) ? '<span>Memuat...</span>' : ''}
+        </div>
+        ${timelineError ? `<div class="sos-smart-response-banner warning">${escapeHtml(timelineError)}</div>` : ''}
+        <div class="sos-smart-response-timeline">${timelineMarkup}</div>
+      </section>
+    `;
+    sosSmartResponsePanelEl.classList.remove('hidden');
+    sosSmartResponsePanelEl.classList.add('is-visible');
   };
 
   const updateMapEmptyState = (message) => {
@@ -7612,6 +8094,7 @@
     renderVehicleTypeToggleControls();
     renderVehiclePanel();
     renderDetailPanel();
+    renderSmartResponsePanel();
     renderNotifications();
     syncGateAlertMarkers();
     syncMapMarkers();
@@ -7621,12 +8104,78 @@
     syncNetworkOverlay();
   };
 
+  const clearSmartResponseSummaryMaps = () => {
+    state.smartResponse.summariesByTicketNo.clear();
+    state.smartResponse.summariesBySosId.clear();
+  };
+
+  const getSmartResponseSummaryBySosId = (sosId) => {
+    const numericSosId = Number(sosId);
+    if (!Number.isFinite(numericSosId)) {
+      return null;
+    }
+    return state.smartResponse.summariesBySosId.get(numericSosId) || null;
+  };
+
+  const getSmartResponseSummaryForAlert = (alert) => {
+    if (!alert) {
+      return null;
+    }
+    return (
+      normalizeSmartResponseSummary(alert.ticket && alert.ticket.response_summary ? alert.ticket.response_summary : null, alert.ticket || alert) ||
+      getSmartResponseSummaryBySosId(alert.sos_id)
+    );
+  };
+
+  const upsertSmartResponseSummary = (summary, options = {}) => {
+    const normalized = normalizeSmartResponseSummary(summary);
+    if (!normalized) {
+      return null;
+    }
+    if (normalized.ticket_no) {
+      state.smartResponse.summariesByTicketNo.set(normalized.ticket_no, normalized);
+    }
+    if (Number.isFinite(Number(normalized.sos_id))) {
+      state.smartResponse.summariesBySosId.set(Number(normalized.sos_id), normalized);
+    }
+    if (options.patchTicket !== false) {
+      const ticket =
+        (Number.isFinite(Number(normalized.sos_id)) && state.ticketsBySosId.get(Number(normalized.sos_id))) ||
+        Array.from(state.ticketsBySosId.values()).find(
+          (entry) => String(entry && entry.ticket_no ? entry.ticket_no : '') === String(normalized.ticket_no || '')
+        ) ||
+        null;
+      if (ticket) {
+        ticket.response_summary = normalized;
+      }
+    }
+    return normalized;
+  };
+
+  const resetSelectedSmartResponseState = () => {
+    state.smartResponse.selectedTicketNo = '';
+    state.smartResponse.selectedResponse = null;
+    state.smartResponse.selectedTimeline = [];
+    state.smartResponse.selectedResponseLoading = false;
+    state.smartResponse.selectedTimelineLoading = false;
+    state.smartResponse.selectedResponseError = '';
+    state.smartResponse.selectedTimelineError = '';
+    state.smartResponse.responseRequestKey = '';
+    state.smartResponse.timelineRequestKey = '';
+    state.smartResponse.confirmArrivalSubmittingVehicleId = null;
+    state.smartResponse.confirmArrivalError = '';
+    state.smartResponse.confirmArrivalSuccessMessage = '';
+  };
+
   const mergeTicketToAlert = (alert) => {
     const ticket = state.ticketsBySosId.get(alert.sos_id);
     if (!ticket) {
       return alert;
     }
     alert.ticket = ticket;
+    if (ticket.response_summary) {
+      upsertSmartResponseSummary(ticket.response_summary, { patchTicket: false });
+    }
     if (Number(alert.status) !== 2) {
       alert.status = ticket.ticket_status === 2 ? 2 : 1;
     }
@@ -7657,6 +8206,9 @@
       ...normalized,
       ticket_status: normalized.ticket_status,
     };
+    if (normalized.response_summary) {
+      upsertSmartResponseSummary(normalized.response_summary, { patchTicket: false });
+    }
     alert.status = normalized.ticket_status === 2 ? 2 : 1;
     return alert;
   };
@@ -7776,6 +8328,7 @@
     if (shouldRemoveNotification) {
       removeNotificationsByTarget('sos', (target) => String(target.sosId) === String(sosId));
     }
+    syncSelectedSmartResponseSelection();
     renderAll();
     if (focusOnMap && options.forceFocus !== false) {
       focusAlertOnMap(getSelectedAlert(), true);
@@ -7792,6 +8345,7 @@
     state.networkArcs.selectedEdgeKey = null;
     state.weather.selectedWeatherId = null;
     state.detailRenderKey = '';
+    resetSelectedSmartResponseState();
     if (options.lockLabel === false) {
       clearMarkerLabelState({ preserveSosLocked: false });
     } else {
@@ -7822,6 +8376,7 @@
     state.networkArcs.selectedEdgeKey = null;
     state.weather.selectedWeatherId = null;
     state.detailRenderKey = '';
+    resetSelectedSmartResponseState();
     if (options.lockLabel === false) {
       clearMarkerLabelState({ preserveSosLocked: false });
     } else {
@@ -7851,6 +8406,7 @@
     state.ui.selectedEntityType = '';
     state.ui.selectedEntityId = null;
     state.detailRenderKey = '';
+    resetSelectedSmartResponseState();
     clearMarkerLabelState({ preserveSosLocked: false });
     renderAll();
   };
@@ -7870,10 +8426,14 @@
     });
     state.ticketsBySosId.clear();
     state.incidents.ticketsBySosId = state.ticketsBySosId;
+    clearSmartResponseSummaryMaps();
     unwrapCollection(response.data).forEach((ticket) => {
       const normalized = normalizeTicket(ticket);
       if (normalized) {
         state.ticketsBySosId.set(normalized.sos_id, normalized);
+        if (normalized.response_summary) {
+          upsertSmartResponseSummary(normalized.response_summary, { patchTicket: false });
+        }
       }
     });
     debugLog('loadOpenTickets:parsed', {
@@ -7898,6 +8458,9 @@
       }
       mergeTicketToAlert(alert);
     });
+    if (state.ui.selectedEntityType === 'sos' && state.selectedSosId) {
+      syncSelectedSmartResponseSelection();
+    }
   };
 
   const loadSnapshot = async () => {
@@ -7991,6 +8554,7 @@
     const hasGateAlertsPayload = Object.prototype.hasOwnProperty.call(payload, 'gate_alerts');
     const hasAssetsPayload = Object.prototype.hasOwnProperty.call(payload, 'assets');
     const hasVehiclesPayload = Object.prototype.hasOwnProperty.call(payload, 'vehicles');
+    const hasSosResponsesPayload = Object.prototype.hasOwnProperty.call(payload, 'sos_responses');
     const gateAlerts = toArray(payload.gate_alerts)
       .map(normalizeGateAlert)
       .filter((gate) => gate && isEntityInSelectedBranch(gate.branch_id));
@@ -8002,6 +8566,7 @@
       .map((item) => normalizeVehicleLive(item, state.vehicles.apiBaseUrl))
       .filter((vehicle) => vehicle && isEntityInSelectedBranch(vehicle.branch_id));
     const sosAlerts = toArray(payload.sos).filter(Boolean);
+    const sosResponses = toArray(payload.sos_responses).map(normalizeSmartResponseSummary).filter(Boolean);
     const branchId = getSelectedBranch() && getSelectedBranch().id ? String(getSelectedBranch().id) : '';
     if (hasGateAlertsPayload) {
       state.gateAlerts.items.clear();
@@ -8048,6 +8613,12 @@
       });
       state.vehicles.items = nextVehicleItems;
       state.vehicles.lastSnapshotAt = Date.now();
+    }
+    if (hasSosResponsesPayload) {
+      clearSmartResponseSummaryMaps();
+      sosResponses.forEach((summary) => {
+        upsertSmartResponseSummary(summary);
+      });
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'sos')) {
       state.alerts.clear();
@@ -8205,6 +8776,17 @@
     }
     if (eventName === 'vehicle_position_updated') {
       void applyVehiclePatch(payload);
+      return;
+    }
+    if (eventName === 'sos_response_updated') {
+      const summary = upsertSmartResponseSummary(payload);
+      if (summary) {
+        if (String(state.smartResponse.selectedTicketNo || '') === String(summary.ticket_no || '')) {
+          syncSelectedSmartResponseSelection({ force: true });
+        }
+        renderIncidentList();
+        renderSmartResponsePanel();
+      }
       return;
     }
     let latestAlert = null;
@@ -8862,6 +9444,37 @@
     hideModal(sosCompleteModalEl);
   };
 
+  const confirmSelectedSmartResponseArrival = async (vehicleId) => {
+    const ticketNo = String(state.smartResponse.selectedTicketNo || '').trim();
+    const normalizedVehicleId = Number(vehicleId);
+    if (!ticketNo || !Number.isFinite(normalizedVehicleId)) {
+      return;
+    }
+    state.smartResponse.confirmArrivalError = '';
+    state.smartResponse.confirmArrivalSuccessMessage = '';
+    state.smartResponse.confirmArrivalSubmittingVehicleId = normalizedVehicleId;
+    renderSmartResponsePanel();
+    try {
+      const response = await window.cameraService.confirmSosTicketArrival(ticketNo, {
+        vehicle_id: normalizedVehicleId,
+      });
+      if (!response || response.status >= 400) {
+        throw new Error((response && response.message) || 'Confirm arrival gagal.');
+      }
+      state.smartResponse.confirmArrivalSuccessMessage = 'Confirm arrival berhasil dikirim.';
+      syncSelectedSmartResponseSelection({ force: true });
+      await loadOpenTickets().catch(() => {});
+      renderIncidentList();
+      renderSmartResponsePanel();
+    } catch (error) {
+      state.smartResponse.confirmArrivalError = error && error.message ? error.message : 'Confirm arrival gagal.';
+      renderSmartResponsePanel();
+    } finally {
+      state.smartResponse.confirmArrivalSubmittingVehicleId = null;
+      renderSmartResponsePanel();
+    }
+  };
+
   sosMonitorBtn.addEventListener('click', () => {
     if (state.isActive) {
       leaveAssetMonitoringMode();
@@ -9340,6 +9953,22 @@
       }
     }
   });
+
+  if (sosSmartResponseBodyEl) {
+    sosSmartResponseBodyEl.addEventListener('click', (event) => {
+      const target =
+        event.target instanceof HTMLElement ? event.target.closest('[data-confirm-arrival]') : null;
+      if (!target) {
+        return;
+      }
+      event.preventDefault();
+      const vehicleId = Number(target.getAttribute('data-confirm-arrival'));
+      if (!Number.isFinite(vehicleId)) {
+        return;
+      }
+      void confirmSelectedSmartResponseArrival(vehicleId);
+    });
+  }
 
   sosIncidentListEl.addEventListener('click', (event) => {
     if (event.target instanceof HTMLElement && event.target.closest('[data-incident-disabled="true"]')) {

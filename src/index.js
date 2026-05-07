@@ -861,11 +861,44 @@ const registerServiceHandlers = () => {
     }
   });
 
+  ipcMain.handle('camera-service:get-sos-ticket-response', async (_event, ticketNo) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.getSosTicketResponse(ticketNo),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:get-sos-ticket-timeline', async (_event, ticketNo) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.getSosTicketTimeline(ticketNo),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
   ipcMain.handle('camera-service:dispatch-sos-ticket', async (_event, payload) => {
     try {
       return {
         status: 200,
         data: await cameraService.dispatchSosTicket(payload),
+      };
+    } catch (error) {
+      return toIpcError(error);
+    }
+  });
+
+  ipcMain.handle('camera-service:confirm-sos-ticket-arrival', async (_event, ticketNo, payload) => {
+    try {
+      return {
+        status: 200,
+        data: await cameraService.confirmSosTicketArrival(ticketNo, payload),
       };
     } catch (error) {
       return toIpcError(error);

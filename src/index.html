@@ -283,6 +283,7 @@
             <div id="sosNotificationList" class="sos-notification-list"></div>
           </div>
 
+          <div id="sosDetailStack" class="sos-detail-stack">
           <article id="sosDetailPanel" class="sos-detail-panel hidden">
             <div class="sos-panel__header">
               <div>
@@ -301,6 +302,19 @@
               <button id="sosCompleteBtn" class="toolbar-btn" type="button">Complete</button>
             </div>
           </article>
+          <article id="sosSmartResponsePanel" class="sos-detail-panel sos-smart-response-panel hidden">
+            <div class="sos-panel__header">
+              <div>
+                <p class="eyebrow">Smart Response</p>
+                <h3 id="sosSmartResponseTitle">Tracking responder</h3>
+              </div>
+              <div class="sos-detail-panel__header-actions">
+                <span id="sosSmartResponseStatus" class="status-pill neutral">Tracking</span>
+              </div>
+            </div>
+            <div id="sosSmartResponseBody" class="sos-detail-body sos-smart-response-body"></div>
+          </article>
+          </div>
         </section>
 
         <div class="sos-side-panel-stack">

@@ -36,7 +36,13 @@ contextBridge.exposeInMainWorld('cameraService', {
   getOpenSosTickets: () => ipcRenderer.invoke('camera-service:get-open-sos-tickets'),
   getSosTicketDetail: (ticketNo) =>
     ipcRenderer.invoke('camera-service:get-sos-ticket-detail', ticketNo),
+  getSosTicketResponse: (ticketNo) =>
+    ipcRenderer.invoke('camera-service:get-sos-ticket-response', ticketNo),
+  getSosTicketTimeline: (ticketNo) =>
+    ipcRenderer.invoke('camera-service:get-sos-ticket-timeline', ticketNo),
   dispatchSosTicket: (payload) => ipcRenderer.invoke('camera-service:dispatch-sos-ticket', payload),
+  confirmSosTicketArrival: (ticketNo, payload) =>
+    ipcRenderer.invoke('camera-service:confirm-sos-ticket-arrival', ticketNo, payload),
   completeSosTicket: (ticketNo, payload) =>
     ipcRenderer.invoke('camera-service:complete-sos-ticket', ticketNo, payload),
   onOpenBranchPicker: (callback) => {

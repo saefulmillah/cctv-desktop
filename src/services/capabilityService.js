@@ -121,6 +121,7 @@
     hasAnyPermission(session, [FEATURE_ASSET_VIEW, FEATURE_SOS_VIEW]);
   const canDispatchSos = (session) => hasPermission(session, 'sos.ticket.dispatch');
   const canCompleteSos = (session) => hasPermission(session, 'sos.ticket.complete');
+  const canConfirmSosResponse = (session) => hasPermission(session, 'sos.response.confirm');
 
   const capabilityApi = {
     BRANCH_VIEW_ALL,
@@ -138,6 +139,7 @@
     canUseAssetMonitoring,
     canDispatchSos,
     canCompleteSos,
+    canConfirmSosResponse,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

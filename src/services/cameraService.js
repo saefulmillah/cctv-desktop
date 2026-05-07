@@ -237,8 +237,20 @@ const getOpenSosTickets = () => requestJson('/api/sos-tickets/open');
 const getSosTicketDetail = (ticketNo) =>
   requestJson(`/api/sos-tickets/${encodePathSegment(ticketNo)}`);
 
+const getSosTicketResponse = (ticketNo) =>
+  requestJson(`/api/sos-tickets/${encodePathSegment(ticketNo)}/response`);
+
+const getSosTicketTimeline = (ticketNo) =>
+  requestJson(`/api/sos-tickets/${encodePathSegment(ticketNo)}/timeline`);
+
 const dispatchSosTicket = (payload) =>
   requestJson('/api/sos-tickets/dispatch', {
+    method: 'POST',
+    body: JSON.stringify(payload || {}),
+  });
+
+const confirmSosTicketArrival = (ticketNo, payload) =>
+  requestJson(`/api/sos-tickets/${encodePathSegment(ticketNo)}/confirm-arrival`, {
     method: 'POST',
     body: JSON.stringify(payload || {}),
   });
@@ -277,6 +289,9 @@ module.exports = {
   getSosAlerts,
   getOpenSosTickets,
   getSosTicketDetail,
+  getSosTicketResponse,
+  getSosTicketTimeline,
   dispatchSosTicket,
+  confirmSosTicketArrival,
   completeSosTicket,
 };
