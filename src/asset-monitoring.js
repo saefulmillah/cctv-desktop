@@ -22,10 +22,12 @@
   const VEHICLE_INTERPOLATION_MAX_MS = 1600;
   const VEHICLE_INTERPOLATION_DEFAULT_MS = 700;
   const VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS = 1200;
-  const VEHICLE_PREDICTION_MIN_MS = 900;
-  const VEHICLE_PREDICTION_MAX_MS = 2600;
+  const VEHICLE_PREDICTION_MIN_MS = 6000;
+  const VEHICLE_PREDICTION_MAX_MS = 18000;
+  const VEHICLE_PREDICTION_MAX_AGE_MS = 18000;
   const VEHICLE_PREDICTION_CORRECTION_SNAP_METERS = 420;
   const VEHICLE_PREDICTION_MAX_SPEED_KMH = 180;
+  const VEHICLE_PREDICTION_SPEED_FACTOR = 0.58;
 
   const $ = (id) => document.getElementById(id);
   const sosMonitorBtn = $('sosMonitorBtn');
@@ -613,6 +615,36 @@
     const minutes = String(date.getMinutes()).padStart(2, '0');
     return `${day}-${month}-${year} ${hours}:${minutes}`;
   };
+  const toDateTimeWithSeconds = (value) => {
+    if (!value) {
+      return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    const monthNames = [
+      'januari',
+      'februari',
+      'maret',
+      'april',
+      'mei',
+      'juni',
+      'juli',
+      'agustus',
+      'september',
+      'oktober',
+      'november',
+      'desember',
+    ];
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = monthNames[date.getMonth()] || '';
+    const year = String(date.getFullYear());
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
+  };
 
   const formatWeatherObservedAt = (value) => {
     if (!value) {
@@ -950,8 +982,11 @@
     if (normalized === 'moving') {
       return 'Berjalan';
     }
-    if (normalized === 'anomaly') {
-      return 'Anomali';
+    if (normalized === 'stopped') {
+      return 'Berhenti';
+    }
+    if (normalized === 'idle') {
+      return 'Diam';
     }
     return 'Semua';
   };
@@ -983,9 +1018,10 @@
       Number.isFinite(lastBackendAt) && Number.isFinite(previousBackendAt) && lastBackendAt > previousBackendAt
         ? lastBackendAt - previousBackendAt
         : VEHICLE_INTERPOLATION_DEFAULT_MS * 2;
+    const bufferedDelta = backendDelta * 2.4;
     return Math.max(
       VEHICLE_PREDICTION_MIN_MS,
-      Math.min(VEHICLE_PREDICTION_MAX_MS, backendDelta)
+      Math.min(VEHICLE_PREDICTION_MAX_MS, bufferedDelta)
     );
   };
 
@@ -1023,9 +1059,11 @@
     }
     const startedAt = Number(entry.predictionStartedAt || 0);
     const until = Number(entry.predictionUntil || 0);
-    const elapsedMs = Math.max(0, now - startedAt);
-    const clampedElapsedMs = until ? Math.min(elapsedMs, Math.max(0, until - startedAt)) : elapsedMs;
-    const speedMetersPerSecond = (Number(entry.lastKnownSpeed || 0) * 1000) / 3600;
+    const anchorAt = Number(entry.lastBackendPerfAt || startedAt || now);
+    const elapsedMs = Math.max(0, now - anchorAt);
+    const clampedElapsedMs = until ? Math.min(elapsedMs, Math.max(0, until - anchorAt)) : elapsedMs;
+    const speedMetersPerSecond =
+      ((Number(entry.lastKnownSpeed || 0) * VEHICLE_PREDICTION_SPEED_FACTOR) * 1000) / 3600;
     const distanceMeters = speedMetersPerSecond * (clampedElapsedMs / 1000);
     return projectLatLngByDistanceAndBearing(
       entry.lastBackendLatLng,
@@ -1079,7 +1117,9 @@
     }
     entry.isPredicting = true;
     entry.predictionStartedAt = performance.now();
-    entry.predictionUntil = entry.predictionStartedAt + getVehiclePredictionHorizonMs(entry);
+    const anchorAt = Number(entry.lastBackendPerfAt || entry.predictionStartedAt);
+    const horizonMs = getVehiclePredictionHorizonMs(entry);
+    entry.predictionUntil = anchorAt + Math.min(VEHICLE_PREDICTION_MAX_AGE_MS, horizonMs);
     entry.predictedLatLng = entry.lastBackendLatLng ? { ...entry.lastBackendLatLng } : null;
     const step = (now) => {
       if (!entry.isPredicting) {
@@ -2342,7 +2382,6 @@
     }
     return { singles, clusters };
   };
-
   const animateMapZoom = (map, targetZoom, center, stepDelay = 90) => {
     if (!map || !Number.isFinite(targetZoom)) {
       return;
@@ -2944,6 +2983,13 @@
 
   const getWeatherMarkerZIndex = (isExpanded = false) =>
     getLayerStackZIndex(5, { selected: isExpanded });
+  const getVehicleMarkerZIndex = (isSelected = false) => {
+    if (Boolean(state.networkArcs && state.networkArcs.visible)) {
+      return isSelected ? 3 : 2;
+    }
+    return isSelected ? 488 : 476;
+  };
+  const isVehicleMarkerInteractive = () => true;
 
   const getVehicleMarkerClass = () => {
     if (state.vehicles.markerClass) {
@@ -2957,6 +3003,13 @@
         this.onSelect = onSelect;
         this.element = null;
         this.renderKey = '';
+        this.position = vehicle && (vehicle.renderLatLng || vehicle.latLng) ? {
+          lat: Number((vehicle.renderLatLng || vehicle.latLng).lat),
+          lng: Number((vehicle.renderLatLng || vehicle.latLng).lng),
+        } : null;
+        this.zIndex = null;
+        this.title = String(vehicle && vehicle.label ? vehicle.label : '').trim();
+        this.isClickable = isVehicleMarkerInteractive(vehicle);
         this.setMap(map);
       }
 
@@ -2984,7 +3037,7 @@
       }
 
       draw() {
-        const position = this.vehicle && (this.vehicle.renderLatLng || this.vehicle.latLng);
+        const position = this.position || (this.vehicle && (this.vehicle.renderLatLng || this.vehicle.latLng));
         if (!this.element || !position) {
           return;
         }
@@ -2997,26 +3050,37 @@
         const gpsStatus = String(this.vehicle.gps_status || 'offline').toLowerCase();
         const isSelected = Number(state.vehicles.selectedVehicleId) === Number(this.vehicle.vehicle_id);
         const isMoving = String(this.vehicle.movement_status || '').toLowerCase() === 'moving';
+        const isInteractive = Boolean(this.isClickable);
         const iconUrl = this.vehicle.vehicle_type_icon_url || createVehicleFallbackIconDataUrl();
+        const plateNumber =
+          String(this.vehicle.vehicle_registration_plate || this.vehicle.license_plate || '').trim() || '-';
         this.element.className = `sos-map-marker vehicle-map-marker vehicle-map-marker--${gpsStatus} ${
           isMoving ? 'vehicle-map-marker--moving' : ''
         } ${isSelected ? 'is-selected' : ''}`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
+        this.element.style.pointerEvents = 'none';
+        this.element.style.cursor = 'default';
         this.element.style.zIndex = String(
-          isSelected ? getMapMarkerZIndex('selected') : getMapMarkerZIndex('asset') + 4
+          Number.isFinite(Number(this.zIndex)) ? Number(this.zIndex) : getVehicleMarkerZIndex(isSelected)
         );
-        this.element.title = String(this.vehicle.label || `Kendaraan ${this.vehicle.vehicle_id}`).trim();
+        this.element.title = this.title || String(this.vehicle.label || `Kendaraan ${this.vehicle.vehicle_id}`).trim();
         const nextRenderKey = JSON.stringify({
           iconUrl,
           gpsStatus,
           isMoving,
           isSelected,
+          isInteractive,
+          plateNumber,
         });
         if (this.renderKey !== nextRenderKey) {
           this.renderKey = nextRenderKey;
           this.element.innerHTML = `
             <span class="sos-map-marker__pulse"></span>
+            <span class="vehicle-map-marker__mini-popover" aria-hidden="true">
+              <span class="vehicle-map-marker__mini-plate">${escapeHtml(plateNumber)}</span>
+              <span class="vehicle-map-marker__mini-indicator ${escapeHtml(getVehicleGpsTone(this.vehicle))}"></span>
+            </span>
             <span class="sos-map-marker__dot">
               <img class="vehicle-map-marker__icon" src="${escapeHtml(iconUrl)}" alt="" aria-hidden="true" />
             </span>
@@ -3033,7 +3097,45 @@
 
       update(vehicle) {
         this.vehicle = vehicle;
+        this.position = vehicle && (vehicle.renderLatLng || vehicle.latLng) ? {
+          lat: Number((vehicle.renderLatLng || vehicle.latLng).lat),
+          lng: Number((vehicle.renderLatLng || vehicle.latLng).lng),
+        } : this.position;
+        this.isClickable = isVehicleMarkerInteractive(vehicle);
+        this.title = String(vehicle && vehicle.label ? vehicle.label : this.title || '').trim();
         this.draw();
+      }
+
+      setPosition(latLng) {
+        if (latLng && Number.isFinite(Number(latLng.lat)) && Number.isFinite(Number(latLng.lng))) {
+          this.position = { lat: Number(latLng.lat), lng: Number(latLng.lng) };
+          this.draw();
+        }
+      }
+
+      setZIndex(zIndex) {
+        this.zIndex = Number(zIndex);
+        this.draw();
+      }
+
+      setTitle(title) {
+        this.title = String(title || '').trim();
+        this.draw();
+      }
+
+      setClickable(clickable) {
+        this.isClickable = Boolean(clickable);
+        this.draw();
+      }
+
+      setIcon(icon) {
+        if (icon && icon.url) {
+          this.vehicle = {
+            ...(this.vehicle || {}),
+            vehicle_type_icon_url: String(icon.url),
+          };
+          this.draw();
+        }
       }
     };
     return state.vehicles.markerClass;
@@ -3067,7 +3169,12 @@
           this.onSelect(this.cluster, this);
         });
         this.element = button;
-        this.getPanes().overlayMouseTarget.appendChild(button);
+        const panes = this.getPanes();
+        if (panes && panes.floatPane) {
+          panes.floatPane.appendChild(button);
+        } else if (panes && panes.overlayMouseTarget) {
+          panes.overlayMouseTarget.appendChild(button);
+        }
         this.isEntering = true;
         this.entranceTimer = window.setTimeout(() => {
           this.entranceTimer = 0;
@@ -3090,6 +3197,8 @@
         this.element.className = `sos-map-marker asset-map-marker asset-map-marker--${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'success'} asset-map-marker--cluster cctv-cluster-marker cctv-cluster-marker--${assetType} ${this.isEntering ? 'is-entering' : ''} ${this.isDimmed ? 'is-dimmed' : ''}`;
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y}px`;
+        this.element.style.pointerEvents = 'auto';
+        this.element.style.cursor = 'pointer';
         this.element.style.zIndex = String(getCctvClusterZIndex(this.cluster));
         this.element.title = `${Number(this.cluster.count || 0)} asset`;
         this.element.innerHTML = assetType === 'mixed'
@@ -3132,7 +3241,6 @@
     };
     return state.standaloneAssets.clusterMarkerClass;
   };
-
   const getGateMarkerClass = () => {
     if (state.gateAlerts.markerClass) {
       return state.gateAlerts.markerClass;
@@ -4655,8 +4763,11 @@
       if (filter === 'moving') {
         return vehicle.movement_status === 'moving';
       }
-      if (filter === 'anomaly') {
-        return Boolean(vehicle.has_branch_anomaly);
+      if (filter === 'stopped') {
+        return vehicle.movement_status === 'stopped';
+      }
+      if (filter === 'idle') {
+        return vehicle.movement_status === 'idle';
       }
       return true;
     });
@@ -4704,6 +4815,7 @@
           <div><span>Tipe</span><strong>${escapeHtml(getVehiclePopupTypeLabel(vehicle))}</strong></div>
           <div><span>Kecepatan</span><strong>${escapeHtml(formatSpeedKmh(vehicle.speed))}</strong></div>
           <div><span>Status</span><strong>${escapeHtml(getVehicleMovementLabel(vehicle.movement_status))}</strong></div>
+          <div><span>GPS Time</span><strong>${escapeHtml(toDateTimeWithSeconds(vehicle.gps_time || vehicle.received_at || '-'))}</strong></div>
         </div>
       `,
     };
@@ -4715,7 +4827,7 @@
       : normalizeVehicleSummary(state.vehicles.summary);
 
   const setVehicleListFilter = (filter) => {
-    state.vehicles.listFilter = ['all', 'moving', 'anomaly'].includes(String(filter || ''))
+    state.vehicles.listFilter = ['all', 'moving', 'stopped', 'idle'].includes(String(filter || ''))
       ? String(filter)
       : 'all';
   };
@@ -4834,9 +4946,10 @@
     const countsByFilter = {
       all: visibleTypeRows.length,
       moving: visibleTypeRows.filter((vehicle) => vehicle.movement_status === 'moving').length,
-      anomaly: visibleTypeRows.filter((vehicle) => Boolean(vehicle.has_branch_anomaly)).length,
+      stopped: visibleTypeRows.filter((vehicle) => vehicle.movement_status === 'stopped').length,
+      idle: visibleTypeRows.filter((vehicle) => vehicle.movement_status === 'idle').length,
     };
-    sosVehicleFiltersEl.innerHTML = ['all', 'moving', 'anomaly']
+    sosVehicleFiltersEl.innerHTML = ['all', 'moving', 'stopped', 'idle']
       .map((filter) => {
         const isActive = state.vehicles.listFilter === filter;
         return `<button type="button" class="sos-incident-filter-chip ${isActive ? 'is-active' : ''}" data-vehicle-filter="${filter}" aria-pressed="${isActive ? 'true' : 'false'}">${escapeHtml(
@@ -4926,7 +5039,6 @@
     }
     renderAll();
   };
-
   const upsertVehicleLive = (vehicle, options = {}) => {
     const normalized =
       vehicle && typeof vehicle === 'object' && Number.isFinite(Number(vehicle.vehicle_id))
@@ -5066,6 +5178,7 @@
     if (!state.map || !window.google || !window.google.maps) {
       return;
     }
+    const VehicleMarkerCtor = getVehicleMarkerClass();
     const visibleVehicles = getVisibleVehicleItems();
     const visibleIds = new Set();
     const bounds = state.map && typeof state.map.getBounds === 'function' ? state.map.getBounds() : null;
@@ -5086,37 +5199,22 @@
       visibleIds.add(vehicle.vehicle_id);
       let entry = state.vehicles.markers.get(vehicle.vehicle_id) || null;
       if (!entry) {
-        const marker = new window.google.maps.Marker({
+        const marker = new VehicleMarkerCtor({
           map: state.map,
-          position: vehicle.renderLatLng || vehicle.latLng,
-          title: vehicle.label || `Kendaraan ${vehicle.vehicle_id}`,
-          optimized: true,
-          zIndex: getMapMarkerZIndex('asset') + 4,
-          icon: {
-            url: vehicle.vehicle_type_icon_url || createVehicleFallbackIconDataUrl(),
-            scaledSize: new window.google.maps.Size(40, 40),
+          vehicle,
+          onSelect: (vehicleId) => {
+            selectVehicle(vehicleId, { focus: false });
+            void loadVehicleDetail(vehicleId).then(() => renderDetailPanel()).catch(() => {});
           },
         });
-        marker.addListener('click', () => {
-          selectVehicle(vehicle.vehicle_id, { focus: true });
-          void loadVehicleDetail(vehicle.vehicle_id).then(() => renderDetailPanel()).catch(() => {});
-        });
-        marker.addListener('mouseover', () => {
-          setPreviewMarkerLabel(
-            createMarkerLabelRef('vehicle', vehicle.vehicle_id, {
-              latLng: vehicle.renderLatLng || vehicle.latLng,
-            })
-          );
-        });
-        marker.addListener('mouseout', () => {
-          clearPreviewMarkerLabelIfUnlocked();
-        });
         entry = {
+          vehicle,
           marker,
           animationFrame: null,
           lastUpdateAt: Date.now(),
           previousBackendAt: 0,
           lastBackendAt: Date.now(),
+          lastBackendPerfAt: performance.now(),
           lastBackendLatLng: vehicle.latLng ? { ...vehicle.latLng } : null,
           predictedLatLng: null,
           predictionStartedAt: 0,
@@ -5132,6 +5230,7 @@
       }
 
       const iconUrl = vehicle.vehicle_type_icon_url || createVehicleFallbackIconDataUrl();
+      entry.vehicle = vehicle;
       if (entry.iconUrl !== iconUrl) {
         entry.iconUrl = iconUrl;
         entry.marker.setIcon({
@@ -5139,11 +5238,17 @@
           scaledSize: new window.google.maps.Size(40, 40),
         });
       }
+      if (typeof entry.marker.update === 'function') {
+        entry.marker.update(vehicle);
+      }
       entry.marker.setTitle(vehicle.label || `Kendaraan ${vehicle.vehicle_id}`);
+      if (typeof entry.marker.setClickable === 'function') {
+        entry.marker.setClickable(isVehicleMarkerInteractive(vehicle));
+      }
       entry.marker.setZIndex(
-        Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id)
-          ? getMapMarkerZIndex('selected')
-          : getMapMarkerZIndex('asset') + 4
+        getVehicleMarkerZIndex(
+          Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id)
+        )
       );
       if (!entry.marker.getMap()) {
         entry.marker.setMap(state.map);
@@ -5169,6 +5274,7 @@
       }
       entry.previousBackendAt = Number(entry.lastBackendAt || 0);
       entry.lastBackendAt = Date.now();
+      entry.lastBackendPerfAt = performance.now();
       entry.lastBackendLatLng = nextLatLng ? { ...nextLatLng } : null;
       entry.lastKnownSpeed = Number.isFinite(Number(vehicle.speed)) ? Number(vehicle.speed) : null;
       entry.lastKnownBearing = Number.isFinite(Number(vehicle.bearing)) ? Number(vehicle.bearing) : null;
@@ -5468,7 +5574,7 @@
               <div><span class="sos-detail-label">Status</span><strong>${escapeHtml(getVehicleMovementLabel(baseVehicle.movement_status))}</strong></div>
               <div><span class="sos-detail-label">Kecepatan</span><strong>${escapeHtml(formatSpeedKmh(baseVehicle.speed))}</strong></div>
               <div><span class="sos-detail-label">Arah</span><strong>${escapeHtml(formatBearing(baseVehicle.bearing))}</strong></div>
-              <div><span class="sos-detail-label">Waktu GPS</span><strong>${escapeHtml(toDateTime(baseVehicle.gps_time || baseVehicle.received_at || '-'))}</strong></div>
+              <div><span class="sos-detail-label">Waktu GPS</span><strong>${escapeHtml(toDateTimeWithSeconds(baseVehicle.gps_time || baseVehicle.received_at || '-'))}</strong></div>
               <div><span class="sos-detail-label">Latitude</span><strong>${escapeHtml(baseVehicle.latitude !== null ? String(baseVehicle.latitude) : '-')}</strong></div>
               <div><span class="sos-detail-label">Longitude</span><strong>${escapeHtml(baseVehicle.longitude !== null ? String(baseVehicle.longitude) : '-')}</strong></div>
             </div>
@@ -6299,6 +6405,7 @@
         }
         this.element.style.left = `${pixel.x}px`;
         this.element.style.top = `${pixel.y - 30}px`;
+        this.element.style.zIndex = '5000';
       }
 
       onRemove() {
@@ -6362,14 +6469,14 @@
     if (!centerPixel) {
       return false;
     }
-    const spacing = Math.max(68, Math.min(90, 56 + nearbyEntries.length * 4));
-    const baseYOffsets = [0, -16, 16, -28, 28, -38, 38, -48, 48];
+    const spacing = Math.max(96, Math.min(128, 84 + nearbyEntries.length * 6));
+    const baseYOffsets = [0, -26, 26, -42, 42, -58, 58, -72, 72];
     const middleIndex = (nearbyEntries.length - 1) / 2;
     nearbyEntries.forEach((entry, index) => {
       const xOffset = (index - middleIndex) * spacing;
       const yOffset =
         baseYOffsets[index] ??
-        ((index % 2 === 0 ? 1 : -1) * (18 + Math.floor(index / 2) * 12));
+        ((index % 2 === 0 ? 1 : -1) * (30 + Math.floor(index / 2) * 16));
       const targetPixel = new window.google.maps.Point(centerPixel.x + xOffset, centerPixel.y + yOffset);
       const targetLatLng = projection.fromDivPixelToLatLng(targetPixel);
       if (!targetLatLng) {
@@ -6503,16 +6610,6 @@
       (cluster && cluster.position) ||
       entries[0].originalPosition ||
       (entries[0].marker && entries[0].marker.getPosition && entries[0].marker.getPosition());
-    const currentZoom = Number(state.map && state.map.getZoom ? state.map.getZoom() : 4);
-    if (entries.length > 4) {
-      const zoomStep = entries.length >= 10 ? 1 : 2;
-      const nextZoom = Math.min(currentZoom + zoomStep, 20);
-      const shouldSpiderfyInstead = currentZoom >= 19 || nextZoom === currentZoom;
-      if (!shouldSpiderfyInstead) {
-        animateMapZoom(state.map, nextZoom, clusterCenter);
-        return;
-      }
-    }
     if (clusterOverlay && typeof clusterOverlay.setDimmed === 'function') {
       clusterOverlay.setDimmed(true);
       state.cctvSpiderfyClusterMarker = clusterOverlay;
