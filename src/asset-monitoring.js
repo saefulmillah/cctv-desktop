@@ -108,6 +108,7 @@
   const sosVehicleListEl = $('sosVehicleList');
   const sosVehicleListLoadingEl = $('sosVehicleListLoading');
   const sosDetailPanelEl = $('sosDetailPanel');
+  const sosDetailEyebrowEl = $('sosDetailEyebrow');
   const sosDetailTitleEl = $('sosDetailTitle');
   const sosDetailStatusEl = $('sosDetailStatus');
   const sosDetailMetaEl = $('sosDetailMeta');
@@ -117,6 +118,7 @@
   const sosSmartResponseStatusEl = $('sosSmartResponseStatus');
   const sosSmartResponseBodyEl = $('sosSmartResponseBody');
   const closeSosDetailBtn = $('closeSosDetailBtn');
+  const closeSosSmartResponseBtn = $('closeSosSmartResponseBtn');
   const sosContactReporterBtn = $('sosContactReporterBtn');
   const sosDispatchBtn = $('sosDispatchBtn');
   const sosCompleteBtn = $('sosCompleteBtn');
@@ -369,6 +371,9 @@
       mapCameraDebugVisible: false,
       sosFocusAnimationFrame: 0,
       cctvModalOpenedAt: 0,
+      dismissedDetailEntityKey: '',
+      dismissedSosDetailId: null,
+      dismissedSosSmartResponseId: null,
     },
     markerStatusFilters: {
       normal: true,
@@ -3025,6 +3030,28 @@
     };
   };
 
+  const getBranchDisplayName = (branchId, fallbackName = '', fallbackCode = '') => {
+    const directName = String(fallbackName || '').trim();
+    if (directName) {
+      return directName;
+    }
+    const directCode = String(fallbackCode || '').trim();
+    if (directCode) {
+      return directCode;
+    }
+    const normalizedBranchId = String(branchId || '').trim();
+    if (!normalizedBranchId) {
+      return '-';
+    }
+    const matchedBranch = (Array.isArray(state.mapContext.availableBranches) ? state.mapContext.availableBranches : []).find(
+      (branch) => String(branch && branch.id ? branch.id : '').trim() === normalizedBranchId
+    );
+    if (matchedBranch) {
+      return matchedBranch.branch_name || matchedBranch.branch_code || matchedBranch.id || '-';
+    }
+    return normalizedBranchId || '-';
+  };
+
   const normalizeSmartResponseDetail = (payload) => {
     const source =
       unwrapCollection(payload).find((item) => item && typeof item === 'object') ||
@@ -3060,6 +3087,9 @@
       ...source,
       sos_id: sosId,
       status: Number(source.status ?? item.status ?? 0),
+      branch_id: String(source.branch_id || item.branch_id || '').trim(),
+      branch_code: String(source.branch_code || item.branch_code || '').trim(),
+      branch_name: String(source.branch_name || item.branch_name || '').trim(),
       user: source.user || item.user || null,
       nearest_cameras: toArray(source.nearest_cameras || item.nearest_cameras).slice(0, 3),
       latLng: getLatLng(source),
@@ -5327,6 +5357,103 @@
     !String(state.ui.selectedEntityType || '').trim() &&
     !state.ui.mapInteractionActive;
 
+  const resetSosPanelDismissState = (options = {}) => {
+    state.ui.dismissedDetailEntityKey = '';
+    if (options.detail !== false) {
+      state.ui.dismissedSosDetailId = null;
+    }
+    if (options.smartResponse !== false) {
+      state.ui.dismissedSosSmartResponseId = null;
+    }
+  };
+
+  const isSelectedSosDetailDismissed = () =>
+    state.ui.selectedEntityType === 'sos' &&
+    state.selectedSosId &&
+    Number(state.ui.dismissedSosDetailId) === Number(state.selectedSosId);
+
+  const isSelectedSosSmartResponseDismissed = () =>
+    state.ui.selectedEntityType === 'sos' &&
+    state.selectedSosId &&
+    Number(state.ui.dismissedSosSmartResponseId) === Number(state.selectedSosId);
+
+  const focusLastSelectedSosWorklistItem = () => {
+    if (!(sosIncidentListEl && state.selectedSosId)) {
+      return;
+    }
+    const target = sosIncidentListEl.querySelector(
+      `.sos-incident-item[data-entity-type="sos"][data-sos-id="${String(state.selectedSosId)}"]`
+    );
+    if (target instanceof HTMLElement) {
+      target.focus({ preventScroll: true });
+    }
+  };
+
+  const hideSosDetailPanel = () => {
+    if (!sosDetailPanelEl) {
+      return;
+    }
+    sosDetailPanelEl.classList.remove('is-visible', 'is-revealing');
+    sosDetailPanelEl.classList.add('hidden');
+  };
+
+  const hideSosSmartResponsePanel = () => {
+    if (!sosSmartResponsePanelEl) {
+      return;
+    }
+    sosSmartResponsePanelEl.classList.remove('is-visible');
+    sosSmartResponsePanelEl.classList.add('hidden');
+  };
+
+  const setDetailPanelEyebrow = (label) => {
+    if (sosDetailEyebrowEl) {
+      setText(sosDetailEyebrowEl, label || 'SOS Incident');
+    }
+  };
+
+  const getCurrentDetailEntityKey = () => {
+    if (state.ui.selectedEntityType === 'sos' && state.selectedSosId) {
+      return `sos:${state.selectedSosId}`;
+    }
+    if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
+      return `gate:${state.gateAlerts.selectedGateId}`;
+    }
+    if (state.ui.selectedEntityType === 'asset' && state.standaloneAssets.selectedAssetKey) {
+      return `asset:${state.standaloneAssets.selectedAssetKey}`;
+    }
+    if (state.ui.selectedEntityType === 'vehicle' && state.vehicles.selectedVehicleId) {
+      return `vehicle:${state.vehicles.selectedVehicleId}`;
+    }
+    if (state.ui.selectedEntityType === 'network' && state.networkArcs.selectedEdgeKey) {
+      return `network:${state.networkArcs.selectedEdgeKey}`;
+    }
+    return '';
+  };
+
+  const dismissActiveDetailPanel = () => {
+    const entityKey = getCurrentDetailEntityKey();
+    if (!entityKey) {
+      return;
+    }
+    state.ui.dismissedDetailEntityKey = entityKey;
+    if (state.ui.selectedEntityType === 'sos' && state.selectedSosId) {
+      state.ui.dismissedSosDetailId = Number(state.selectedSosId);
+    }
+    hideSosDetailPanel();
+    if (state.ui.selectedEntityType === 'sos') {
+      focusLastSelectedSosWorklistItem();
+    }
+  };
+
+  const dismissActiveSosSmartResponsePanel = () => {
+    if (state.ui.selectedEntityType !== 'sos' || !state.selectedSosId) {
+      return;
+    }
+    state.ui.dismissedSosSmartResponseId = Number(state.selectedSosId);
+    hideSosSmartResponsePanel();
+    focusLastSelectedSosWorklistItem();
+  };
+
   const getVehicleMarkerLabelPayload = (vehicle) => {
     if (!(vehicle && (vehicle.renderLatLng || vehicle.latLng))) {
       return null;
@@ -5584,6 +5711,7 @@
   };
 
   const selectVehicle = (vehicleId, options = {}) => {
+    resetSosPanelDismissState();
     const vehicle = state.vehicles.items.get(Number(vehicleId));
     if (!vehicle) {
       return;
@@ -6155,6 +6283,11 @@
   };
 
   const renderDetailPanel = () => {
+    const activeDetailEntityKey = getCurrentDetailEntityKey();
+    if (activeDetailEntityKey && state.ui.dismissedDetailEntityKey === activeDetailEntityKey) {
+      hideSosDetailPanel();
+      return;
+    }
     if (state.ui.selectedEntityType !== 'gate' || !state.gateAlerts.selectedGateId) {
       stopGateDetailDurationTimer();
     }
@@ -6178,6 +6311,7 @@
         });
         if (state.detailRenderKey !== detailKey || sosDetailPanelEl.classList.contains('hidden')) {
           state.detailRenderKey = detailKey;
+          setDetailPanelEyebrow('Vehicle Detail');
           setText(sosDetailTitleEl, baseVehicle.label || `Kendaraan ${baseVehicle.vehicle_id}`);
           setClass(sosDetailStatusEl, `status-pill ${getVehicleGpsTone(baseVehicle)}`);
           setText(sosDetailStatusEl, getVehicleGpsLabel(baseVehicle.gps_status));
@@ -6214,6 +6348,79 @@
     if (state.ui.selectedEntityType === 'gate' && state.gateAlerts.selectedGateId) {
       const gateDetail = state.gateAlerts.details.get(String(state.gateAlerts.selectedGateId));
       if (gateDetail) {
+        const detailKey = JSON.stringify({
+          type: 'gate',
+          gateId: gateDetail.gate_id,
+          status: gateDetail.status,
+          lastEventAt: gateDetail.last_event_at,
+          affectedDevices: Array.isArray(gateDetail.affected_devices) ? gateDetail.affected_devices.length : 0,
+        });
+        if (state.detailRenderKey !== detailKey || sosDetailPanelEl.classList.contains('hidden')) {
+          state.detailRenderKey = detailKey;
+          setDetailPanelEyebrow('Gate Alert');
+          setText(sosDetailTitleEl, gateDetail.gate_name || gateDetail.gate_code || `Gate ${gateDetail.gate_id}`);
+          setClass(
+            sosDetailStatusEl,
+            `status-pill ${getGateMarkerTone(gateDetail) === 'danger' ? 'danger' : getGateMarkerTone(gateDetail) === 'warning' ? 'warning' : 'success'}`
+          );
+          setText(sosDetailStatusEl, String(gateDetail.status || 'normal').toUpperCase());
+          sosDetailMetaEl.innerHTML = '';
+          sosDetailMetaEl.classList.add('hidden');
+          sosDetailBodyEl.innerHTML = renderGateDetailBody(gateDetail);
+          sosDetailPanelEl.classList.remove('hidden');
+          sosDetailPanelEl.classList.add('is-visible');
+          replayDetailPanelAnimation();
+          startGateDetailDurationTimer();
+        }
+        applySosActionButtonState(null);
+        return;
+      }
+    }
+    if (state.ui.selectedEntityType === 'asset' && state.standaloneAssets.selectedAssetKey) {
+      const asset = state.standaloneAssets.items.get(String(state.standaloneAssets.selectedAssetKey)) || null;
+      if (asset) {
+        const detailKey = JSON.stringify({
+          type: 'asset',
+          assetKey: state.standaloneAssets.selectedAssetKey,
+          status: asset.status,
+          title: asset.title,
+          lastUpdateAt: asset.last_update_at,
+          streamUrl: asset.stream_play_url,
+        });
+        if (state.detailRenderKey !== detailKey || sosDetailPanelEl.classList.contains('hidden')) {
+          state.detailRenderKey = detailKey;
+          const assetTypeLabel = String(asset.asset_type || 'asset').trim().toUpperCase();
+          setDetailPanelEyebrow(assetTypeLabel === 'VMS' ? 'VMS Detail' : assetTypeLabel === 'CCTV' ? 'CCTV Detail' : `${assetTypeLabel} Detail`);
+          setText(sosDetailTitleEl, asset.title || asset.asset_name || asset.cctv_name || asset.asset_code || `Asset ${asset.id}`);
+          const assetTone = getAssetIssueTone(asset.status);
+          setClass(sosDetailStatusEl, `status-pill ${assetTone === 'danger' ? 'danger' : assetTone === 'warning' ? 'warning' : 'success'}`);
+          setText(sosDetailStatusEl, String(asset.status || 'normal').toUpperCase());
+          sosDetailMetaEl.classList.remove('hidden');
+          sosDetailMetaEl.innerHTML = `
+            <div class="sos-detail-hero">
+              <div class="sos-detail-hero__name">${escapeHtml(asset.title || asset.asset_name || asset.cctv_name || asset.asset_code || `Asset ${asset.id}`)}</div>
+              <div class="sos-detail-hero__support">
+                <span class="meta-pill">${escapeHtml(assetTypeLabel)}</span>
+                <span class="meta-pill">${escapeHtml(asset.has_live_stream ? 'LIVE' : 'NO STREAM')}</span>
+              </div>
+            </div>
+          `;
+          sosDetailBodyEl.innerHTML = `
+            <div class="sos-detail-body__grid">
+              <div><span class="sos-detail-label">Ruas</span><strong>${escapeHtml(asset.branch_name || asset.branch_code || asset.branch_id || '-')}</strong></div>
+              <div><span class="sos-detail-label">Kode Asset</span><strong>${escapeHtml(asset.asset_code || '-')}</strong></div>
+              <div><span class="sos-detail-label">Tipe</span><strong>${escapeHtml(assetTypeLabel)}</strong></div>
+              <div><span class="sos-detail-label">Stream</span><strong>${escapeHtml(asset.has_live_stream ? 'Tersedia' : 'Tidak tersedia')}</strong></div>
+              <div><span class="sos-detail-label">Latitude</span><strong>${escapeHtml(asset.lat !== null && asset.lat !== undefined ? String(asset.lat) : '-')}</strong></div>
+              <div><span class="sos-detail-label">Longitude</span><strong>${escapeHtml(asset.lng !== null && asset.lng !== undefined ? String(asset.lng) : '-')}</strong></div>
+              <div><span class="sos-detail-label">Update Terakhir</span><strong>${escapeHtml(toDateTime(asset.last_update_at || '-'))}</strong></div>
+              <div><span class="sos-detail-label">Nama</span><strong>${escapeHtml(asset.asset_name || asset.cctv_name || asset.title || '-')}</strong></div>
+            </div>
+          `;
+          sosDetailPanelEl.classList.remove('hidden');
+          sosDetailPanelEl.classList.add('is-visible');
+          replayDetailPanelAnimation();
+        }
         applySosActionButtonState(null);
         return;
       }
@@ -6232,6 +6439,7 @@
         });
         if (state.detailRenderKey !== detailKey || sosDetailPanelEl.classList.contains('hidden')) {
           state.detailRenderKey = detailKey;
+          setDetailPanelEyebrow('FO Network');
           setText(sosDetailTitleEl, networkEdge.edge_name || networkEdge.edge_code || 'Fiber Network');
           setClass(sosDetailStatusEl, `status-pill ${getNetworkStatusTone(networkEdge.status)}`);
           setText(sosDetailStatusEl, String(networkEdge.status || 'normal').toUpperCase());
@@ -6277,10 +6485,14 @@
       }
     }
     const alert = getSelectedAlert();
+    if (isSelectedSosDetailDismissed()) {
+      hideSosDetailPanel();
+      applySosActionButtonState(alert);
+      return;
+    }
     if (!alert) {
       state.detailRenderKey = '';
-      sosDetailPanelEl.classList.remove('is-visible');
-      sosDetailPanelEl.classList.add('hidden');
+      hideSosDetailPanel();
       return;
     }
     const detailKey = JSON.stringify({
@@ -6312,6 +6524,7 @@
       return;
     }
     state.detailRenderKey = detailKey;
+    setDetailPanelEyebrow('SOS Incident');
     const statusMeta = getStatusMeta(alert.status);
     const responseSummary = getSmartResponseSummaryForAlert(alert);
     const primaryCandidate = getSmartResponsePrimaryCandidate(state.smartResponse.selectedResponse, responseSummary);
@@ -6586,9 +6799,13 @@
       return;
     }
     if (state.ui.selectedEntityType !== 'sos' || !state.selectedSosId) {
-      sosSmartResponsePanelEl.classList.remove('is-visible');
-      sosSmartResponsePanelEl.classList.add('hidden');
+      hideSosSmartResponsePanel();
+      resetSosPanelDismissState({ detail: false });
       sosSmartResponseBodyEl.innerHTML = '';
+      return;
+    }
+    if (isSelectedSosSmartResponseDismissed()) {
+      hideSosSmartResponsePanel();
       return;
     }
     const alert = getSelectedAlert();
@@ -8336,8 +8553,11 @@
       .map((device) => device.device_name || device.device_type || '-')
       .filter(Boolean)
       .join(', ');
+    const branchLabel = getBranchDisplayName(detail.branch_id, detail.branch_name, detail.branch_code);
     return `
       <div class="sos-detail-body__grid">
+        <div><span class="sos-detail-label">Nama Gerbang</span><strong>${escapeHtml(detail.gate_name || detail.gate_code || `Gate ${detail.gate_id || '-'}`)}</strong></div>
+        <div><span class="sos-detail-label">Nama Ruas</span><strong>${escapeHtml(branchLabel)}</strong></div>
         <div><span class="sos-detail-label">Koordinat</span><strong>${escapeHtml(detail.lat || '-')} / ${escapeHtml(detail.lng || '-')}</strong></div>
         <div><span class="sos-detail-label">Ringkasan Device</span><strong>${escapeHtml(summaryLine)}</strong></div>
         <div><span class="sos-detail-label">Status Device</span><strong>${escapeHtml(String(detail.status || 'normal').toUpperCase())}</strong></div>
@@ -8411,6 +8631,7 @@
       }
     });
     applySosActionButtonState(null);
+    setDetailPanelEyebrow('Gate Alert');
     setText(sosDetailTitleEl, detail.gate_name || detail.gate_code || `Gate ${detail.gate_id}`);
     setClass(sosDetailStatusEl, `status-pill ${getGateMarkerTone(detail) === 'danger' ? 'danger' : getGateMarkerTone(detail) === 'warning' ? 'warning' : 'success'}`);
     setText(sosDetailStatusEl, String(detail.status || 'normal').toUpperCase());
@@ -8804,6 +9025,9 @@
     if (!normalized) {
       return null;
     }
+    if (normalized.ticket_status !== 2) {
+      state.incidents.suppressedCompletedSosIds.delete(normalized.sos_id);
+    }
     if (normalized.ticket_status === 2) {
       state.ticketsBySosId.delete(normalized.sos_id);
     } else {
@@ -8880,6 +9104,9 @@
       });
       return null;
     }
+    if (Number(normalized.status) !== 2) {
+      state.incidents.suppressedCompletedSosIds.delete(normalized.sos_id);
+    }
     if (state.incidents.suppressedCompletedSosIds.has(normalized.sos_id)) {
       const previousSuppressed = state.alerts.get(normalized.sos_id);
       if (previousSuppressed) {
@@ -8925,6 +9152,7 @@
 
   const selectAlert = (sosId, focusOnMap, options = {}) => {
     const shouldRemoveNotification = options.removeNotification !== false;
+    resetSosPanelDismissState();
     state.selectedSosId = Number(sosId);
     state.incidents.selectedSosId = state.selectedSosId;
     state.ui.selectedEntityType = 'sos';
@@ -8949,6 +9177,7 @@
   };
 
   const selectGateAlertOptimistic = (gateId, options = {}) => {
+    resetSosPanelDismissState();
     state.selectedSosId = null;
     state.incidents.selectedSosId = null;
     state.gateAlerts.selectedGateId = String(gateId);
@@ -8966,6 +9195,8 @@
     }
     renderIncidentList();
     syncGateAlertMarkers();
+    renderDetailPanel();
+    renderSmartResponsePanel();
     const gate = state.gateAlerts.items.get(String(gateId));
     if (options.focus && gate && gate.latLng) {
       focusEntityOnMap(gate.latLng, MAP_ZOOM_SOS);
@@ -8976,6 +9207,7 @@
     if (!asset) {
       return;
     }
+    resetSosPanelDismissState();
     const assetKey = makeAssetKey(asset.asset_type, asset.id);
     state.selectedSosId = null;
     state.incidents.selectedSosId = null;
@@ -8998,6 +9230,8 @@
       );
     }
     renderIncidentList();
+    renderDetailPanel();
+    renderSmartResponsePanel();
     if (options.focus && asset.latLng) {
       focusEntityOnMap(asset.latLng, MAP_ZOOM_SOS);
     }
@@ -9008,6 +9242,7 @@
     if (state.ui.selectedEntityType === 'asset') {
       closeCctvModal();
     }
+    resetSosPanelDismissState();
     state.selectedSosId = null;
     state.incidents.selectedSosId = null;
     state.gateAlerts.selectedGateId = null;
@@ -9055,18 +9290,10 @@
     });
     Array.from(state.alerts.values()).forEach((alert) => {
       const hasOpenTicket = state.ticketsBySosId.has(alert.sos_id);
-      const wasDispatched =
-        Number(alert.status) === 1 ||
-        Boolean(alert.ticket && alert.ticket.ticket_no);
-      if (!hasOpenTicket && wasDispatched) {
-        alert.status = 2;
-        if (alert.ticket) {
-          alert.ticket = {
-            ...alert.ticket,
-            ticket_status: 2,
-          };
-        }
-        removeSosAlertFromActiveView(alert.sos_id);
+      // Open-ticket absence is not a reliable completion signal.
+      // Keep the current SOS visible unless completion arrives explicitly
+      // from alert status or ticket patch/status update.
+      if (!hasOpenTicket) {
         return;
       }
       mergeTicketToAlert(alert);
@@ -10786,7 +11013,12 @@
   });
   sosDispatchBtn.addEventListener('click', openDispatchModal);
   sosCompleteBtn.addEventListener('click', openCompleteModal);
-  closeSosDetailBtn.addEventListener('click', clearSelectedAlert);
+  if (closeSosDetailBtn) {
+    closeSosDetailBtn.addEventListener('click', dismissActiveDetailPanel);
+  }
+  if (closeSosSmartResponseBtn) {
+    closeSosSmartResponseBtn.addEventListener('click', dismissActiveSosSmartResponsePanel);
+  }
   closeSosDispatchBtn.addEventListener('click', () => hideModal(sosDispatchModalEl));
   closeSosCompleteBtn.addEventListener('click', () => hideModal(sosCompleteModalEl));
   closeSosCctvModalBtn.addEventListener('click', closeCctvModal);

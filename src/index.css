@@ -3176,10 +3176,6 @@ body.sos-mode .asset-toolbar-control {
   display: none;
 }
 
-.sos-detail-close-btn {
-  display: none;
-}
-
 .sos-detail-meta {
   display: block;
   margin-top: 12px;
@@ -3977,6 +3973,9 @@ body.sos-mode .asset-toolbar-control {
 }
 
 .sos-detail-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 34px;
   height: 34px;
   border: 1px solid rgba(242, 249, 255, 0.18);

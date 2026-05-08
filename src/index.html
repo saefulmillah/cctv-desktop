@@ -288,7 +288,7 @@
           <article id="sosDetailPanel" class="sos-detail-panel sos-detail-panel--incident hidden">
             <div class="sos-panel__header">
               <div>
-                <p class="eyebrow">SOS Incident</p>
+                <p id="sosDetailEyebrow" class="eyebrow">SOS Incident</p>
                 <h3 id="sosDetailTitle">Pilih insiden</h3>
               </div>
               <div class="sos-detail-panel__header-actions">
@@ -312,6 +312,7 @@
               </div>
               <div class="sos-detail-panel__header-actions">
                 <span id="sosSmartResponseStatus" class="status-pill neutral">Tracking</span>
+                <button id="closeSosSmartResponseBtn" class="sos-detail-close-btn" type="button" aria-label="Tutup smart response" title="Tutup smart response"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
               </div>
             </div>
             <div id="sosSmartResponseBody" class="sos-detail-body sos-smart-response-body"></div>
