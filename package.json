@@ -26,6 +26,7 @@
   "license": "MIT",
   "dependencies": {
     "@meteocons/svg": "^0.1.0",
+    "bootstrap-icons": "^1.13.1",
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {

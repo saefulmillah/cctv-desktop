@@ -10,6 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Nunito:wght@400;500;600;700;800&family=Rajdhani:wght@400;500;600;700&family=Sora:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="./vendor/bootstrap-icons/font/bootstrap-icons.css" />
     <link rel="stylesheet" href="index.css" />
   </head>
   <body class="normal-mode">
@@ -284,29 +285,30 @@
           </div>
 
           <div id="sosDetailStack" class="sos-detail-stack">
-          <article id="sosDetailPanel" class="sos-detail-panel hidden">
+          <article id="sosDetailPanel" class="sos-detail-panel sos-detail-panel--incident hidden">
             <div class="sos-panel__header">
               <div>
-                <p class="eyebrow">Detail Insiden</p>
+                <p class="eyebrow">SOS Incident</p>
                 <h3 id="sosDetailTitle">Pilih insiden</h3>
               </div>
               <div class="sos-detail-panel__header-actions">
                 <span id="sosDetailStatus" class="status-pill neutral">Status</span>
-                <button id="closeSosDetailBtn" class="sos-detail-close-btn" type="button" aria-label="Tutup detail kejadian" title="Tutup detail kejadian">×</button>
+                <button id="closeSosDetailBtn" class="sos-detail-close-btn" type="button" aria-label="Tutup detail kejadian" title="Tutup detail kejadian"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
               </div>
             </div>
             <div id="sosDetailMeta" class="sos-detail-meta"></div>
             <div id="sosDetailBody" class="sos-detail-body"></div>
             <div class="sos-detail-actions">
-              <button id="sosDispatchBtn" class="toolbar-btn" type="button">Dispatch</button>
-              <button id="sosCompleteBtn" class="toolbar-btn" type="button">Complete</button>
+              <button id="sosDispatchBtn" class="toolbar-btn" type="button"><i class="bi bi-record-circle sos-btn-icon" aria-hidden="true"></i><span>Dispatch Unit</span></button>
+              <button id="sosContactReporterBtn" class="toolbar-btn" type="button"><i class="bi bi-telephone sos-btn-icon" aria-hidden="true"></i><span>Hubungi Pelapor</span></button>
+              <button id="sosCompleteBtn" class="toolbar-btn toolbar-btn--accent" type="button"><i class="bi bi-check-circle sos-btn-icon" aria-hidden="true"></i><span>Selesai</span></button>
             </div>
           </article>
           <article id="sosSmartResponsePanel" class="sos-detail-panel sos-smart-response-panel hidden">
             <div class="sos-panel__header">
               <div>
                 <p class="eyebrow">Smart Response</p>
-                <h3 id="sosSmartResponseTitle">Tracking responder</h3>
+                <h3 id="sosSmartResponseTitle">Smart Response</h3>
               </div>
               <div class="sos-detail-panel__header-actions">
                 <span id="sosSmartResponseStatus" class="status-pill neutral">Tracking</span>
@@ -750,4 +752,5 @@
     <script src="./asset-monitoring.js"></script>
   </body>
 </html>
+
 

@@ -17,6 +17,16 @@
   const MAP_ZOOM_GATE = 11;
   const MAP_ZOOM_ASSET = 11;
   const MAP_ZOOM_SOS = 14;
+  const MAP_ZOOM_VEHICLE_FOCUS = 17;
+  const ALL_BRANCH_VEHICLE_MARKER_LIMIT_LOW_ZOOM = 24;
+  const ALL_BRANCH_VEHICLE_MARKER_LIMIT_MID_ZOOM = 60;
+  const ALL_BRANCH_VEHICLE_MARKER_LIMIT_HIGH_ZOOM = 120;
+  const VEHICLE_CLUSTER_STAGE_ZOOMS = [8, 10, 12];
+  const VEHICLE_CLUSTER_MAX_ZOOM = 11;
+  const VEHICLE_LIST_RENDER_LIMIT_ALL_BRANCH = 120;
+  const VEHICLE_UI_REFRESH_DEBOUNCE_MS = 180;
+  const VEHICLE_UI_REFRESH_DEBOUNCE_ALL_BRANCH_MS = 500;
+  const CCTV_MODAL_BACKDROP_GUARD_MS = 320;
   const DEFAULT_VEHICLE_TYPE_ICON_PATH = '/static/vehicle-types/default.svg';
   const VEHICLE_INTERPOLATION_DEFAULT_MS = 700;
   const VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS = 1200;
@@ -289,6 +299,9 @@
       apiBaseUrl: '',
       items: new Map(),
       markers: new Map(),
+      clusterMarkers: new Map(),
+      clusterer: null,
+      clusterSyncToken: 0,
       markerClass: null,
       summary: null,
       details: new Map(),
@@ -296,6 +309,8 @@
       listFilter: 'all',
       hiddenTypeKeys: new Set(),
       animationFrame: 0,
+      refreshTimer: null,
+      refreshDetailPending: false,
       lastSnapshotAt: '',
       lastRefreshAt: '',
     },
@@ -353,6 +368,7 @@
       initialTiltSyncPending: true,
       mapCameraDebugVisible: false,
       sosFocusAnimationFrame: 0,
+      cctvModalOpenedAt: 0,
     },
     markerStatusFilters: {
       normal: true,
@@ -1027,9 +1043,6 @@
     }
     if (normalized === 'stopped') {
       return 'Berhenti';
-    }
-    if (normalized === 'idle') {
-      return 'Diam';
     }
     return 'Semua';
   };
@@ -2955,16 +2968,60 @@
     if (!Number.isFinite(id)) {
       return null;
     }
+    const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : null;
+    const metadataMetrics =
+      metadata && metadata.metrics && typeof metadata.metrics === 'object'
+        ? metadata.metrics
+        : null;
+    const readMetric = (key) => {
+      if (Number.isFinite(Number(item[key]))) {
+        return Number(item[key]);
+      }
+      if (metadataMetrics && Number.isFinite(Number(metadataMetrics[key]))) {
+        return Number(metadataMetrics[key]);
+      }
+      if (metadata && Number.isFinite(Number(metadata[key]))) {
+        return Number(metadata[key]);
+      }
+      return null;
+    };
     return {
       id,
-      ticket_no: String(item.ticket_no || '').trim(),
-      sos_id: Number.isFinite(Number(item.sos_id)) ? Number(item.sos_id) : null,
-      branch_id: Number.isFinite(Number(item.branch_id)) ? Number(item.branch_id) : null,
+      ticket_no: String(item.ticket_no || (metadata && metadata.ticket_no) || '').trim(),
+      sos_id:
+        Number.isFinite(Number(item.sos_id))
+          ? Number(item.sos_id)
+          : Number.isFinite(Number(metadata && metadata.sos_id))
+            ? Number(metadata.sos_id)
+            : null,
+      branch_id:
+        Number.isFinite(Number(item.branch_id))
+          ? Number(item.branch_id)
+          : Number.isFinite(Number(metadata && metadata.branch_id))
+            ? Number(metadata.branch_id)
+            : null,
       event_type: String(item.event_type || '').trim(),
       event_at: String(item.event_at || '').trim() || null,
       actor_user_id: Number.isFinite(Number(item.actor_user_id)) ? Number(item.actor_user_id) : null,
-      vehicle_id: Number.isFinite(Number(item.vehicle_id)) ? Number(item.vehicle_id) : null,
-      metadata: item.metadata && typeof item.metadata === 'object' ? item.metadata : null,
+      vehicle_id:
+        Number.isFinite(Number(item.vehicle_id))
+          ? Number(item.vehicle_id)
+          : Number.isFinite(Number(metadata && metadata.vehicle_id))
+            ? Number(metadata.vehicle_id)
+            : null,
+      vehicle_label: String(item.vehicle_label || (metadata && metadata.vehicle_label) || '').trim() || null,
+      response_status: String(item.response_status || (metadata && metadata.response_status) || '').trim() || null,
+      source: String(item.source || (metadata && metadata.source) || '').trim() || null,
+      gps_time: String(item.gps_time || (metadata && metadata.gps_time) || '').trim() || null,
+      distance_meters: readMetric('distance_meters'),
+      previous_distance_meters: readMetric('previous_distance_meters'),
+      speed_kmh: readMetric('speed_kmh'),
+      movement_bearing: readMetric('movement_bearing'),
+      bearing_to_sos: readMetric('bearing_to_sos'),
+      angle_diff: readMetric('angle_diff'),
+      confidence_score: readMetric('confidence_score'),
+      extra: metadata && metadata.extra && typeof metadata.extra === 'object' ? metadata.extra : null,
+      metadata,
     };
   };
 
@@ -5022,12 +5079,227 @@
       if (filter === 'stopped') {
         return vehicle.movement_status === 'stopped';
       }
-      if (filter === 'idle') {
-        return vehicle.movement_status === 'idle';
-      }
       return true;
     });
     return filtered.sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
+  };
+
+  const getVehiclePanelItems = (vehicles) => {
+    if (!Array.isArray(vehicles) || !vehicles.length) {
+      return [];
+    }
+    if (!isAllBranchesSelected() || vehicles.length <= VEHICLE_LIST_RENDER_LIMIT_ALL_BRANCH) {
+      return vehicles;
+    }
+    return vehicles.slice(0, VEHICLE_LIST_RENDER_LIMIT_ALL_BRANCH);
+  };
+
+  const getVehicleMarkerRenderLimit = () => {
+    if (!isAllBranchesSelected()) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const zoom =
+      state.map && typeof state.map.getZoom === 'function'
+        ? Number(state.map.getZoom() || MAP_ZOOM_ALL_BRANCH)
+        : MAP_ZOOM_ALL_BRANCH;
+    if (zoom < 7) {
+      return ALL_BRANCH_VEHICLE_MARKER_LIMIT_LOW_ZOOM;
+    }
+    if (zoom < 9) {
+      return ALL_BRANCH_VEHICLE_MARKER_LIMIT_MID_ZOOM;
+    }
+    return ALL_BRANCH_VEHICLE_MARKER_LIMIT_HIGH_ZOOM;
+  };
+
+  const getVehicleMarkerPriority = (vehicle) => {
+    if (!vehicle) {
+      return Number.NEGATIVE_INFINITY;
+    }
+    const isSelected = Number(state.vehicles.selectedVehicleId) === Number(vehicle.vehicle_id);
+    const isMoving = String(vehicle.movement_status || '').toLowerCase() === 'moving';
+    const gpsStatus = String(vehicle.gps_status || '').toLowerCase();
+    const freshnessSource = vehicle.gps_time || vehicle.received_at || '';
+    const freshnessAt = freshnessSource ? Date.parse(freshnessSource) : 0;
+    return (
+      (isSelected ? 1_000_000_000 : 0) +
+      (isMoving ? 1_000_000 : 0) +
+      (gpsStatus === 'online' ? 100_000 : gpsStatus === 'delayed' ? 10_000 : 0) +
+      (Number.isFinite(freshnessAt) ? freshnessAt : 0)
+    );
+  };
+
+  const shouldUseVehicleClusterMode = () =>
+    isAllBranchesSelected() &&
+    state.map &&
+    Number(state.map.getZoom() || MAP_ZOOM_ALL_BRANCH) <= VEHICLE_CLUSTER_MAX_ZOOM;
+
+  const clearVehicleOverlayMarkers = () => {
+    Array.from(state.vehicles.markers.entries()).forEach(([vehicleId, entry]) => {
+      stopVehicleMotion(entry);
+      if (entry && entry.marker) {
+        entry.marker.setMap(null);
+      }
+      state.vehicles.markers.delete(Number(vehicleId));
+    });
+  };
+
+  const clearVehicleClusterMarkers = () => {
+    state.vehicles.clusterSyncToken += 1;
+    if (state.vehicles.clusterer) {
+      if (typeof state.vehicles.clusterer.clearMarkers === 'function') {
+        state.vehicles.clusterer.clearMarkers();
+      }
+      if (typeof state.vehicles.clusterer.setMap === 'function') {
+        state.vehicles.clusterer.setMap(null);
+      }
+      state.vehicles.clusterer = null;
+    }
+    state.vehicles.clusterMarkers.forEach((marker) => {
+      if (marker && typeof marker.setMap === 'function') {
+        marker.setMap(null);
+      }
+    });
+    state.vehicles.clusterMarkers.clear();
+  };
+
+  const getNextVehicleClusterZoom = (currentZoom) =>
+    VEHICLE_CLUSTER_STAGE_ZOOMS.find((zoomLevel) => Number(currentZoom || 0) < zoomLevel - 0.25) ||
+    VEHICLE_CLUSTER_STAGE_ZOOMS[VEHICLE_CLUSTER_STAGE_ZOOMS.length - 1];
+
+  const syncVehicleClusterMarkers = async () => {
+    if (!state.map || !window.google || !window.google.maps || !shouldUseVehicleClusterMode()) {
+      return;
+    }
+    const syncToken = state.vehicles.clusterSyncToken + 1;
+    state.vehicles.clusterSyncToken = syncToken;
+    let markerClustererLib = null;
+    try {
+      markerClustererLib = await loadMarkerClustererLibrary();
+    } catch (_) {
+      return;
+    }
+    if (
+      syncToken !== state.vehicles.clusterSyncToken ||
+      !state.map ||
+      !shouldUseVehicleClusterMode()
+    ) {
+      return;
+    }
+    const MarkerClustererCtor =
+      markerClustererLib && markerClustererLib.MarkerClusterer ? markerClustererLib.MarkerClusterer : null;
+    if (!MarkerClustererCtor) {
+      return;
+    }
+    const SuperClusterAlgorithmCtor =
+      markerClustererLib && markerClustererLib.SuperClusterAlgorithm
+        ? markerClustererLib.SuperClusterAlgorithm
+        : null;
+    const activeIds = new Set();
+    const createdMarkers = [];
+    const visibleVehicles = getVisibleVehicleItems().filter((vehicle) => vehicle && vehicle.latLng);
+
+    visibleVehicles.forEach((vehicle) => {
+      const vehicleId = Number(vehicle.vehicle_id);
+      if (!Number.isFinite(vehicleId)) {
+        return;
+      }
+      activeIds.add(vehicleId);
+      let marker = state.vehicles.clusterMarkers.get(vehicleId) || null;
+      const iconUrl = vehicle.vehicle_type_icon_url || createVehicleFallbackIconDataUrl();
+      if (!marker) {
+        marker = new window.google.maps.Marker({
+          position: vehicle.latLng,
+          title: vehicle.label || `Kendaraan ${vehicleId}`,
+          optimized: true,
+          icon: {
+            url: iconUrl,
+            scaledSize: new window.google.maps.Size(28, 28),
+            anchor: new window.google.maps.Point(14, 14),
+          },
+          zIndex: Number(state.vehicles.selectedVehicleId) === vehicleId ? 1200 : 400,
+        });
+        marker.__vehicleId = vehicleId;
+        marker.addListener('mouseover', () => {
+          setPreviewMarkerLabel(
+            createMarkerLabelRef('vehicle', vehicleId, {
+              latLng:
+                (state.vehicles.items.get(vehicleId) &&
+                  (state.vehicles.items.get(vehicleId).renderLatLng || state.vehicles.items.get(vehicleId).latLng)) ||
+                vehicle.latLng ||
+                null,
+            })
+          );
+        });
+        marker.addListener('mouseout', () => {
+          clearPreviewMarkerLabelIfUnlocked();
+        });
+        marker.addListener('click', () => {
+          state.cctvSuppressMapClickUntil = Date.now() + 250;
+          selectVehicle(vehicleId, { focus: false });
+          void loadVehicleDetail(vehicleId).then(() => renderDetailPanel()).catch(() => {});
+        });
+        state.vehicles.clusterMarkers.set(vehicleId, marker);
+        createdMarkers.push(marker);
+      }
+      marker.setPosition(vehicle.latLng);
+      marker.setTitle(vehicle.label || `Kendaraan ${vehicleId}`);
+      marker.setIcon({
+        url: iconUrl,
+        scaledSize: new window.google.maps.Size(28, 28),
+        anchor: new window.google.maps.Point(14, 14),
+      });
+      marker.setZIndex(Number(state.vehicles.selectedVehicleId) === vehicleId ? 1200 : 400);
+    });
+
+    const removedMarkers = [];
+    Array.from(state.vehicles.clusterMarkers.entries()).forEach(([vehicleId, marker]) => {
+      if (activeIds.has(Number(vehicleId))) {
+        return;
+      }
+      removedMarkers.push(marker);
+      if (marker && typeof marker.setMap === 'function') {
+        marker.setMap(null);
+      }
+      state.vehicles.clusterMarkers.delete(Number(vehicleId));
+    });
+
+    if (!state.vehicles.clusterer) {
+      state.vehicles.clusterer = new MarkerClustererCtor({
+        map: state.map,
+        markers: Array.from(state.vehicles.clusterMarkers.values()),
+        algorithm: SuperClusterAlgorithmCtor
+          ? new SuperClusterAlgorithmCtor({ radius: 150, maxZoom: VEHICLE_CLUSTER_MAX_ZOOM })
+          : undefined,
+        onClusterClick: (_, cluster) => {
+          if (!state.map) {
+            return;
+          }
+          state.cctvSuppressMapClickUntil = Date.now() + 250;
+          const clusterCenter =
+            (cluster && cluster.position) ||
+            (cluster &&
+            Array.isArray(cluster.markers) &&
+            cluster.markers[0] &&
+            typeof cluster.markers[0].getPosition === 'function'
+              ? cluster.markers[0].getPosition()
+              : null);
+          const currentZoom = Number(state.map.getZoom() || MAP_ZOOM_ALL_BRANCH);
+          const nextZoom = getNextVehicleClusterZoom(currentZoom);
+          animateMapZoom(state.map, nextZoom, clusterCenter);
+        },
+      });
+      return;
+    }
+
+    if (removedMarkers.length && typeof state.vehicles.clusterer.removeMarkers === 'function') {
+      state.vehicles.clusterer.removeMarkers(removedMarkers, true);
+    }
+    if (createdMarkers.length && typeof state.vehicles.clusterer.addMarkers === 'function') {
+      state.vehicles.clusterer.addMarkers(createdMarkers, true);
+    }
+    if (typeof state.vehicles.clusterer.render === 'function') {
+      state.vehicles.clusterer.render();
+    }
   };
 
   const reconcileSelectedVehicle = () => {
@@ -5048,6 +5320,12 @@
       clearMarkerLabelState({ preserveSosLocked: false });
     }
   };
+
+  const shouldAutoFocusLatestAlert = () =>
+    !state.selectedSosId &&
+    !state.incidents.selectedSosId &&
+    !String(state.ui.selectedEntityType || '').trim() &&
+    !state.ui.mapInteractionActive;
 
   const getVehicleMarkerLabelPayload = (vehicle) => {
     if (!(vehicle && (vehicle.renderLatLng || vehicle.latLng))) {
@@ -5083,7 +5361,7 @@
       : normalizeVehicleSummary(state.vehicles.summary);
 
   const setVehicleListFilter = (filter) => {
-    state.vehicles.listFilter = ['all', 'moving', 'stopped', 'idle'].includes(String(filter || ''))
+    state.vehicles.listFilter = ['all', 'moving', 'stopped'].includes(String(filter || ''))
       ? String(filter)
       : 'all';
   };
@@ -5203,9 +5481,8 @@
       all: visibleTypeRows.length,
       moving: visibleTypeRows.filter((vehicle) => vehicle.movement_status === 'moving').length,
       stopped: visibleTypeRows.filter((vehicle) => vehicle.movement_status === 'stopped').length,
-      idle: visibleTypeRows.filter((vehicle) => vehicle.movement_status === 'idle').length,
     };
-    sosVehicleFiltersEl.innerHTML = ['all', 'moving', 'stopped', 'idle']
+    sosVehicleFiltersEl.innerHTML = ['all', 'moving', 'stopped']
       .map((filter) => {
         const isActive = state.vehicles.listFilter === filter;
         return `<button type="button" class="sos-incident-filter-chip ${isActive ? 'is-active' : ''}" data-vehicle-filter="${filter}" aria-pressed="${isActive ? 'true' : 'false'}">${escapeHtml(
@@ -5235,7 +5512,13 @@
         '<div class="vehicle-list-empty">Belum ada kendaraan untuk filter ini.</div>';
       return;
     }
-    sosVehicleListEl.innerHTML = visibleVehicles
+    const panelVehicles = getVehiclePanelItems(visibleVehicles);
+    const isTrimmed = panelVehicles.length < visibleVehicles.length;
+    sosVehicleListEl.innerHTML = [
+      isTrimmed
+        ? `<div class="vehicle-list-empty">Menampilkan ${panelVehicles.length} dari ${visibleVehicles.length} kendaraan untuk menjaga performa pada mode Semua Branch.</div>`
+        : '',
+      ...panelVehicles
       .map((vehicle) => {
         const gpsTone = getVehicleGpsTone(vehicle);
         const isDisabled = !vehicle.latLng;
@@ -5267,7 +5550,37 @@
           </article>
         `;
       })
-      .join('');
+    ].join('');
+  };
+
+  const flushVehicleUiRefresh = () => {
+    if (state.vehicles.refreshTimer) {
+      clearTimeout(state.vehicles.refreshTimer);
+      state.vehicles.refreshTimer = null;
+    }
+    renderAssetToolbar();
+    renderVehicleTypeToggleControls();
+    renderVehiclePanel();
+    syncVehicleMarkers();
+    syncSelectedMarkerLabelOverlay();
+    if (state.vehicles.refreshDetailPending || state.ui.selectedEntityType === 'vehicle') {
+      renderDetailPanel();
+    }
+    state.vehicles.refreshDetailPending = false;
+  };
+
+  const scheduleVehicleUiRefresh = (options = {}) => {
+    state.vehicles.refreshDetailPending =
+      state.vehicles.refreshDetailPending || options.includeDetail === true;
+    if (state.vehicles.refreshTimer) {
+      return;
+    }
+    const delay = isAllBranchesSelected()
+      ? VEHICLE_UI_REFRESH_DEBOUNCE_ALL_BRANCH_MS
+      : VEHICLE_UI_REFRESH_DEBOUNCE_MS;
+    state.vehicles.refreshTimer = window.setTimeout(() => {
+      flushVehicleUiRefresh();
+    }, delay);
   };
 
   const selectVehicle = (vehicleId, options = {}) => {
@@ -5294,6 +5607,31 @@
       clearMarkerLabelState({ preserveSosLocked: false });
     }
     renderAll();
+  };
+
+  const focusVehicleSelection = async (vehicleId, options = {}) => {
+    const normalizedVehicleId = Number(vehicleId);
+    if (!Number.isFinite(normalizedVehicleId)) {
+      return;
+    }
+    if (!state.vehicles.items.has(normalizedVehicleId)) {
+      try {
+        await loadVehicleDetail(normalizedVehicleId, { force: true });
+      } catch (_) {
+        return;
+      }
+    }
+    const vehicle = state.vehicles.items.get(normalizedVehicleId) || null;
+    if (!vehicle) {
+      return;
+    }
+    state.vehicles.selectedVehicleId = normalizedVehicleId;
+    const focusLatLng = vehicle.latLng || vehicle.renderLatLng || null;
+    if (options.focus !== false && focusLatLng) {
+      focusEntityOnMap(focusLatLng, MAP_ZOOM_VEHICLE_FOCUS);
+    }
+    renderAll();
+    void loadVehicleDetail(normalizedVehicleId).then(() => renderDetailPanel()).catch(() => {});
   };
   const upsertVehicleLive = (vehicle, options = {}) => {
     const normalized =
@@ -5434,11 +5772,18 @@
     if (!state.map || !window.google || !window.google.maps) {
       return;
     }
+    if (shouldUseVehicleClusterMode()) {
+      clearVehicleOverlayMarkers();
+      void syncVehicleClusterMarkers();
+      return;
+    }
+    clearVehicleClusterMarkers();
     const VehicleMarkerCtor = getVehicleMarkerClass();
     const visibleVehicles = getVisibleVehicleItems();
-    const visibleIds = new Set();
     const bounds = state.map && typeof state.map.getBounds === 'function' ? state.map.getBounds() : null;
     const shouldCull = isAllBranchesSelected() || visibleVehicles.length > 60;
+    const renderLimit = getVehicleMarkerRenderLimit();
+    const candidateVehicles = [];
 
     visibleVehicles.forEach((vehicle) => {
       if (!(vehicle && vehicle.latLng)) {
@@ -5452,7 +5797,19 @@
       ) {
         return;
       }
-      visibleIds.add(vehicle.vehicle_id);
+      candidateVehicles.push(vehicle);
+    });
+
+    const prioritizedVehicles =
+      Number.isFinite(renderLimit) && candidateVehicles.length > renderLimit
+        ? candidateVehicles
+            .slice()
+            .sort((a, b) => getVehicleMarkerPriority(b) - getVehicleMarkerPriority(a))
+            .slice(0, renderLimit)
+        : candidateVehicles;
+    const visibleIds = new Set(prioritizedVehicles.map((vehicle) => Number(vehicle.vehicle_id)));
+
+    prioritizedVehicles.forEach((vehicle) => {
       let entry = state.vehicles.markers.get(vehicle.vehicle_id) || null;
       if (!entry) {
         const marker = new VehicleMarkerCtor({
@@ -5512,7 +5869,14 @@
       if (entry.targetKey === nextTargetKey) {
         entry.lastKnownSpeed = Number.isFinite(Number(vehicle.speed)) ? Number(vehicle.speed) : null;
         entry.lastKnownBearing = Number.isFinite(Number(vehicle.bearing)) ? Number(vehicle.bearing) : null;
-        if (isVehiclePredictionEligible(vehicle)) {
+        if (isAllBranchesSelected()) {
+          stopVehicleMotion(entry);
+          if (nextLatLng) {
+            updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
+          } else if (vehicle.renderLatLng) {
+            updateVehicleMarkerVisualPosition(entry, vehicle, vehicle.renderLatLng);
+          }
+        } else if (isVehiclePredictionEligible(vehicle)) {
           ensureVehicleMotion(entry, vehicle);
         } else {
           stopVehicleMotion(entry);
@@ -5542,7 +5906,7 @@
         stopVehicleMotion(entry);
         if (nextLatLng) {
           updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
-          if (isVehiclePredictionEligible(vehicle)) {
+          if (!isAllBranchesSelected() && isVehiclePredictionEligible(vehicle)) {
             ensureVehicleMotion(entry, vehicle);
           }
         }
@@ -5550,13 +5914,14 @@
       }
       const distance = haversineDistanceMeters(displayLatLng, nextLatLng);
       if (
+        isAllBranchesSelected() ||
         !isVehiclePredictionEligible(vehicle) ||
         distance > VEHICLE_INTERPOLATION_SNAP_DISTANCE_METERS ||
         distance > VEHICLE_PREDICTION_CORRECTION_SNAP_METERS * 2
       ) {
         stopVehicleMotion(entry);
         updateVehicleMarkerVisualPosition(entry, vehicle, nextLatLng);
-        if (isVehiclePredictionEligible(vehicle)) {
+        if (!isAllBranchesSelected() && isVehiclePredictionEligible(vehicle)) {
           ensureVehicleMotion(entry, vehicle);
         }
         return;
@@ -5588,7 +5953,7 @@
     if (!isEntityInSelectedBranch(normalized.branch_id)) {
       state.vehicles.items.delete(normalized.vehicle_id);
       state.vehicles.details.delete(normalized.vehicle_id);
-      renderAll();
+      scheduleVehicleUiRefresh({ includeDetail: Number(state.vehicles.selectedVehicleId) === Number(normalized.vehicle_id) });
       return;
     }
     upsertVehicleLive(normalized);
@@ -5598,8 +5963,10 @@
         ...(state.vehicles.details.get(normalized.vehicle_id) || {}),
           ...normalized,
       });
+      scheduleVehicleUiRefresh({ includeDetail: true });
+      return;
     }
-    renderAll();
+    scheduleVehicleUiRefresh();
   };
 
   const renderSummary = () => {
@@ -5980,7 +6347,7 @@
     sosDetailBodyEl.innerHTML = `
       <div class="sos-incident-body">
         <div class="sos-incident-location">
-          <span class="sos-detail-label"><i class="bi bi-geo-alt sos-inline-icon" aria-hidden="true"></i>Lokasi</span>
+          <span class="sos-detail-label"><i class="bi bi-geo-alt sos-inline-icon" aria-hidden="true"></i>Alamat Pelapor</span>
           <strong>${escapeHtml(locationText)}</strong>
           <span class="sos-incident-location__coords">Koordinat: ${escapeHtml(coordinateText)}</span>
         </div>
@@ -6295,7 +6662,6 @@
           >
             <div class="sos-smart-response-candidate-row__identity">
               <strong>${escapeHtml(candidate.vehicle_label || `Vehicle ${candidate.vehicle_id}`)}</strong>
-              ${candidate.is_primary ? '<span class="meta-pill">Primary</span>' : ''}
             </div>
             <div class="sos-smart-response-candidate-row__metrics">
               <span>${escapeHtml(formatConfidenceScore(candidate.confidence_score))}</span>
@@ -6366,6 +6732,10 @@
                 <span class="sos-smart-response-timeline-item__label">${escapeHtml(formatSmartResponseEventLabel(item.event_type))}</span>
                 <span>${escapeHtml(formatTimeOnly(item.event_at || '-'))}</span>
               </div>
+              <div class="sos-smart-response-timeline-item__meta">
+                <span>${escapeHtml(item.vehicle_label || (item.vehicle_id ? `Vehicle ${item.vehicle_id}` : '-'))}</span>
+                <span>${escapeHtml(formatDistanceMetersSmartResponse(item.distance_meters))}</span>
+              </div>
             </div>
           </article>
         `).join('')
@@ -6373,7 +6743,11 @@
 
     const summaryTabMarkup = primaryCandidate
       ? `
-      <section class="sos-smart-response-hero">
+      <button
+        type="button"
+        class="sos-smart-response-hero sos-smart-response-hero--button"
+        data-primary-vehicle-id="${escapeHtml(String(primaryCandidate.vehicle_id))}"
+      >
         <div class="sos-smart-response-hero__top">
           <div class="sos-smart-response-hero__identity">
             <div class="sos-smart-response-hero__icon"><i class="bi bi-car-front-fill" aria-hidden="true"></i></div>
@@ -6412,7 +6786,7 @@
         `
             : ''
         }
-      </section>
+      </button>
       `
       : '<div class="sos-smart-response-empty"><strong>Belum ada kandidat utama.</strong><span>Smart Response masih memproses kendaraan terdekat yang paling relevan.</span></div>';
 
@@ -6459,19 +6833,12 @@
         </section>
         <section class="sos-smart-response-section">
           <div class="sos-smart-response-list-head">
-            <div class="sos-smart-response-section-title">Kandidat Lain</div>
+            <div class="sos-smart-response-section-title">Unit Lain</div>
             <button type="button" class="sos-smart-response-link-btn" data-smart-tab="candidates">Buka Semua</button>
           </div>
           <div class="sos-smart-response-candidate-table">
             ${summaryCandidatesMarkup}
           </div>
-        </section>
-        <section class="sos-smart-response-section">
-          <div class="sos-smart-response-list-head">
-            <div class="sos-smart-response-section-title">Timeline Preview</div>
-            <button type="button" class="sos-smart-response-link-btn" data-smart-tab="timeline">Lihat Selengkapnya</button>
-          </div>
-          <div class="sos-smart-response-timeline-list">${timelineMarkup}</div>
         </section>
         `;
 
@@ -7093,9 +7460,11 @@
       sosCctvModalMetaEl.classList.remove('hidden');
     }
     showModal(sosCctvModalEl);
+    state.ui.cctvModalOpenedAt = Date.now();
   };
 
   const closeCctvModal = () => {
+    state.ui.cctvModalOpenedAt = 0;
     state.cctvSelectedCameraId = null;
     destroySosCctvModalStream();
     sosCctvModalMetaEl.innerHTML = '';
@@ -9051,7 +9420,7 @@
     if (!reconcileIncidentSelectionWithFilters()) {
       renderAll();
     }
-    if (latestAlert && Number(latestAlert.status) !== 2) {
+    if (latestAlert && Number(latestAlert.status) !== 2 && shouldAutoFocusLatestAlert()) {
       selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true });
     }
     if ((eventName === 'complete' || eventName === 'sos_completed') && latestAlert) {
@@ -9319,7 +9688,7 @@
           const latestAlert = Array.isArray(newAlerts)
             ? newAlerts.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0]
             : null;
-          if (latestAlert) {
+          if (latestAlert && shouldAutoFocusLatestAlert()) {
             selectAlert(latestAlert.sos_id, true, { removeNotification: false, forceFocus: true, lockLabel: false });
           }
         })
@@ -10228,12 +10597,32 @@
         setSmartResponseTab(tabTrigger.getAttribute('data-smart-tab') || 'summary');
         return;
       }
+      const confirmArrivalTrigger = element.closest('[data-confirm-arrival]');
+      if (confirmArrivalTrigger) {
+        event.preventDefault();
+        const vehicleId = Number(confirmArrivalTrigger.getAttribute('data-confirm-arrival'));
+        if (!Number.isFinite(vehicleId)) {
+          return;
+        }
+        void confirmSelectedSmartResponseArrival(vehicleId);
+        return;
+      }
       const candidateTrigger = element.closest('[data-candidate-expand]');
       if (candidateTrigger) {
         event.preventDefault();
         const vehicleId = Number(candidateTrigger.getAttribute('data-candidate-expand'));
         if (Number.isFinite(vehicleId)) {
           toggleSmartResponseCandidate(vehicleId);
+          void focusVehicleSelection(vehicleId, { focus: true });
+        }
+        return;
+      }
+      const primaryVehicleTrigger = element.closest('[data-primary-vehicle-id]');
+      if (primaryVehicleTrigger) {
+        event.preventDefault();
+        const vehicleId = Number(primaryVehicleTrigger.getAttribute('data-primary-vehicle-id'));
+        if (Number.isFinite(vehicleId)) {
+          void focusVehicleSelection(vehicleId, { focus: true });
         }
         return;
       }
@@ -10244,16 +10633,6 @@
         renderSmartResponsePanel();
         return;
       }
-      const target = element.closest('[data-confirm-arrival]');
-      if (!target) {
-        return;
-      }
-      event.preventDefault();
-      const vehicleId = Number(target.getAttribute('data-confirm-arrival'));
-      if (!Number.isFinite(vehicleId)) {
-        return;
-      }
-      void confirmSelectedSmartResponseArrival(vehicleId);
     });
   }
 
@@ -10499,6 +10878,9 @@
       hideModal(sosCompleteModalEl);
     }
     if (event.target === sosCctvModalEl) {
+      if (Date.now() - Number(state.ui.cctvModalOpenedAt || 0) < CCTV_MODAL_BACKDROP_GUARD_MS) {
+        return;
+      }
       closeCctvModal();
     }
   });
