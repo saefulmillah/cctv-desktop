@@ -202,7 +202,8 @@
       alert &&
       alert.ticket &&
       alert.ticket.ticket_no &&
-      Number(alert.status) === 1;
+      Number(alert.status) !== 2 &&
+      Number(alert.ticket.ticket_status) !== 2;
     const canContact = Boolean(
       alert &&
       alert.user &&
@@ -694,20 +695,7 @@
   };
 
 
-  const sortSmartResponseTimelineItems = (items) =>
-    (Array.isArray(items) ? items.slice() : []).sort((left, right) => {
-      const leftTime = new Date(left && left.event_at ? left.event_at : 0).getTime();
-      const rightTime = new Date(right && right.event_at ? right.event_at : 0).getTime();
-      if (leftTime !== rightTime) {
-        return rightTime - leftTime;
-      }
-      const leftId = Number(left && left.id);
-      const rightId = Number(right && right.id);
-      if (Number.isFinite(leftId) && Number.isFinite(rightId) && leftId !== rightId) {
-        return rightId - leftId;
-      }
-      return String(right && right.id || '').localeCompare(String(left && left.id || ''));
-    });
+  const sortSmartResponseTimelineItems = (items) => (Array.isArray(items) ? items.slice() : []);
 
   const formatWeatherObservedAt = (value) => {
     if (!value) {
@@ -2674,13 +2662,50 @@
       return { tone: 'danger', label: 'SOS Baru', markerClass: 'is-critical' };
     }
     if (normalized === 1) {
-      return { tone: 'warning', label: 'On Progress', markerClass: 'is-dispatched' };
+      return { tone: 'info', label: 'Dispatched', markerClass: 'is-dispatched' };
     }
-    return { tone: 'neutral', label: 'Completed', markerClass: 'is-completed' };
+    if (normalized === 3) {
+      return { tone: 'warning', label: 'Sedang dalam penanganan', markerClass: 'is-dispatched' };
+    }
+    return { tone: 'success', label: 'Selesai', markerClass: 'is-completed' };
+  };
+
+  const getTicketStatusMeta = (status) => {
+    const normalized = Number(status);
+    if (normalized === 1) {
+      return { tone: 'info', label: 'Open' };
+    }
+    if (normalized === 3) {
+      return { tone: 'warning', label: 'In Handling' };
+    }
+    if (normalized === 2) {
+      return { tone: 'success', label: 'Completed' };
+    }
+    return { tone: 'neutral', label: 'Tanpa Ticket' };
+  };
+
+  const normalizeSmartResponseStatus = (status) => {
+    const normalized = String(status || '').trim().toUpperCase();
+    if (!normalized) {
+      return 'TRACKING_STARTED';
+    }
+    if (normalized === 'VEHICLE_CANDIDATE_DETECTED') {
+      return 'NEARBY_CANDIDATE';
+    }
+    if (normalized === 'VEHICLE_LIKELY_HEADING') {
+      return 'LIKELY_HEADING_TO_SOS';
+    }
+    if (normalized === 'VEHICLE_ARRIVED_PENDING') {
+      return 'ARRIVED_PENDING_CONFIRMATION';
+    }
+    if (normalized === 'VEHICLE_ARRIVAL_CONFIRMED') {
+      return 'ARRIVAL_CONFIRMED';
+    }
+    return normalized;
   };
 
   const getSmartResponseStatusMeta = (status) => {
-    const normalized = String(status || '').trim().toUpperCase();
+    const normalized = normalizeSmartResponseStatus(status);
     if (normalized === 'TRACKING_STARTED') {
       return { tone: 'neutral', label: 'Tracking Dimulai' };
     }
@@ -2721,13 +2746,27 @@
     return `${Math.round(numeric)}%`;
   };
 
+  const formatSmartResponseSourceLabel = (source) => {
+    const normalized = String(source || '').trim().toLowerCase();
+    if (!normalized) {
+      return '';
+    }
+    if (normalized === 'system_auto_arrival') {
+      return 'Auto Arrival';
+    }
+    if (normalized === 'manual_confirmation') {
+      return 'Konfirmasi Manual';
+    }
+    return toSentenceCase(normalized.replace(/_/g, ' '));
+  };
+
   const formatSmartResponseEventLabel = (eventType) => {
-    const normalized = String(eventType || '').trim().toUpperCase();
+    const normalized = normalizeSmartResponseStatus(eventType);
     if (normalized === 'TRACKING_STARTED') return 'Tracking dimulai';
-    if (normalized === 'VEHICLE_CANDIDATE_DETECTED') return 'Kandidat vehicle terdeteksi';
-    if (normalized === 'VEHICLE_LIKELY_HEADING') return 'Vehicle kemungkinan menuju SOS';
-    if (normalized === 'VEHICLE_ARRIVED_PENDING') return 'Vehicle tiba, menunggu konfirmasi';
-    if (normalized === 'VEHICLE_ARRIVAL_CONFIRMED') return 'Kedatangan vehicle dikonfirmasi';
+    if (normalized === 'NEARBY_CANDIDATE') return 'Kandidat vehicle terdeteksi';
+    if (normalized === 'LIKELY_HEADING_TO_SOS') return 'Vehicle kemungkinan menuju SOS';
+    if (normalized === 'ARRIVED_PENDING_CONFIRMATION') return 'Vehicle tiba, menunggu konfirmasi';
+    if (normalized === 'ARRIVAL_CONFIRMED') return 'Kedatangan vehicle dikonfirmasi';
     if (normalized === 'TICKET_COMPLETED') return 'Ticket selesai';
     return normalized || '-';
   };
@@ -2770,7 +2809,7 @@
     }
     const reporterName = String(getAlertName(alert) || `User ${alert.user_id || '-'}`).toUpperCase();
     const dispatched =
-      Boolean(alert.ticket && (alert.ticket.dispatched_at || Number(alert.status) === 1));
+      Boolean(alert.ticket && (alert.ticket.dispatched_at || Number(alert.status) === 1 || Number(alert.status) === 3));
     return {
       key: `sos:${alert.sos_id}`,
       latLng: alert.latLng,
@@ -2925,13 +2964,14 @@
       ticket_no: ticketNo,
       sos_id: Number.isFinite(sosId) ? sosId : null,
       branch_id: Number.isFinite(Number(source.branch_id)) ? Number(source.branch_id) : null,
-      response_status: String(source.response_status || source.current_response_status || 'TRACKING_STARTED').trim(),
+      response_status: normalizeSmartResponseStatus(source.response_status || source.current_response_status || 'TRACKING_STARTED'),
       primary_vehicle_id: Number.isFinite(Number(source.primary_vehicle_id)) ? Number(source.primary_vehicle_id) : null,
       primary_vehicle_label: String(source.primary_vehicle_label || '').trim() || null,
       confidence_score: Number.isFinite(Number(source.confidence_score)) ? Number(source.confidence_score) : null,
       distance_meters: Number.isFinite(Number(source.distance_meters)) ? Number(source.distance_meters) : null,
       first_candidate_detected_at: String(source.first_candidate_detected_at || '').trim() || null,
       arrival_confirmed_at: String(source.arrival_confirmed_at || '').trim() || null,
+      handling_started_at: String(source.handling_started_at || '').trim() || null,
       updated_at: String(source.updated_at || '').trim() || null,
     };
   };
@@ -2948,7 +2988,7 @@
       vehicle_id: vehicleId,
       vehicle_label: String(candidate.vehicle_label || `Vehicle ${vehicleId}`).trim(),
       branch_id: Number.isFinite(Number(candidate.branch_id)) ? Number(candidate.branch_id) : null,
-      detection_status: String(candidate.detection_status || 'TRACKING_STARTED').trim(),
+      detection_status: normalizeSmartResponseStatus(candidate.detection_status || 'TRACKING_STARTED'),
       confidence_score: Number.isFinite(Number(candidate.confidence_score)) ? Number(candidate.confidence_score) : null,
       distance_meters: Number.isFinite(Number(candidate.distance_meters)) ? Number(candidate.distance_meters) : null,
       previous_distance_meters:
@@ -2959,6 +2999,7 @@
       angle_diff: Number.isFinite(Number(candidate.angle_diff)) ? Number(candidate.angle_diff) : null,
       detected_at: String(candidate.detected_at || '').trim() || null,
       last_evaluated_at: String(candidate.last_evaluated_at || '').trim() || null,
+      arrival_zone_entered_at: String(candidate.arrival_zone_entered_at || '').trim() || null,
       arrived_pending_at: String(candidate.arrived_pending_at || '').trim() || null,
       arrival_confirmed_at: String(candidate.arrival_confirmed_at || '').trim() || null,
       is_primary: Boolean(candidate.is_primary),
@@ -3015,7 +3056,7 @@
             ? Number(metadata.vehicle_id)
             : null,
       vehicle_label: String(item.vehicle_label || (metadata && metadata.vehicle_label) || '').trim() || null,
-      response_status: String(item.response_status || (metadata && metadata.response_status) || '').trim() || null,
+      response_status: normalizeSmartResponseStatus(item.response_status || (metadata && metadata.response_status) || ''),
       source: String(item.source || (metadata && metadata.source) || '').trim() || null,
       gps_time: String(item.gps_time || (metadata && metadata.gps_time) || '').trim() || null,
       distance_meters: readMetric('distance_meters'),
@@ -3026,6 +3067,24 @@
       angle_diff: readMetric('angle_diff'),
       confidence_score: readMetric('confidence_score'),
       extra: metadata && metadata.extra && typeof metadata.extra === 'object' ? metadata.extra : null,
+      arrival_zone_entered_at:
+        String(
+          item.arrival_zone_entered_at ||
+          (metadata && metadata.extra && metadata.extra.arrival_zone_entered_at) ||
+          ''
+        ).trim() || null,
+      non_moving_seconds:
+        Number.isFinite(Number(item.non_moving_seconds))
+          ? Number(item.non_moving_seconds)
+          : Number.isFinite(Number(metadata && metadata.extra && metadata.extra.non_moving_seconds))
+            ? Number(metadata.extra.non_moving_seconds)
+            : null,
+      confirmed_by_user_id:
+        Number.isFinite(Number(item.confirmed_by_user_id))
+          ? Number(item.confirmed_by_user_id)
+          : Number.isFinite(Number(metadata && metadata.extra && metadata.extra.confirmed_by_user_id))
+            ? Number(metadata.extra.confirmed_by_user_id)
+            : null,
       metadata,
     };
   };
@@ -4507,11 +4566,15 @@
     if (entry.entityType === 'sos') {
       const alert = entry.data;
       const statusMeta = getStatusMeta(alert.status);
+      const ticketStatusMeta = getTicketStatusMeta(alert.ticket && alert.ticket.ticket_status);
       const responseSummary = getSmartResponseSummaryForAlert(alert);
       const responseMeta = responseSummary ? getSmartResponseStatusMeta(responseSummary.response_status) : null;
       const rawPhoneNumber = alert.user && alert.user.phone ? String(alert.user.phone) : '';
       const displayPhoneNumber = getDisplayPhoneNumber(rawPhoneNumber);
       const whatsAppLink = isLeaving ? '' : getWhatsAppLink(rawPhoneNumber);
+      const reporterSummary = String(getAlertName(alert) || '').trim();
+      const incidentType = String(alert.ticket && alert.ticket.incident_type ? alert.ticket.incident_type : '').trim();
+      const isHandling = Number(alert.status) === 3 || Number(alert.ticket && alert.ticket.ticket_status) === 3;
       return `
         <article class="sos-incident-item ${alert.sos_id === state.selectedSosId && !isLeaving ? 'is-selected' : ''} ${animationClasses}" data-entity-type="sos" data-sos-id="${alert.sos_id}" ${animationAttrs} ${interactionAttrs} aria-label="Pilih kejadian SOS ${alert.sos_id}">
           <div class="sos-incident-item__head">
@@ -4523,15 +4586,33 @@
               <span class="sos-incident-item__branch">${escapeHtml(alert.branch_name || '-')}</span>
               <span>${escapeHtml(toDateTime(alert.created_at))}</span>
             </div>
+            <div class="sos-incident-item__row">
+              <span class="status-pill ${escapeHtml(ticketStatusMeta.tone)}">${escapeHtml(ticketStatusMeta.label)}</span>
+              ${
+                responseSummary
+                  ? `<span class="status-pill ${escapeHtml(responseMeta.tone)}">${escapeHtml(responseMeta.label)}</span>`
+                  : ''
+              }
+            </div>
+            ${
+              incidentType
+                ? `
             <div>
-              <span class="sos-incident-item__label">Nama</span>
-              <div class="sos-incident-item__value">${escapeHtml(getAlertName(alert))}</div>
+              <span class="sos-incident-item__label">Jenis Kejadian</span>
+              <div class="sos-incident-item__value">${escapeHtml(incidentType)}</div>
+            </div>
+            `
+                : ''
+            }
+            <div>
+              <span class="sos-incident-item__label">Pelapor</span>
+              <div class="sos-incident-item__value">${escapeHtml(reporterSummary || '-')}</div>
             </div>
             ${responseSummary ? `
               <div class="sos-incident-item__response-row">
-                <span class="status-pill ${escapeHtml(responseMeta.tone)}">${escapeHtml(responseMeta.label)}</span>
                 <span>${escapeHtml(responseSummary.primary_vehicle_label || 'Belum ada kandidat utama')}</span>
                 <span>${escapeHtml(formatDistanceMetersSmartResponse(responseSummary.distance_meters))}</span>
+                ${isHandling ? '<span>Dalam penanganan</span>' : ''}
               </div>
             ` : ''}
             <div class="sos-incident-item__row">
@@ -6495,15 +6576,29 @@
       hideSosDetailPanel();
       return;
     }
+    const statusMeta = getStatusMeta(alert.status);
+    const ticketStatusMeta = getTicketStatusMeta(alert.ticket && alert.ticket.ticket_status);
+    const responseSummary = getSmartResponseSummaryForAlert(alert);
+    const responseStatusMeta = getSmartResponseStatusMeta(responseSummary && responseSummary.response_status);
+    const primaryCandidate = getSmartResponsePrimaryCandidate(state.smartResponse.selectedResponse, responseSummary);
+    const pendingArrivalCandidate = getPendingArrivalCandidate(state.smartResponse.selectedResponse);
+    const confirmedArrivalCandidate = getConfirmedArrivalCandidate(state.smartResponse.selectedResponse);
+    const latestArrivalEvent = getLatestArrivalConfirmedTimelineItem(state.smartResponse.selectedTimeline);
+    const arrivalSourceLabel = formatSmartResponseSourceLabel(latestArrivalEvent && latestArrivalEvent.source);
     const detailKey = JSON.stringify({
       sosId: alert.sos_id,
       status: alert.status,
       ticketNo: alert.ticket && alert.ticket.ticket_no,
+      ticketStatus: alert.ticket && alert.ticket.ticket_status,
       dispatchedAt: alert.ticket && alert.ticket.dispatched_at,
       branch: alert.branch_name,
       createdAt: alert.created_at,
       phone: alert.user && alert.user.phone,
       address: alert.user && alert.user.address,
+      responseStatus: responseSummary && responseSummary.response_status,
+      handlingStartedAt: responseSummary && responseSummary.handling_started_at,
+      arrivalConfirmedAt: responseSummary && responseSummary.arrival_confirmed_at,
+      arrivalSource: arrivalSourceLabel,
       primaryCandidate:
         state.smartResponse.selectedResponse &&
         getSmartResponsePrimaryCandidate(
@@ -6525,10 +6620,6 @@
     }
     state.detailRenderKey = detailKey;
     setDetailPanelEyebrow('SOS Incident');
-    const statusMeta = getStatusMeta(alert.status);
-    const responseSummary = getSmartResponseSummaryForAlert(alert);
-    const primaryCandidate = getSmartResponsePrimaryCandidate(state.smartResponse.selectedResponse, responseSummary);
-    const pendingArrivalCandidate = getPendingArrivalCandidate(state.smartResponse.selectedResponse);
     const rawPhoneNumber = alert.user && alert.user.phone ? String(alert.user.phone) : '';
     const phoneNumber = getDisplayPhoneNumber(rawPhoneNumber) || '-';
     const whatsAppLink = getWhatsAppLink(rawPhoneNumber);
@@ -6541,7 +6632,11 @@
       Number.isFinite(Number(alert.latitude)) && Number.isFinite(Number(alert.longitude))
         ? `${String(alert.latitude).trim()} / ${String(alert.longitude).trim()}`
         : '-';
-    setText(sosDetailTitleEl, '');
+    const incidentType = String(alert.ticket && alert.ticket.incident_type ? alert.ticket.incident_type : '').trim() || '-';
+    setText(
+      sosDetailTitleEl,
+      incidentType !== '-' ? incidentType : alert.ticket && alert.ticket.ticket_no ? alert.ticket.ticket_no : `SOS-${alert.sos_id}`
+    );
     setClass(sosDetailStatusEl, `status-pill ${statusMeta.tone}`);
     setText(sosDetailStatusEl, statusMeta.label);
     sosDetailMetaEl.classList.remove('hidden');
@@ -6566,9 +6661,51 @@
         </div>
         <div class="sos-incident-secondary">
           <div class="sos-incident-secondary__item">
+            <span class="sos-detail-label">Jenis Kejadian</span>
+            <strong>${escapeHtml(incidentType)}</strong>
+          </div>
+          <div class="sos-incident-secondary__item">
+            <span class="sos-detail-label">Status Ticket</span>
+            <strong>${escapeHtml(ticketStatusMeta.label)}</strong>
+          </div>
+          <div class="sos-incident-secondary__item">
+            <span class="sos-detail-label">Response Status</span>
+            <strong>${escapeHtml(responseStatusMeta.label)}</strong>
+          </div>
+          <div class="sos-incident-secondary__item">
             <span class="sos-detail-label"><i class="bi bi-clock-history sos-inline-icon" aria-hidden="true"></i>Dispatch Time</span>
             <strong>${escapeHtml(dispatchTime)}</strong>
           </div>
+          ${
+            responseSummary && responseSummary.handling_started_at
+              ? `
+          <div class="sos-incident-secondary__item">
+            <span class="sos-detail-label">Handling Started</span>
+            <strong>${escapeHtml(toDateTimeWithSeconds(responseSummary.handling_started_at))}</strong>
+          </div>
+          `
+              : ''
+          }
+          ${
+            responseSummary && responseSummary.arrival_confirmed_at
+              ? `
+          <div class="sos-incident-secondary__item">
+            <span class="sos-detail-label">Arrival Confirmed</span>
+            <strong>${escapeHtml(toDateTimeWithSeconds(responseSummary.arrival_confirmed_at))}</strong>
+          </div>
+          `
+              : ''
+          }
+          ${
+            arrivalSourceLabel
+              ? `
+          <div class="sos-incident-secondary__item">
+            <span class="sos-detail-label">Sumber Arrival</span>
+            <strong>${escapeHtml(arrivalSourceLabel)}</strong>
+          </div>
+          `
+              : ''
+          }
           ${
             primaryCandidate
               ? `
@@ -6593,6 +6730,20 @@
             class="toolbar-btn toolbar-btn--accent"
             data-confirm-arrival="${escapeHtml(String(pendingArrivalCandidate.vehicle_id))}"
           >Confirm Arrival</button>
+        </div>
+        `
+            : confirmedArrivalCandidate && canConfirmSosResponse()
+              ? `
+        <div class="sos-incident-contextual-action">
+          <div>
+            <span class="sos-detail-label">Audit Kedatangan</span>
+            <strong>${escapeHtml((confirmedArrivalCandidate.vehicle_label || 'Unit utama') + ' sudah terkonfirmasi tiba.')}</strong>
+          </div>
+          <button
+            type="button"
+            class="toolbar-btn"
+            data-confirm-arrival="${escapeHtml(String(confirmedArrivalCandidate.vehicle_id))}"
+          >Add Manual Confirmation</button>
         </div>
         `
             : ''
@@ -6636,6 +6787,18 @@
     const candidates = detail && Array.isArray(detail.vehicle_candidates) ? detail.vehicle_candidates : [];
     return candidates.find((candidate) => String(candidate && candidate.detection_status || '') === 'ARRIVED_PENDING_CONFIRMATION') || null;
   };
+
+  const getConfirmedArrivalCandidate = (detail) => {
+    const candidates = detail && Array.isArray(detail.vehicle_candidates) ? detail.vehicle_candidates : [];
+    return candidates.find((candidate) => String(candidate && candidate.detection_status || '') === 'ARRIVAL_CONFIRMED') || null;
+  };
+
+  const getLatestArrivalConfirmedTimelineItem = (items) =>
+    (Array.isArray(items) ? items : []).find(
+      (item) =>
+        item &&
+        normalizeSmartResponseStatus(item.event_type) === 'ARRIVAL_CONFIRMED'
+    ) || null;
 
   const setSmartResponseTab = (tabKey) => {
     const normalized = String(tabKey || '').trim().toLowerCase();
@@ -6689,6 +6852,17 @@
       }
       state.smartResponse.selectedResponse = detail;
       state.smartResponse.selectedResponseError = detail ? '' : 'Detail smart response tidak tersedia.';
+      if (detail && detail.ticket && Number.isFinite(Number(detail.ticket.sos_id))) {
+        state.ticketsBySosId.set(Number(detail.ticket.sos_id), detail.ticket);
+        state.incidents.ticketsBySosId = state.ticketsBySosId;
+        const currentAlert = state.alerts.get(Number(detail.ticket.sos_id));
+        if (currentAlert) {
+          mergeTicketToAlert(currentAlert);
+        }
+      }
+      if (detail && detail.sos && Number.isFinite(Number(detail.sos.sos_id))) {
+        upsertAlert(detail.sos, false);
+      }
       if (detail && detail.response_summary) {
         upsertSmartResponseSummary(detail.response_summary);
       }
@@ -6773,6 +6947,7 @@
       return;
     }
     const shouldForce = Boolean(options.force);
+    const preserveSuccess = options.preserveSuccess === true;
     const ticketChanged = String(state.smartResponse.selectedTicketNo || '') !== nextTicketNo;
     state.smartResponse.selectedTicketNo = nextTicketNo;
     state.smartResponse.confirmArrivalError = '';
@@ -6787,7 +6962,7 @@
       state.smartResponse.confirmArrivalSuccessMessage = '';
     }
     if (shouldForce || ticketChanged || !state.smartResponse.selectedResponse) {
-      void loadSelectedSmartResponseDetail(nextTicketNo, { preserveSuccess: !ticketChanged && !shouldForce });
+      void loadSelectedSmartResponseDetail(nextTicketNo, { preserveSuccess: preserveSuccess || (!ticketChanged && !shouldForce) });
     }
     if (shouldForce || ticketChanged || !state.smartResponse.selectedTimeline.length) {
       void loadSelectedSmartResponseTimeline(nextTicketNo);
@@ -6820,6 +6995,7 @@
     const resolvedSummary = (detail && detail.response_summary) || summary;
     const primaryCandidate = getSmartResponsePrimaryCandidate(detail, resolvedSummary);
     const pendingArrivalCandidate = getPendingArrivalCandidate(detail);
+    const confirmedArrivalCandidate = getConfirmedArrivalCandidate(detail);
 
     setText(sosSmartResponseTitleEl, 'Smart Response');
     setClass(sosSmartResponseStatusEl, `status-pill ${statusMeta.tone}`);
@@ -6866,9 +7042,12 @@
       const isExpanded =
         Number(state.smartResponse.expandedCandidateVehicleId) === Number(candidate.vehicle_id);
       const isPendingConfirmation = candidate.detection_status === 'ARRIVED_PENDING_CONFIRMATION';
+      const isArrivalConfirmed = candidate.detection_status === 'ARRIVAL_CONFIRMED';
       const isSubmitting =
         Number(state.smartResponse.confirmArrivalSubmittingVehicleId) === Number(candidate.vehicle_id);
-      const confirmDisabled = !isPendingConfirmation || !canConfirmSosResponse() || isSubmitting;
+      const canShowConfirmAction = isPendingConfirmation || isArrivalConfirmed;
+      const confirmDisabled = !canShowConfirmAction || !canConfirmSosResponse() || isSubmitting;
+      const confirmLabel = isPendingConfirmation ? 'Confirm Arrival' : 'Add Manual Confirmation';
       return `
         <article class="sos-smart-response-candidate-row ${candidate.is_primary ? 'is-primary' : ''} ${isExpanded ? 'is-expanded' : ''}">
           <button
@@ -6901,9 +7080,10 @@
               <div><span class="sos-detail-label">Evaluasi</span><strong>${escapeHtml(formatTimeOnly(candidate.last_evaluated_at || '-'))}</strong></div>
               <div><span class="sos-detail-label">Node / ID</span><strong>${escapeHtml(String(candidate.vehicle_id))}</strong></div>
               <div><span class="sos-detail-label">Arrival Confirmed</span><strong>${escapeHtml(formatTimeOnly(candidate.arrival_confirmed_at || '-'))}</strong></div>
+              <div><span class="sos-detail-label">Arrival Zone</span><strong>${escapeHtml(formatTimeOnly(candidate.arrival_zone_entered_at || '-'))}</strong></div>
             </div>
             ${
-              isPendingConfirmation
+              canShowConfirmAction
                 ? `
             <div class="sos-smart-response-candidate-row__actions">
               <button
@@ -6911,7 +7091,7 @@
                 class="toolbar-btn toolbar-btn--accent"
                 data-confirm-arrival="${escapeHtml(String(candidate.vehicle_id))}"
                 ${confirmDisabled ? 'disabled' : ''}
-              >${escapeHtml(isSubmitting ? 'Mengirim...' : 'Confirm Arrival')}</button>
+              >${escapeHtml(isSubmitting ? 'Mengirim...' : confirmLabel)}</button>
             </div>
             `
                 : ''
@@ -6953,6 +7133,11 @@
                 <span>${escapeHtml(item.vehicle_label || (item.vehicle_id ? `Vehicle ${item.vehicle_id}` : '-'))}</span>
                 <span>${escapeHtml(formatDistanceMetersSmartResponse(item.distance_meters))}</span>
               </div>
+              ${
+                formatSmartResponseSourceLabel(item.source)
+                  ? `<div class="sos-smart-response-timeline-item__meta"><span>${escapeHtml(formatSmartResponseSourceLabel(item.source))}</span><span>${escapeHtml(item.response_status ? getSmartResponseStatusMeta(item.response_status).label : '-')}</span></div>`
+                  : ''
+              }
             </div>
           </article>
         `).join('')
@@ -7001,6 +7186,27 @@
           )}</button>
         </div>
         `
+            : confirmedArrivalCandidate &&
+              Number(confirmedArrivalCandidate.vehicle_id) === Number(primaryCandidate.vehicle_id) &&
+              canConfirmSosResponse()
+              ? `
+        <div class="sos-smart-response-hero__action">
+          <button
+            type="button"
+            class="toolbar-btn"
+            data-confirm-arrival="${escapeHtml(String(primaryCandidate.vehicle_id))}"
+            ${
+              Number(state.smartResponse.confirmArrivalSubmittingVehicleId) === Number(primaryCandidate.vehicle_id)
+                ? 'disabled'
+                : ''
+            }
+          >${escapeHtml(
+            Number(state.smartResponse.confirmArrivalSubmittingVehicleId) === Number(primaryCandidate.vehicle_id)
+              ? 'Mengirim...'
+              : 'Add Manual Confirmation'
+          )}</button>
+        </div>
+        `
             : ''
         }
       </button>
@@ -7046,6 +7252,16 @@
         `
         : `
         <section class="sos-smart-response-section">
+          ${
+            resolvedSummary
+              ? `
+          <div class="sos-smart-response-list-head">
+            <strong>${escapeHtml(getTicketStatusMeta(alert && alert.ticket && alert.ticket.ticket_status).label)}</strong>
+            <span>${escapeHtml(getSmartResponseStatusMeta(resolvedSummary.response_status).label)}</span>
+          </div>
+          `
+              : ''
+          }
           ${summaryTabMarkup}
         </section>
         <section class="sos-smart-response-section">
@@ -8978,6 +9194,24 @@
         null;
       if (ticket) {
         ticket.response_summary = normalized;
+        if (normalized.handling_started_at && Number(ticket.ticket_status) !== 2) {
+          ticket.ticket_status = 3;
+        }
+      }
+    }
+    if (Number.isFinite(Number(normalized.sos_id))) {
+      const alert = state.alerts.get(Number(normalized.sos_id));
+      if (alert && Number(alert.status) !== 2) {
+        if (!alert.ticket) {
+          alert.ticket = {};
+        }
+        alert.ticket.response_summary = normalized;
+        if (normalized.handling_started_at || normalized.response_status === 'ARRIVAL_CONFIRMED') {
+          alert.status = 3;
+          if (alert.ticket) {
+            alert.ticket.ticket_status = 3;
+          }
+        }
       }
     }
     return normalized;
@@ -9011,7 +9245,7 @@
       upsertSmartResponseSummary(ticket.response_summary, { patchTicket: false });
     }
     if (Number(alert.status) !== 2) {
-      alert.status = ticket.ticket_status === 2 ? 2 : 1;
+      alert.status = ticket.ticket_status === 2 ? 2 : ticket.ticket_status === 3 ? 3 : Number(alert.status) === 3 ? 3 : 1;
     }
     return alert;
   };
@@ -9046,7 +9280,14 @@
     if (normalized.response_summary) {
       upsertSmartResponseSummary(normalized.response_summary, { patchTicket: false });
     }
-    alert.status = normalized.ticket_status === 2 ? 2 : 1;
+    alert.status =
+      normalized.ticket_status === 2
+        ? 2
+        : normalized.ticket_status === 3
+          ? 3
+          : Number(alert.status) === 3
+            ? 3
+            : 1;
     return alert;
   };
 
@@ -9625,6 +9866,7 @@
           syncSelectedSmartResponseSelection({ force: true });
         }
         renderIncidentList();
+        renderDetailPanel();
         renderSmartResponsePanel();
       }
       return;
@@ -10299,15 +10541,22 @@
         vehicle_id: normalizedVehicleId,
       });
       if (!response || response.status >= 400) {
+        if (response && Number(response.status) === 409) {
+          throw new Error('Status kandidat sudah berubah. Silakan refresh data smart response terbaru.');
+        }
         throw new Error((response && response.message) || 'Confirm arrival gagal.');
       }
-      state.smartResponse.confirmArrivalSuccessMessage = 'Confirm arrival berhasil dikirim.';
-      syncSelectedSmartResponseSelection({ force: true });
+      state.smartResponse.confirmArrivalSuccessMessage = 'Konfirmasi kedatangan berhasil dikirim.';
+      syncSelectedSmartResponseSelection({ force: true, preserveSuccess: true });
       await loadOpenTickets().catch(() => {});
       renderIncidentList();
       renderSmartResponsePanel();
     } catch (error) {
-      state.smartResponse.confirmArrivalError = error && error.message ? error.message : 'Confirm arrival gagal.';
+      const errorMessage = error && error.message ? error.message : 'Confirm arrival gagal.';
+      state.smartResponse.confirmArrivalError =
+        /409/.test(errorMessage)
+          ? 'Status kandidat sudah berubah. Silakan refresh data smart response terbaru.'
+          : errorMessage;
       renderDetailPanel();
       renderSmartResponsePanel();
     } finally {
