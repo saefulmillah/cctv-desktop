@@ -4753,8 +4753,9 @@
       if (!state.standaloneAssets.selectedAssetKey) {
         return false;
       }
-      const asset = state.standaloneAssets.items.get(state.standaloneAssets.selectedAssetKey);
-      return isAssetVisibleInIncidentList(asset);
+      return Boolean(
+        state.standaloneAssets.items.get(String(state.standaloneAssets.selectedAssetKey))
+      );
     }
     if (state.ui.selectedEntityType === 'weather') {
       return (
@@ -4786,7 +4787,7 @@
       return false;
     }
     if (state.ui.selectedEntityType === 'asset') {
-      closeCctvModal();
+      return false;
     }
     clearSelectedAlert();
     return true;
@@ -6400,16 +6401,11 @@
           sosDetailMetaEl.innerHTML = `
             <div class="sos-detail-hero">
               <div class="sos-detail-hero__name">${escapeHtml(baseVehicle.label || `Kendaraan ${baseVehicle.vehicle_id}`)}</div>
-              <div class="sos-detail-hero__support">
-                <span class="meta-pill">${escapeHtml(getVehicleMovementLabel(baseVehicle.movement_status).toUpperCase())}</span>
-                <span class="meta-pill">${escapeHtml(getVehicleTypeLabel(baseVehicle).toUpperCase())}</span>
-                ${baseVehicle.has_branch_anomaly ? '<span class="meta-pill">ANOMALI</span>' : ''}
-              </div>
             </div>
           `;
           sosDetailBodyEl.innerHTML = `
             <div class="sos-detail-body__grid">
-              <div><span class="sos-detail-label">Ruas</span><strong>${escapeHtml(baseVehicle.branch_name || baseVehicle.branch_code || '-')}</strong></div>
+              <div><span class="sos-detail-label">Ruas</span><strong>${escapeHtml(getBranchDisplayName(baseVehicle.branch_id, baseVehicle.branch_name, baseVehicle.branch_code))}</strong></div>
               <div><span class="sos-detail-label">Node</span><strong>${escapeHtml(baseVehicle.node || '-')}</strong></div>
               <div><span class="sos-detail-label">Status</span><strong>${escapeHtml(getVehicleMovementLabel(baseVehicle.movement_status))}</strong></div>
               <div><span class="sos-detail-label">Kecepatan</span><strong>${escapeHtml(formatSpeedKmh(baseVehicle.speed))}</strong></div>
@@ -6480,15 +6476,11 @@
           sosDetailMetaEl.innerHTML = `
             <div class="sos-detail-hero">
               <div class="sos-detail-hero__name">${escapeHtml(asset.title || asset.asset_name || asset.cctv_name || asset.asset_code || `Asset ${asset.id}`)}</div>
-              <div class="sos-detail-hero__support">
-                <span class="meta-pill">${escapeHtml(assetTypeLabel)}</span>
-                <span class="meta-pill">${escapeHtml(asset.has_live_stream ? 'LIVE' : 'NO STREAM')}</span>
-              </div>
             </div>
           `;
           sosDetailBodyEl.innerHTML = `
             <div class="sos-detail-body__grid">
-              <div><span class="sos-detail-label">Ruas</span><strong>${escapeHtml(asset.branch_name || asset.branch_code || asset.branch_id || '-')}</strong></div>
+              <div><span class="sos-detail-label">Ruas</span><strong>${escapeHtml(getBranchDisplayName(asset.branch_id, asset.branch_name, asset.branch_code))}</strong></div>
               <div><span class="sos-detail-label">Kode Asset</span><strong>${escapeHtml(asset.asset_code || '-')}</strong></div>
               <div><span class="sos-detail-label">Tipe</span><strong>${escapeHtml(assetTypeLabel)}</strong></div>
               <div><span class="sos-detail-label">Stream</span><strong>${escapeHtml(asset.has_live_stream ? 'Tersedia' : 'Tidak tersedia')}</strong></div>
@@ -6530,11 +6522,6 @@
               <div class="sos-detail-hero__name">${escapeHtml(
                 `${(networkEdge.source && networkEdge.source.node_name) || 'Source'} \u2192 ${(networkEdge.target && networkEdge.target.node_name) || 'Target'}`
               )}</div>
-              <div class="sos-detail-hero__support">
-                <span class="meta-pill">${escapeHtml(String(networkEdge.connection_type || 'fiber').toUpperCase())}</span>
-                ${networkEdge.isCrossBranch ? '<span class="meta-pill">CROSS BRANCH</span>' : ''}
-                ${networkEdge.arc && networkEdge.arc.pulse ? '<span class="meta-pill">PULSE</span>' : ''}
-              </div>
             </div>
           `;
           sosDetailBodyEl.innerHTML = `
@@ -6550,10 +6537,18 @@
                 networkEdge.distance_km !== null ? `${networkEdge.distance_km} km` : '-'
               )}</strong></div>
               <div><span class="sos-detail-label">Source Branch</span><strong>${escapeHtml(
-                String((networkEdge.source && networkEdge.source.branch_id) || '-')
+                getBranchDisplayName(
+                  networkEdge.source && networkEdge.source.branch_id,
+                  networkEdge.source && networkEdge.source.branch_name,
+                  networkEdge.source && networkEdge.source.branch_code
+                )
               )}</strong></div>
               <div><span class="sos-detail-label">Target Branch</span><strong>${escapeHtml(
-                String((networkEdge.target && networkEdge.target.branch_id) || '-')
+                getBranchDisplayName(
+                  networkEdge.target && networkEdge.target.branch_id,
+                  networkEdge.target && networkEdge.target.branch_name,
+                  networkEdge.target && networkEdge.target.branch_code
+                )
               )}</strong></div>
             </div>
           `;
@@ -7818,6 +7813,83 @@
       return;
     }
     const assetType = String(camera.asset_type || 'cctv').toLowerCase();
+    const requestAssetKey = makeAssetKey(assetType, camera.id);
+    const syncSelectedAssetVisualState = (asset) => {
+      state.standaloneAssets.selectedAssetKey = makeAssetKey(assetType, asset.id || camera.id);
+      state.ui.selectedEntityType = 'asset';
+      state.ui.selectedEntityId = state.standaloneAssets.selectedAssetKey;
+      state.cctvSelectedCameraId = String(asset.id || camera.id || '');
+      state.standaloneAssets.selectedLabelLatLng =
+        state.standaloneAssets.selectedLabelLatLng || asset.latLng || asset.position || null;
+      state.cctvMarkers.forEach((entry) => {
+        if (!entry || !entry.marker || !entry.camera) {
+          return;
+        }
+        entry.marker.setIcon({
+          url: getCctvMarkerIconUrl(entry.camera),
+          scaledSize: new window.google.maps.Size(
+            getCctvMarkerScaledSize(entry.camera),
+            getCctvMarkerScaledSize(entry.camera)
+          ),
+        });
+        entry.marker.setZIndex(
+          getStandaloneAssetZIndex(
+            entry.camera,
+            String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
+          )
+        );
+      });
+    };
+    const renderCctvModalContent = (detail) => {
+      setText(
+        sosCctvModalTitleEl,
+        detail.asset_name || detail.cctv_name || detail.asset_code || `Asset ${detail.id || '-'}`
+      );
+      const metadataEntries = Object.entries(detail.metadata || {}).filter(
+        ([, value]) => value !== null && value !== undefined && String(value).trim() !== ''
+      );
+      const activeAlarms = toArray(detail.active_alarms);
+      if (assetType === 'cctv' && detail.stream_play_url) {
+        sosCctvModalMetaEl.innerHTML = '';
+        sosCctvModalMetaEl.classList.add('hidden');
+        attachSosCctvModalStream(detail);
+      } else {
+        destroySosCctvModalStream();
+        sosCctvModalVideoEl.classList.add('hidden');
+        sosCctvModalStreamEmptyEl.classList.remove('hidden');
+        sosCctvModalStreamEmptyEl.textContent =
+          assetType === 'vms' ? 'VMS tidak memiliki live player pada tahap ini.' : 'Detail stream tidak tersedia.';
+        sosCctvModalMetaEl.innerHTML = [
+          `<div class="sos-cctv-modal-card"><span>Tipe Asset</span><strong>${escapeHtml(
+            assetType.toUpperCase()
+          )}</strong></div>`,
+          `<div class="sos-cctv-modal-card"><span>Status</span><strong>${escapeHtml(
+            String(detail.status || 'normal').toUpperCase()
+          )}</strong></div>`,
+          ...metadataEntries.map(
+            ([key, value]) =>
+              `<div class="sos-cctv-modal-card"><span>${escapeHtml(
+                key.replace(/_/g, ' ')
+              )}</span><strong>${escapeHtml(value)}</strong></div>`
+          ),
+          ...activeAlarms.map(
+            (alarm) =>
+              `<div class="sos-cctv-modal-card"><span>${escapeHtml(
+                alarm.alarm_name || alarm.alarm_code || 'Alarm'
+              )}</span><strong>${escapeHtml(alarm.opened_at || '-')}</strong></div>`
+          ),
+        ].join('');
+        sosCctvModalMetaEl.classList.remove('hidden');
+      }
+    };
+    syncSelectedAssetVisualState(camera);
+    renderIncidentList();
+    renderDetailPanel();
+    renderSmartResponsePanel();
+    syncSelectedMarkerLabelOverlay();
+    renderCctvModalContent(camera);
+    showModal(sosCctvModalEl);
+    state.ui.cctvModalOpenedAt = Date.now();
     let detail = camera;
     try {
       const response = await window.cameraService.getMapAssetDetail(assetType, camera.id);
@@ -7830,70 +7902,28 @@
     } catch (_) {
       detail = camera;
     }
-    state.standaloneAssets.selectedAssetKey = makeAssetKey(assetType, detail.id || camera.id);
-    state.ui.selectedEntityType = 'asset';
-    state.ui.selectedEntityId = state.standaloneAssets.selectedAssetKey;
-    state.cctvSelectedCameraId = String(detail.id || camera.id || '');
-    state.cctvMarkers.forEach((entry) => {
-      if (!entry || !entry.marker || !entry.camera) {
-        return;
-      }
-      entry.marker.setIcon({
-        url: getCctvMarkerIconUrl(entry.camera),
-        scaledSize: new window.google.maps.Size(
-          getCctvMarkerScaledSize(entry.camera),
-          getCctvMarkerScaledSize(entry.camera)
-        ),
-      });
-      entry.marker.setZIndex(
-        getStandaloneAssetZIndex(
-          entry.camera,
-          String(entry.camera && entry.camera.id) === String(state.cctvSelectedCameraId)
-        )
-      );
-    });
-    setText(
-      sosCctvModalTitleEl,
-      detail.asset_name || detail.cctv_name || detail.asset_code || `Asset ${detail.id || '-'}`
-    );
-    const metadataEntries = Object.entries(detail.metadata || {}).filter(
-      ([, value]) => value !== null && value !== undefined && String(value).trim() !== ''
-    );
-    const activeAlarms = toArray(detail.active_alarms);
-    if (assetType === 'cctv' && detail.stream_play_url) {
-      sosCctvModalMetaEl.innerHTML = '';
-      sosCctvModalMetaEl.classList.add('hidden');
-      attachSosCctvModalStream(detail);
-    } else {
-      destroySosCctvModalStream();
-      sosCctvModalVideoEl.classList.add('hidden');
-      sosCctvModalStreamEmptyEl.classList.remove('hidden');
-      sosCctvModalStreamEmptyEl.textContent =
-        assetType === 'vms' ? 'VMS tidak memiliki live player pada tahap ini.' : 'Detail stream tidak tersedia.';
-      sosCctvModalMetaEl.innerHTML = [
-        `<div class="sos-cctv-modal-card"><span>Tipe Asset</span><strong>${escapeHtml(
-          assetType.toUpperCase()
-        )}</strong></div>`,
-        `<div class="sos-cctv-modal-card"><span>Status</span><strong>${escapeHtml(
-          String(detail.status || 'normal').toUpperCase()
-        )}</strong></div>`,
-        ...metadataEntries.map(
-          ([key, value]) =>
-            `<div class="sos-cctv-modal-card"><span>${escapeHtml(
-              key.replace(/_/g, ' ')
-            )}</span><strong>${escapeHtml(value)}</strong></div>`
-        ),
-        ...activeAlarms.map(
-          (alarm) =>
-            `<div class="sos-cctv-modal-card"><span>${escapeHtml(
-              alarm.alarm_name || alarm.alarm_code || 'Alarm'
-            )}</span><strong>${escapeHtml(alarm.opened_at || '-')}</strong></div>`
-        ),
-      ].join('');
-      sosCctvModalMetaEl.classList.remove('hidden');
+    if (String(state.standaloneAssets.selectedAssetKey || '') !== requestAssetKey) {
+      return;
     }
-    showModal(sosCctvModalEl);
-    state.ui.cctvModalOpenedAt = Date.now();
+    const normalizedDetail = {
+      ...detail,
+      id: String(detail.id || camera.id || ''),
+      asset_type: assetType,
+      latLng: detail.latLng || camera.latLng || camera.position || null,
+      position: detail.position || detail.latLng || camera.position || camera.latLng || null,
+      title:
+        String(detail.asset_name || '').trim() ||
+        String(detail.cctv_name || '').trim() ||
+        String(detail.asset_code || '').trim() ||
+        `${assetType.toUpperCase()} ${detail.id || camera.id || ''}`,
+    };
+    state.standaloneAssets.items.set(requestAssetKey, normalizedDetail);
+    syncSelectedAssetVisualState(normalizedDetail);
+    renderIncidentList();
+    renderDetailPanel();
+    renderSmartResponsePanel();
+    syncSelectedMarkerLabelOverlay();
+    renderCctvModalContent(normalizedDetail);
   };
 
   const closeCctvModal = () => {
@@ -7916,6 +7946,39 @@
       entry.marker.setZIndex(undefined);
     });
     hideModal(sosCctvModalEl);
+  };
+
+  const dismissSelectedAssetUi = (options = {}) => {
+    const closeModal = options.closeModal !== false;
+    if (closeModal && sosCctvModalEl.classList.contains('visible')) {
+      closeCctvModal();
+    } else {
+      state.cctvSelectedCameraId = null;
+      state.cctvMarkers.forEach((entry) => {
+        if (!entry || !entry.marker || !entry.camera) {
+          return;
+        }
+        entry.marker.setIcon({
+          url: getCctvMarkerIconUrl(entry.camera),
+          scaledSize: new window.google.maps.Size(
+            getCctvMarkerScaledSize(entry.camera),
+            getCctvMarkerScaledSize(entry.camera)
+          ),
+        });
+        entry.marker.setZIndex(undefined);
+      });
+    }
+    state.standaloneAssets.selectedAssetKey = null;
+    state.standaloneAssets.selectedLabelLatLng = null;
+    if (state.ui.selectedEntityType === 'asset') {
+      state.ui.selectedEntityType = '';
+      state.ui.selectedEntityId = null;
+      state.detailRenderKey = '';
+    }
+    clearMarkerLabelState({ preserveSosLocked: false });
+    renderIncidentList();
+    renderDetailPanel();
+    renderSmartResponsePanel();
   };
 
   const getSelectedMarkerLabelPayload = () => {
@@ -8292,12 +8355,17 @@
   };
 
   const clearCctvMarkers = (options = {}) => {
+    const shouldCloseModal = options.closeModal !== false;
     if (options.invalidate !== false) {
       state.cctvMarkerLoadSeq += 1;
     }
-    closeCctvModal();
+    if (shouldCloseModal) {
+      closeCctvModal();
+    }
     collapseCctvSpiderfy();
-    state.cctvSelectedCameraId = null;
+    if (shouldCloseModal) {
+      state.cctvSelectedCameraId = null;
+    }
     clearCctvClusterOverlays();
     clearCctvAssetMarkerRegistry();
     if (state.cctvCluster && typeof state.cctvCluster.clearMarkers === 'function') {
@@ -8926,10 +8994,10 @@
       updateMapEmptyState('');
       return;
     }
-    const isBranchLayerChanged =
-      String(state.cctvMapBranchId) !== branchKey || state.cctvMapLayerKey !== layerKey;
+    const didBranchChange = String(state.cctvMapBranchId) !== branchKey;
+    const isBranchLayerChanged = didBranchChange || state.cctvMapLayerKey !== layerKey;
     if (isBranchLayerChanged) {
-      clearCctvMarkers({ invalidate: false });
+      clearCctvMarkers({ invalidate: false, closeModal: didBranchChange });
     } else {
       collapseCctvSpiderfy();
       state.cctvMarkers = [];
@@ -9037,7 +9105,7 @@
       debugLog('updateDefaultCctvMarkers:error', {
         message: error && error.message ? error.message : String(error),
       });
-      clearCctvMarkers();
+      clearCctvMarkers({ closeModal: false });
       updateMapEmptyState(error.message || 'Gagal memuat cluster CCTV.');
     }
   };
@@ -9268,7 +9336,10 @@
       state.ticketsBySosId.set(normalized.sos_id, normalized);
     }
     state.incidents.ticketsBySosId = state.ticketsBySosId;
-    const alert = state.alerts.get(normalized.sos_id);
+    let alert = state.alerts.get(normalized.sos_id);
+    if (!alert && source && source.sos) {
+      alert = upsertAlert(source, false);
+    }
     if (!alert) {
       return null;
     }
@@ -9520,6 +9591,9 @@
       const normalized = normalizeTicket(ticket);
       if (normalized) {
         state.ticketsBySosId.set(normalized.sos_id, normalized);
+        if (ticket && ticket.sos) {
+          upsertAlert(ticket, false);
+        }
         if (normalized.response_summary) {
           upsertSmartResponseSummary(normalized.response_summary, { patchTicket: false });
         }
@@ -9599,16 +9673,28 @@
         }
       }
       await Promise.all([
+        loadSnapshot(),
+        loadOpenTickets(),
+      ]);
+      state.isInitialSnapshotLoaded = true;
+      ensureDefaultSosSelection();
+      renderSummary();
+      renderAssetToolbar();
+      renderIncidentList();
+      renderDetailPanel();
+      renderSmartResponsePanel();
+      syncMapMarkers();
+      syncSelectedMarkerLabelOverlay();
+      setIncidentListLoadingVisible(false);
+
+      await Promise.all([
         loadGateAlerts(),
         updateDefaultCctvMarkers(),
         loadNetworkArcs(),
         loadWeatherMarkers(),
         loadVehiclesLive(),
         loadVehiclesSummary(),
-        loadSnapshot(),
-        loadOpenTickets(),
       ]);
-      state.isInitialSnapshotLoaded = true;
       ensureDefaultSosSelection();
       renderAll();
       setText(sosRouteTitleEl, 'MOVISION');
@@ -10072,6 +10158,10 @@
           return;
         }
         collapseCctvSpiderfy();
+        if (state.ui.selectedEntityType === 'asset' && !sosCctvModalEl.classList.contains('visible')) {
+          dismissSelectedAssetUi({ closeModal: false });
+          return;
+        }
         clearMarkerLabelState();
         if (state.vehicles.selectedVehicleId && state.ui.selectedEntityType === 'vehicle') {
           state.vehicles.selectedVehicleId = null;
@@ -10195,7 +10285,7 @@
       if (sosCctvModalEl.classList.contains('visible')) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        closeCctvModal();
+        dismissSelectedAssetUi();
       }
       return;
     }
@@ -10948,6 +11038,10 @@
     ) {
       return;
     }
+    if (state.ui.selectedEntityType === 'asset' && !sosCctvModalEl.classList.contains('visible')) {
+      dismissSelectedAssetUi({ closeModal: false });
+      return;
+    }
     clearMarkerLabelState();
   });
 
@@ -11270,7 +11364,7 @@
   }
   closeSosDispatchBtn.addEventListener('click', () => hideModal(sosDispatchModalEl));
   closeSosCompleteBtn.addEventListener('click', () => hideModal(sosCompleteModalEl));
-  closeSosCctvModalBtn.addEventListener('click', closeCctvModal);
+  closeSosCctvModalBtn.addEventListener('click', () => dismissSelectedAssetUi());
 
   [
     sosIncidentTypeInputEl,
@@ -11362,7 +11456,7 @@
       if (Date.now() - Number(state.ui.cctvModalOpenedAt || 0) < CCTV_MODAL_BACKDROP_GUARD_MS) {
         return;
       }
-      closeCctvModal();
+      dismissSelectedAssetUi();
     }
   });
   document.addEventListener('keydown', handleSosKeyboardGuards, true);
