@@ -130,6 +130,7 @@ contextBridge.exposeInMainWorld('appUpdater', {
 });
 
 contextBridge.exposeInMainWorld('appInfo', {
+  getInfo: () => ipcRenderer.invoke('app:get-info'),
   getVersion: () => ipcRenderer.invoke('app:get-version'),
 });
 

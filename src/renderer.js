@@ -77,6 +77,7 @@ const updateGithubRepoInputEl = document.getElementById('updateGithubRepoInput')
 const useGithubReleaseCheckboxEl = document.getElementById('useGithubReleaseCheckbox');
 const updateInfoStateEl = document.getElementById('updateInfoState');
 const updateInfoProgressEl = document.getElementById('updateInfoProgress');
+const updateInfoBuildEl = document.getElementById('updateInfoBuild');
 const updateInfoSourceEl = document.getElementById('updateInfoSource');
 const updateInfoMessageEl = document.getElementById('updateInfoMessage');
 const helpModalEl = document.getElementById('helpModal');
@@ -292,10 +293,34 @@ const setApiBaseUrlText = (value) => {
   setTextIfChanged(apiBaseUrlLabelEl, `API: ${value || '-'}`);
 };
 
+const normalizeAppInfo = (value) => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const version = String(value.version || '').trim();
+    const releaseLabel = String(value.releaseLabel || '').trim();
+    const displayVersion = String(
+      value.displayVersion || (releaseLabel ? `${version} (${releaseLabel})` : version) || '-'
+    ).trim();
+    return {
+      version: version || '-',
+      releaseLabel,
+      displayVersion: displayVersion || '-',
+    };
+  }
+
+  const version = String(value || '').trim();
+  return {
+    version: version || '-',
+    releaseLabel: '',
+    displayVersion: version || '-',
+  };
+};
+
 const setInstalledVersionText = (value) => {
-  const nextValue = `Version: ${value || '-'}`;
+  const appInfo = normalizeAppInfo(value);
+  const nextValue = `Version: ${appInfo.displayVersion}`;
   setTextIfChanged(activityVersionEl, nextValue);
-  setTextIfChanged(assetMapVersionEyebrowEl, value || '-');
+  setTextIfChanged(assetMapVersionEyebrowEl, appInfo.displayVersion);
+  setTextIfChanged(updateInfoBuildEl, appInfo.displayVersion);
 };
 
 const normalizeAppearanceConfig = (payload) => {

@@ -85,10 +85,12 @@
         clearPlayers();
       });
 
-      services.info
-        .getVersion()
-        .then((version) => setInstalledVersionText(version))
-        .catch(() => setInstalledVersionText('-'));
+      const loadAppInfo =
+        services.info && typeof services.info.getInfo === 'function'
+          ? services.info.getInfo()
+          : services.info.getVersion();
+
+      loadAppInfo.then((info) => setInstalledVersionText(info)).catch(() => setInstalledVersionText('-'));
 
       loadAppearanceConfig().catch((error) => {
         addActivity('Appearance restore failed', error.message || 'Failed to restore appearance setting.', 'warning');

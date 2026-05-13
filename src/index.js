@@ -215,6 +215,31 @@ const parseGitHubRepoFromPackageJson = () => {
 
 const getPlatformArchTarget = () => `${process.platform}-${process.arch}`;
 
+const formatDisplayVersion = (version, releaseLabel) =>
+  releaseLabel ? `${version} (${releaseLabel})` : version;
+
+const parseAppInfoFromPackageJson = () => {
+  try {
+    const raw = fs.readFileSync(APP_PACKAGE_JSON_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    const releaseLabel = String(parsed && parsed.releaseLabel ? parsed.releaseLabel : '').trim();
+    const version = String(app.getVersion() || parsed.version || '').trim();
+
+    return {
+      version: version || '0.0.0',
+      releaseLabel,
+      displayVersion: formatDisplayVersion(version || '0.0.0', releaseLabel),
+    };
+  } catch (_) {
+    const version = String(app.getVersion() || '0.0.0').trim();
+    return {
+      version,
+      releaseLabel: '',
+      displayVersion: formatDisplayVersion(version, ''),
+    };
+  }
+};
+
 const parseBuilderPublishFromPackageJson = () => {
   try {
     const raw = fs.readFileSync(APP_PACKAGE_JSON_PATH, 'utf8');
@@ -321,6 +346,7 @@ const setupAutoUpdater = async () => {
 };
 
 const getAutoUpdateConfig = async () => {
+  const appInfo = parseAppInfoFromPackageJson();
   const repository = getAutoUpdateRepository();
   const owner = repository && repository.owner ? repository.owner : '';
   const repo = repository && repository.repo ? repository.repo : '';
@@ -335,7 +361,9 @@ const getAutoUpdateConfig = async () => {
     suggestedGitHubRepo: repo,
     suggestedFeedUrl: latestReleaseUrl,
     platformArchTarget: getPlatformArchTarget(),
-    appVersion: app.getVersion(),
+    appVersion: appInfo.version,
+    appReleaseLabel: appInfo.releaseLabel,
+    appDisplayVersion: appInfo.displayVersion,
     mode: 'electron-updater',
     message:
       'Feed URL is managed by electron-builder build.publish. Runtime custom feed override is disabled.',
@@ -704,6 +732,7 @@ const toIpcError = (error) => {
 };
 
 const registerServiceHandlers = () => {
+  ipcMain.handle('app:get-info', () => parseAppInfoFromPackageJson());
   ipcMain.handle('app:get-version', () => app.getVersion());
   ipcMain.handle('auth:get-session', async () => ({
     status: 200,
